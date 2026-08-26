@@ -1,8 +1,12 @@
 # Supabaseセットアップ手順 (フェーズ1: 複数人アクセス対応)
 
-このディレクトリの `migrations/20260826120000_init_schema.sql` が、認証+DBの初期スキーマ
-(companies / profiles / monthly_data テーブルとRLSポリシー)です。**このファイルはまだ
-Supabase側に適用されていません。** 以下の手順で1回だけ適用してください。
+このディレクトリの `migrations/` に2つのSQLファイルがあります。**どちらもまだSupabase側に
+適用されていません。** 以下の手順で、上から順に1回ずつ適用してください。
+
+- `20260826120000_init_schema.sql`: 認証+DBの初期スキーマ(companies / profiles / monthly_data
+  テーブルとRLSポリシー)
+- `20260826130000_change_history.sql`: 自動バックアップ(変更履歴)用の `monthly_data_history`
+  テーブルとトリガー。無料プランでも動く「DBトリガーで変更前の内容を自動複製する」方式。
 
 ## 1. マイグレーションの適用
 
@@ -12,6 +16,8 @@ Supabase側に適用されていません。** 以下の手順で1回だけ適�
    右下の「Run」を実行
 4. 成功したら、左メニュー「Table Editor」に `companies` / `profiles` / `monthly_data` の
    3テーブルが作成され、`companies` に大阪人材・四国人材・松山人材の3行が入っていることを確認
+5. 同じ手順で `supabase/migrations/20260826130000_change_history.sql` も実行し、
+   `monthly_data_history` テーブルが作成されたことを確認
 
 ## 2. テストユーザーの作成
 
