@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { X, Download, FileSpreadsheet, Check } from 'lucide-react';
 import Papa from 'papaparse';
 import { GrossProfitResult } from '../types';
+import { hasActionableAlerts } from '../utils/calculator';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -27,7 +28,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const handleDownload = () => {
     let dataToExport = results;
     if (exportType === 'ALERTS_ONLY') {
-      dataToExport = results.filter((r) => r.alerts.length > 0);
+      dataToExport = results.filter((r) => hasActionableAlerts(r.alerts));
     } else if (exportType === 'TRANSPORT_MISMATCH') {
       dataToExport = results.filter((r) => r.transportDiff !== 0);
     }
@@ -51,6 +52,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       '20日締等統合件数': r.mergedRowCount,
       '紹介手数料(粗利非算入)': r.referralFee,
       '粗利益(税抜)': r.grossProfitExTax,
+      '粗利益(税込)': r.grossProfitIncTax,
       '粗利率(%)': r.grossProfitRate,
       給与交通費: r.salaryTransport,
       請求交通費: r.billingTransport,
@@ -61,7 +63,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           : r.transportDiff > 0
           ? '請求漏れ疑い'
           : '過剰請求疑い',
-      要確認フラグ: r.alerts.length > 0 ? '要確認' : '正常',
+      // ★2026-08-26修正: info severity(社保負担額の差異検出等、参考ログ)を除いた
+      // warning/errorのみを「要確認」と判定する(月次粗利明細一覧の監査ステータス列と同じ基準)
+      要確認フラグ: hasActionableAlerts(r.alerts) ? '要確認' : '正常',
       アラート詳細: r.alerts.map((a) => a.message).join(' | '),
     }));
 
@@ -121,7 +125,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   className="text-indigo-600 focus:ring-indigo-500"
                 />
                 <span className="font-medium text-slate-800">
-                  要確認・不整合アラートのみ ({results.filter((r) => r.alerts.length > 0).length}件)
+                  要確認・不整合アラートのみ ({results.filter((r) => hasActionableAlerts(r.alerts)).length}件)
                 </span>
               </label>
 

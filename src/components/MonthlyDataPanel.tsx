@@ -113,7 +113,7 @@ export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
           まだこの会社のデータは読み込まれていません。下のエリアからCSVをアップロードしてください。
         </p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto table-scroll">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-slate-500">

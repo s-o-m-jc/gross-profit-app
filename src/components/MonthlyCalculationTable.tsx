@@ -1,41 +1,58 @@
 /**
  * 派遣事業 粗利・経理管理システム (Power Query v1.1 互換)
  * 月次粗利明細テーブルコンポーネント
+ *
+ * ★2026-08-26改修:
+ * - 表示範囲を「月ごと」「年間(決算期)」で切り替えられるようにし、既定値も「全期間一括表示」から
+ *   「直近の対象月のみ」に変更した(全対象月を一度に表示すると確認しづらいという要望への対応)。
+ * - 監査ステータス列は、実際に対応が必要な重要度(warning/error)のアラートだけで判定するよう修正
+ *   (info severityの参考ログまで「要確認」に数えてしまい、ほぼ全件が要確認になっていた不具合の修正。
+ *    詳細はcalculator.tsのhasActionableAlerts参照)。
+ * - ヘッダーの消費税率設定を「請求額」「粗利益」に反映する税抜/税込表示切替を追加。
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Search,
-  Filter,
   AlertTriangle,
-  AlertCircle,
   CheckCircle,
-  TrendingDown,
-  Info,
   ArrowUpDown,
   FileSpreadsheet,
   Building,
   User,
-  ShieldAlert,
+  CalendarDays,
+  CalendarRange,
 } from 'lucide-react';
 import { GrossProfitResult } from '../types';
+import { hasActionableAlerts, countActionableAlerts } from '../utils/calculator';
 
 interface MonthlyCalculationTableProps {
   results: GrossProfitResult[];
   taxRate: number;
   lowMarginThreshold: number;
   onExportCsv: () => void;
+  /** 選択中の決算期に属する対象年月一覧("YYYY-MM"×12)。「年間(決算期)」表示切替で使用 */
+  fiscalYearMonths: string[];
+  /** 選択中の決算期のラベル(ヘッダーの決算期セレクタと同一の表示文字列) */
+  fiscalYearLabel: string;
 }
+
+type ViewScope = 'month' | 'fiscalYear';
+type AmountDisplay = 'exTax' | 'incTax';
 
 export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = ({
   results,
   taxRate,
   lowMarginThreshold,
   onExportCsv,
+  fiscalYearMonths,
+  fiscalYearLabel,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [viewScope, setViewScope] = useState<ViewScope>('month');
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
   const [filterType, setFilterType] = useState<string>('ALL');
+  const [amountDisplay, setAmountDisplay] = useState<AmountDisplay>('exTax');
   const [sortField, setSortField] = useState<keyof GrossProfitResult>('targetMonth');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
@@ -45,11 +62,26 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
     return months;
   }, [results]);
 
+  // 初回にデータが揃った時点で1度だけ、既定の月フィルタを「直近の対象月」に自動設定する
+  // (全514件のような大量データを毎回一括表示しないための既定値。ユーザーが明示的に「全期間」
+  //  を選び直した場合はそれ以降上書きしない)
+  const didAutoSelectMonth = useRef(false);
+  useEffect(() => {
+    if (!didAutoSelectMonth.current && availableMonths.length > 0) {
+      setSelectedMonth(availableMonths[availableMonths.length - 1]);
+      didAutoSelectMonth.current = true;
+    }
+  }, [availableMonths]);
+
+  const fiscalYearMonthSet = useMemo(() => new Set(fiscalYearMonths), [fiscalYearMonths]);
+
   // フィルタリング処理
   const filteredResults = useMemo(() => {
     return results.filter((item) => {
-      // 月フィルタ
-      if (selectedMonth !== 'ALL' && item.targetMonth !== selectedMonth) {
+      // 表示範囲フィルタ: 月ごと(選択した1ヶ月 or 全期間) / 年間(決算期、選択中の決算期の12ヶ月分)
+      if (viewScope === 'fiscalYear') {
+        if (!fiscalYearMonthSet.has(item.targetMonth)) return false;
+      } else if (selectedMonth !== 'ALL' && item.targetMonth !== selectedMonth) {
         return false;
       }
 
@@ -65,7 +97,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
       }
 
       // 特殊フィルタ
-      if (filterType === 'ALERTS_ONLY' && item.alerts.length === 0) return false;
+      if (filterType === 'ALERTS_ONLY' && !hasActionableAlerts(item.alerts)) return false;
       if (filterType === 'TRANSPORT_MISMATCH' && (item.transportDiff === 0 || !item.transportDataAvailable)) return false;
       if (filterType === 'NEGATIVE' && item.grossProfitExTax >= 0) return false;
       if (filterType === 'LOW_MARGIN' && (item.grossProfitRate >= lowMarginThreshold || item.grossProfitExTax < 0)) return false;
@@ -86,7 +118,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
       }
       return 0;
     });
-  }, [results, searchQuery, selectedMonth, filterType, sortField, sortDirection, lowMarginThreshold]);
+  }, [results, searchQuery, viewScope, selectedMonth, fiscalYearMonthSet, filterType, sortField, sortDirection, lowMarginThreshold]);
 
   const handleSort = (field: keyof GrossProfitResult) => {
     if (sortField === field) {
@@ -97,70 +129,126 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
     }
   };
 
+  const billingAmountLabel = amountDisplay === 'incTax' ? `請求額 (税込 ${Math.round(taxRate * 100)}%)` : '請求額 (税抜)';
+  const grossProfitLabel = amountDisplay === 'incTax' ? `粗利益 (税込 ${Math.round(taxRate * 100)}%)` : '粗利益 (税抜)';
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-8">
       {/* テーブル制御ツールバー */}
-      <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+      <div className="p-4 bg-slate-50 border-b border-slate-200 space-y-3">
+        {/* 1段目: 表示範囲切り替え(月ごと / 年間・決算期) */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* 検索ボックス */}
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              placeholder="スタッフ名・No・派遣先・請求No..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-            />
+          <span className="text-[11px] font-bold text-slate-500">表示範囲:</span>
+          <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">
+            <button
+              onClick={() => setViewScope('month')}
+              className={`inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-bold transition-colors ${
+                viewScope === 'month' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <CalendarDays className="w-3.5 h-3.5" />
+              <span>月ごと</span>
+            </button>
+            <button
+              onClick={() => setViewScope('fiscalYear')}
+              className={`inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-bold border-l border-slate-300 transition-colors ${
+                viewScope === 'fiscalYear' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <CalendarRange className="w-3.5 h-3.5" />
+              <span>年間(決算期)</span>
+            </button>
           </div>
 
-          {/* 対象年月フィルタ */}
-          <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-          >
-            <option value="ALL">全対象年月 ({results.length}件)</option>
-            {availableMonths.map((m) => (
-              <option key={m} value={m}>
-                {m}度
-              </option>
-            ))}
-          </select>
-
-          {/* 状態別フィルタ */}
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-            className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-          >
-            <option value="ALL">すべて表示</option>
-            <option value="ALERTS_ONLY">⚠️ 要確認・警告のみ</option>
-            <option value="TRANSPORT_MISMATCH">🚗 交通費不一致のみ</option>
-            <option value="NEGATIVE">🔴 赤字案件のみ</option>
-            <option value="LOW_MARGIN">🟡 低粗利 (&lt;{lowMarginThreshold}%)</option>
-            <option value="REFERRAL">💼 紹介手数料あり</option>
-          </select>
+          {viewScope === 'month' ? (
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+            >
+              <option value="ALL">全対象年月 ({results.length}件)</option>
+              {availableMonths.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-bold text-indigo-700">
+              {fiscalYearLabel}
+            </span>
+          )}
         </div>
 
-        {/* 右側: エクスポートボタン & 件数表示 */}
-        <div className="flex items-center space-x-3">
-          <span className="text-xs text-slate-500">
-            表示: <strong className="text-slate-800 font-bold">{filteredResults.length}</strong> / {results.length} 件
-          </span>
+        {/* 2段目: 検索・状態フィルタ・税抜税込切替・件数・エクスポート */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 検索ボックス */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="スタッフ名・No・派遣先・請求No..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              />
+            </div>
 
-          <button
-            onClick={onExportCsv}
-            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>CSVエクスポート</span>
-          </button>
+            {/* 状態別フィルタ */}
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+            >
+              <option value="ALL">すべて表示</option>
+              <option value="ALERTS_ONLY">⚠️ 要確認・警告のみ</option>
+              <option value="TRANSPORT_MISMATCH">🚗 交通費不一致のみ</option>
+              <option value="NEGATIVE">🔴 赤字案件のみ</option>
+              <option value="LOW_MARGIN">🟡 低粗利 (&lt;{lowMarginThreshold}%)</option>
+              <option value="REFERRAL">💼 紹介手数料あり</option>
+            </select>
+
+            {/* 税抜/税込表示切替 */}
+            <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden" title="ヘッダーの消費税率設定を「請求額」「粗利益」列に反映します">
+              <button
+                onClick={() => setAmountDisplay('exTax')}
+                className={`px-3 py-1.5 text-xs font-bold transition-colors ${
+                  amountDisplay === 'exTax' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                税抜表示
+              </button>
+              <button
+                onClick={() => setAmountDisplay('incTax')}
+                className={`px-3 py-1.5 text-xs font-bold border-l border-slate-300 transition-colors ${
+                  amountDisplay === 'incTax' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                税込表示
+              </button>
+            </div>
+          </div>
+
+          {/* 右側: エクスポートボタン & 件数表示 */}
+          <div className="flex items-center space-x-3">
+            <span className="text-xs text-slate-500">
+              表示: <strong className="text-slate-800 font-bold">{filteredResults.length}</strong> / {results.length} 件
+            </span>
+
+            <button
+              onClick={onExportCsv}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>CSVエクスポート</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* メインテーブル */}
-      <div className="overflow-x-auto">
+      {/* メインテーブル (table-scroll: 常時視認できる横スクロールバーをマウス操作用に表示) */}
+      <div className="overflow-x-auto table-scroll">
         <table className="w-full text-left text-xs border-collapse">
           <thead>
             <tr className="bg-slate-100/80 text-slate-700 font-bold border-b border-slate-200">
@@ -177,7 +265,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                 派遣先企業
               </th>
               <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('billingAmountExTax')}>
-                請求額 (税抜)
+                {billingAmountLabel}
               </th>
               <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('paymentAmount')}>
                 給与支給額
@@ -191,11 +279,11 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('paidLeaveAllowance')} title="給与CSV由来の参考値。粗利計算には影響しません">
                 有給 (手当/日数)
               </th>
-              <th className="py-3 px-3 text-right bg-amber-50/50" title="粗利非算入・売上算入">
-                紹介料 <Info className="inline w-3 h-3 text-amber-600" />
+              <th className="py-3 px-3 text-right bg-amber-50/50" title="粗利非算入・売上算入。消費税計算の対象外(既存仕様のまま)">
+                紹介料 <span className="text-amber-600">ⓘ</span>
               </th>
               <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200 bg-indigo-50/50" onClick={() => handleSort('grossProfitExTax')}>
-                粗利益 (税抜)
+                {grossProfitLabel}
               </th>
               <th className="py-3 px-3 text-center cursor-pointer hover:bg-slate-200 bg-indigo-50/50" onClick={() => handleSort('grossProfitRate')}>
                 粗利率
@@ -220,6 +308,9 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                 // 粗利計算に実際に使われるのは社保負担額(請求CSV由来)+駐車場代のみ。
                 // 雇用保険は社保負担額に含まれている想定の参考値のため合計には含めない(要検算タブ参照)
                 const socialAndOtherCost = row.socialInsurance + row.parkingFee;
+                const displayBillingAmount = amountDisplay === 'incTax' ? row.billingAmountIncTax : row.billingAmountExTax;
+                const displayGrossProfit = amountDisplay === 'incTax' ? row.grossProfitIncTax : row.grossProfitExTax;
+                const actionableAlertCount = countActionableAlerts(row.alerts);
 
                 return (
                   <tr
@@ -274,7 +365,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                       </div>
                     </td>
                     <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
-                      ¥{row.billingAmountExTax.toLocaleString()}
+                      ¥{displayBillingAmount.toLocaleString()}
                     </td>
                     <td className="py-2.5 px-3 text-right font-mono text-slate-700 whitespace-nowrap">
                       ¥{row.paymentAmount.toLocaleString()}
@@ -296,7 +387,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                         isNegative ? 'text-rose-600' : 'text-emerald-700'
                       }`}
                     >
-                      ¥{row.grossProfitExTax.toLocaleString()}
+                      ¥{displayGrossProfit.toLocaleString()}
                     </td>
                     <td className="py-2.5 px-3 text-center whitespace-nowrap bg-indigo-50/30">
                       <span
@@ -343,18 +434,18 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                       )}
                     </td>
 
-                    {/* 監査ステータス */}
+                    {/* 監査ステータス (★2026-08-26修正: info severityは含めず、warning/errorのみで判定) */}
                     <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                      {row.alerts.length === 0 ? (
+                      {actionableAlertCount === 0 ? (
                         <span className="inline-flex items-center space-x-1 text-emerald-600 text-[11px] font-medium">
                           <CheckCircle className="w-3.5 h-3.5" />
                           <span>正常</span>
                         </span>
                       ) : (
-                        <div className="flex items-center justify-center space-x-1">
+                        <div className="flex items-center justify-center space-x-1" title={row.alerts.map((a) => a.message).join(' / ')}>
                           <AlertTriangle className="w-4 h-4 text-amber-500" />
                           <span className="font-bold text-amber-700 text-[11px]">
-                            要確認 ({row.alerts.length})
+                            要確認 ({actionableAlertCount})
                           </span>
                         </div>
                       )}

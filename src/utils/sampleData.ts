@@ -61,20 +61,6 @@ B202606-001,2026-06-30,2026-07-31,未印刷,未送付,2619
 B202606-002,2026-06-30,2026-07-31,未印刷,未送付,2405
 B202606-003,2026-06-30,2026-07-31,未印刷,未送付,3024`;
 
-export const SAMPLE_RETIREMENT_CSV = `対象年月,スタッフNo,退職金配賦額,備考
-2026-04,S1001,12000,毎月定額積立配賦
-2026-04,S1002,10000,毎月定額積立配賦
-2026-04,S1003,15000,毎月定額積立配賦
-2026-04,S1004,11000,毎月定額積立配賦
-2026-04,S1005,8000,毎月定額積立配賦
-2026-05,S1001,12000,毎月定額積立配賦
-2026-05,S1002,10000,毎月定額積立配賦
-2026-05,S1003,15000,毎月定額積立配賦
-2026-05,S1004,11000,毎月定額積立配賦
-2026-06,S1001,12000,毎月定額積立配賦
-2026-06,S1002,10000,毎月定額積立配賦
-2026-06,S1003,15000,毎月定額積立配賦`;
-
 export function getSamplePayrollData(): PayrollRow[] {
   // regularAmount(時間内)・regularHours(時間内時間)は支払＠算出用のデモ値。
   // 実データでは"164:30"のようなH:MM形式だが、ここではパース後の10進数値を直接指定している。
@@ -137,19 +123,20 @@ export function getSampleInvoicePrintData(): InvoicePrintRow[] {
   ];
 }
 
+// ★2026-08-26: 退職金はCSV取込から手入力方式に変更したため、サンプル行にも一意なidを付与する。
 export function getSampleRetirementData(): RetirementRow[] {
   return [
-    { targetMonth: '2026-04', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-04', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-04', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-04', staffNo: 'S1004', retirementAmount: 11000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-04', staffNo: 'S1005', retirementAmount: 8000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-05', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-05', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-05', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-05', staffNo: 'S1004', retirementAmount: 11000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-06', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-06', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
-    { targetMonth: '2026-06', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202604_S1001', targetMonth: '2026-04', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202604_S1002', targetMonth: '2026-04', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202604_S1003', targetMonth: '2026-04', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202604_S1004', targetMonth: '2026-04', staffNo: 'S1004', retirementAmount: 11000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202604_S1005', targetMonth: '2026-04', staffNo: 'S1005', retirementAmount: 8000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202605_S1001', targetMonth: '2026-05', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202605_S1002', targetMonth: '2026-05', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202605_S1003', targetMonth: '2026-05', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202605_S1004', targetMonth: '2026-05', staffNo: 'S1004', retirementAmount: 11000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202606_S1001', targetMonth: '2026-06', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202606_S1002', targetMonth: '2026-06', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
+    { id: 'SAMPLE_RET_202606_S1003', targetMonth: '2026-06', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
   ];
 }

@@ -9,7 +9,7 @@
  */
 
 import Papa from 'papaparse';
-import { PayrollRow, BillingRow, InvoicePrintRow, RetirementRow } from '../types';
+import { PayrollRow, BillingRow, InvoicePrintRow } from '../types';
 
 /**
  * 数値文字列を安全にパース (カンマ除去, null/undefined/空文字処理)
@@ -315,27 +315,5 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
     .filter((r) => r.billingNo);
 }
 
-/**
- * 退職金CSVのパース
- */
-export function parseRetirementCsv(csvText: string): RetirementRow[] {
-  const parsed = Papa.parse<Record<string, string>>(csvText, {
-    header: true,
-    skipEmptyLines: true,
-  });
-
-  return parsed.data
-    .map((row) => {
-      const monthKey = findColumnKey(row, ['対象年月', '年月']);
-      const staffNoKey = findColumnKey(row, ['スタッフNo', 'スタッフ番号', '社員番号']);
-      const amountKey = findColumnKey(row, ['退職金配賦額', '退職金', '配賦額']);
-
-      return {
-        targetMonth: normalizeMonth(row[monthKey]),
-        staffNo: parseSafeString(row[staffNoKey]),
-        retirementAmount: parseSafeNumber(row[amountKey]),
-        memo: row['備考'] || '',
-      };
-    })
-    .filter((r) => r.staffNo && r.targetMonth);
-}
+// ★2026-08-26: 退職金は実運用上CSVでの取込対象ではなく手入力すべき項目のため、
+// CSVパース関数は廃止した(手入力UIはsrc/components/RetirementPanel.tsx参照)。

@@ -48,7 +48,8 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
           </div>
           <div className="text-[10px] text-slate-400 mt-1">
             派遣: ¥{summary.totalSalesExTax.toLocaleString()} <br />
-            紹介: ¥{summary.totalReferralFee.toLocaleString()}
+            紹介: ¥{summary.totalReferralFee.toLocaleString()} <br />
+            派遣売上(税込): ¥{summary.totalRevenueIncTax.toLocaleString()}
           </div>
         </div>
 
@@ -62,6 +63,8 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
           </div>
           <div className="text-[10px] text-indigo-300 mt-1">
             全体粗利率: <strong className="text-white text-xs">{summary.overallGrossMarginRate}%</strong>
+            <br />
+            税込換算: ¥{summary.totalGrossProfitIncTax.toLocaleString()}
           </div>
         </div>
 
@@ -280,7 +283,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
           <span>得意先別 粗利益貢献度順位</span>
         </h3>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto table-scroll">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold">

@@ -42,6 +42,53 @@ function getDefaultFiscalYearStart(): string {
   return `${currentYear}-${FALLBACK_FISCAL_START_MONTH.padStart(2, '0')}`;
 }
 
+/**
+ * 決算期開始年月("YYYY-MM")から、その決算期に属するmonthsCount ヶ月分の対象年月("YYYY-MM")配列を
+ * 組み立てる。calculateFiscalYearSummaryの期間フィルタと、UI側(月次粗利明細一覧の
+ * 「年間(決算期)」表示切替)の両方から共通で使う。
+ */
+export function getFiscalYearMonths(
+  startFiscalMonth: string = getDefaultFiscalYearStart(),
+  monthsCount: number = 12
+): string[] {
+  const targetMonths: string[] = [];
+  const [startYearStr, startMonthStr] = startFiscalMonth.split('-');
+  let currentYear = parseInt(startYearStr, 10);
+  let currentMonth = parseInt(startMonthStr, 10);
+
+  for (let i = 0; i < monthsCount; i++) {
+    const yStr = currentYear.toString();
+    const mStr = currentMonth < 10 ? `0${currentMonth}` : `${currentMonth}`;
+    targetMonths.push(`${yStr}-${mStr}`);
+
+    currentMonth++;
+    if (currentMonth > 12) {
+      currentMonth = 1;
+      currentYear++;
+    }
+  }
+  return targetMonths;
+}
+
+/**
+ * 監査アラートのうち、実際に確認・対応が必要な重要度('warning'|'error')だけを判定する。
+ * severity='info'(社保負担額の差異検出・20日締重複統合ログ等、あくまで参考・透明化目的のログ)は
+ * カウントに含めない。
+ *
+ * ★2026-08-26: 「月次粗利明細一覧の監査ステータスがほぼ全件『要確認』になる」不具合の原因調査結果、
+ * UI側(監査ステータス列・ヘッダーの要確認バッジ)が `alerts.length > 0` (=info含む全アラート)を
+ * そのまま「要確認」判定に使っていたことが判明した。実データでは社保負担額の突合(info)がほぼ全件で
+ * 差異を検出するため、対応不要な参考ログまで「要確認」に見えてしまっていた。severityで
+ * warning/errorのみを実際の要確認対象とすることで、本来対応が必要な項目だけが強調されるようにする。
+ */
+export function hasActionableAlerts(alerts: AuditAlert[]): boolean {
+  return alerts.some((a) => a.severity === 'warning' || a.severity === 'error');
+}
+
+export function countActionableAlerts(alerts: AuditAlert[]): number {
+  return alerts.filter((a) => a.severity === 'warning' || a.severity === 'error').length;
+}
+
 interface MergedBillingRow extends BillingRow {
   mergedRowCount: number;   // 統合された請求行数 (1なら統合なし)
   mergedOrderNos: string[]; // 統合元の受注番号一覧
@@ -208,8 +255,11 @@ export function calculateGrossProfit(
     // 粗利益（税抜）＝ 請求額 − 支払額(請求CSV由来) − 社保負担額(請求CSV由来) − 駐車場料金 − 退職金
     const grossProfitExTax = billingAmountExTax - paymentAmount - socialInsurance - parkingFee - retirementAmount;
 
-    // 税込想定粗利
-    const grossProfitIncTax = Math.round(grossProfitExTax * (1 + taxRate));
+    // 税込粗利益 = 請求額(税込) − 原価(給与・社保・駐車場・退職金はいずれも不課税のため税率を掛けない)。
+    // ★2026-08-26修正: 旧実装は grossProfitExTax * (1+taxRate) としており、本来消費税がかからない
+    // 原価項目にまで税率が掛かってしまう不具合があった(消費税切替が「表示だけで計算に反映されない」
+    // 問題の原因調査で判明。修正方針の詳細は本ファイル冒頭のコメント、および実施報告を参照)。
+    const grossProfitIncTax = billingAmountIncTax - paymentAmount - socialInsurance - parkingFee - retirementAmount;
 
     // 粗利率 (%)
     const grossProfitRate =
@@ -384,7 +434,8 @@ export function calculateGrossProfit(
         mergedRowCount: 0,
         mergedOrderNos: [],
         grossProfitExTax: -totalCostExTax,
-        grossProfitIncTax: -Math.round(totalCostExTax * (1 + taxRate)),
+        // 請求(課税売上)が存在しない給与のみの行のため、税込粗利益も税抜と同額(不課税の原価のみ。税率は掛けない)
+        grossProfitIncTax: -totalCostExTax,
         grossProfitRate: 0,
         transportDiff: payroll.salaryTransport,
         transportStatus: 'UNDER_BILLED',
@@ -478,7 +529,8 @@ export function calculateGrossProfit(
       mergedRowCount: 0,
       mergedOrderNos: [],
       grossProfitExTax: -amount,
-      grossProfitIncTax: -Math.round(amount * (1 + taxRate)),
+      // 休業手当は給与と同様に不課税のため、税込粗利益も税抜と同額(税率は掛けない)
+      grossProfitIncTax: -amount,
       grossProfitRate: 0,
       transportDiff: 0,
       transportStatus: 'MATCH',
@@ -522,7 +574,9 @@ export function calculateGrossProfit(
       mergedRowCount: 0,
       mergedOrderNos: [],
       grossProfitExTax,
-      grossProfitIncTax: Math.round(grossProfitExTax * (1 + taxRate)),
+      // 売上側(SALES)は課税のため税率を掛けるが、原価側(COST)は給与相当の調整で不課税のため
+      // 税率を掛けない(★2026-08-26修正。旧実装はCOST側にも一律で税率を掛けていた)
+      grossProfitIncTax: isSales ? Math.round(amount * (1 + taxRate)) : -amount,
       grossProfitRate: 0,
       transportDiff: 0,
       transportStatus: 'MATCH',
@@ -552,22 +606,8 @@ export function calculateFiscalYearSummary(
   monthsCount: number = 12
 ): FiscalYearSummary {
   // 年月リストを生成 (例: 2026-04 から 12か月分)
-  const targetMonths: string[] = [];
-  const [startYearStr, startMonthStr] = startFiscalMonth.split('-');
-  let currentYear = parseInt(startYearStr, 10);
-  let currentMonth = parseInt(startMonthStr, 10);
-
-  for (let i = 0; i < monthsCount; i++) {
-    const yStr = currentYear.toString();
-    const mStr = currentMonth < 10 ? `0${currentMonth}` : `${currentMonth}`;
-    targetMonths.push(`${yStr}-${mStr}`);
-
-    currentMonth++;
-    if (currentMonth > 12) {
-      currentMonth = 1;
-      currentYear++;
-    }
-  }
+  const targetMonths = getFiscalYearMonths(startFiscalMonth, monthsCount);
+  const [startYearStr] = startFiscalMonth.split('-');
 
   // 対象期間にフィルタリング
   const periodResults = results.filter((r) => targetMonths.includes(r.targetMonth));
@@ -589,6 +629,8 @@ export function calculateFiscalYearSummary(
   let totalNextMonthAdjustmentSales = 0;
   let totalNextMonthAdjustmentCost = 0;
   let totalGrossProfit = 0;
+  let totalGrossProfitIncTax = 0;
+  let totalRevenueIncTax = 0;
   let totalTransportSalary = 0;
   let totalTransportBilling = 0;
   let totalPaidLeaveAmount = 0;
@@ -635,13 +677,18 @@ export function calculateFiscalYearSummary(
     if (r.manualEntryType === 'NEXT_MONTH_ADJUSTMENT_SALES') totalNextMonthAdjustmentSales += r.billingAmountExTax;
     if (r.manualEntryType === 'NEXT_MONTH_ADJUSTMENT_COST') totalNextMonthAdjustmentCost += r.paymentAmount;
     totalGrossProfit += r.grossProfitExTax;
+    // 税込ベースの集計 (★2026-08-26追加。消費税率設定を決算期集計にも反映させるため)
+    totalGrossProfitIncTax += r.grossProfitIncTax;
+    totalRevenueIncTax += r.billingAmountIncTax;
     totalTransportSalary += r.salaryTransport;
     totalTransportBilling += r.billingTransport;
     // 請求＠ (大阪人材集計シート方式: 契約ごとの請求単価の単純合計。重み付けしない)
     totalBillingUnitPrice += r.billingUnitPrice;
     // 支払＠ (同じく単純合計。時間内時間0の行は0が入っているため自動的に寄与しない)
     totalPayUnitPrice += r.payUnitPrice;
-    alertCount += r.alerts.length;
+    // ★2026-08-26修正: info severity(社保負担額の差異検出など、参考ログ)を除いた
+    // warning/error件数のみを「要確認アラート数」としてカウントする(hasActionableAlerts参照)
+    alertCount += countActionableAlerts(r.alerts);
 
     if (r.staffNo && r.staffNo !== 'N/A') {
       staffSet.add(r.staffNo);
@@ -678,7 +725,7 @@ export function calculateFiscalYearSummary(
       mTrend.transportDiff += r.transportDiff;
       mTrend.billingUnitPriceSum += r.billingUnitPrice;
       mTrend.payUnitPriceSum += r.payUnitPrice;
-      mTrend.alertCount += r.alerts.length;
+      mTrend.alertCount += countActionableAlerts(r.alerts);
       mTrend.grossMarginRate =
         mTrend.dispatchSales > 0
           ? Number(((mTrend.grossProfit / mTrend.dispatchSales) * 100).toFixed(2))
@@ -738,6 +785,8 @@ export function calculateFiscalYearSummary(
     totalNextMonthAdjustmentSales,
     totalNextMonthAdjustmentCost,
     totalGrossProfit,
+    totalGrossProfitIncTax,
+    totalRevenueIncTax,
     overallGrossMarginRate,
     totalTransportSalary,
     totalTransportBilling,

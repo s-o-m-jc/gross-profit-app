@@ -1,1 +1,27 @@
 @import "tailwindcss";
+
+/*
+ * 横スクロール可能なテーブルラッパー用の共通スタイル。
+ * Windows/Chromeのオーバーレイスクロールバーは既定だと細く・ホバー時のみ表示されるため
+ * 見落とされやすい(要望: 明細テーブルをマウスで横スクロールしたい)。
+ * 常時視認できる太さ・色のスクロールバーを明示的に描画する。
+ * overflow-x-auto の div に `.table-scroll` を併用する。
+ */
+.table-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: #94a3b8 #f1f5f9;
+}
+.table-scroll::-webkit-scrollbar {
+  height: 12px;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background-color: #94a3b8;
+  border-radius: 9999px;
+  border: 2px solid #f1f5f9;
+}
+.table-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #64748b;
+}

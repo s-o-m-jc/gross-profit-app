@@ -61,8 +61,10 @@ export interface InvoicePrintRow {
   unitPrice: number;
 }
 
-// 退職金データレコード
+// 退職金データレコード (★2026-08-26: CSV取込から手入力フォームに変更。休業分補償等と同じく
+// 1件ずつ追加/削除する手入力方式のため、一覧表示・削除操作用にidを持つ)
 export interface RetirementRow {
+  id: string;                  // ユニーク識別子 (手入力行の一覧表示・削除用)
   targetMonth: string;         // 対象年月
   staffNo: string;             // スタッフNo
   retirementAmount: number;    // 退職金配賦額 (毎月分)
@@ -219,6 +221,11 @@ export interface FiscalYearSummary {
   totalNextMonthAdjustmentCost: number;  // 次月調整合計・原価側 (符号付き)
 
   totalGrossProfit: number;    // 総粗利益 (税抜)
+  // ★2026-08-26追加: 消費税率設定(ヘッダーの「消費税率」)を反映した税込ベースの集計値。
+  // 課税対象は売上側(請求額)のみで、給与・社保・駐車場代・退職金等の原価項目は不課税のため
+  // 税率を掛けない(GrossProfitResult.grossProfitIncTaxの計算方針と同じ。詳細はcalculator.ts参照)。
+  totalGrossProfitIncTax: number; // 総粗利益 (税込)
+  totalRevenueIncTax: number;     // 派遣売上高 (税込。請求額の税込換算のみ。紹介手数料は含まない)
   overallGrossMarginRate: number; // 全体粗利率 (%)
 
   totalTransportSalary: number;   // 給与交通費総額

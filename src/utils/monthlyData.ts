@@ -49,11 +49,15 @@ export interface MonthlyDataState {
 
 export type MonthlyCategory = keyof MonthlyDataState;
 
-/** 手入力調整項目(1件ずつ追加/削除する3カテゴリ)を指すキーのユニオン */
+/**
+ * 手入力調整項目(1件ずつ追加/削除するカテゴリ)を指すキーのユニオン。
+ * ★2026-08-26: retirementRows(退職金)もCSV取込から手入力方式に変更したため追加。
+ */
 export type ManualEntryCategory =
   | 'leaveCompensationRows'
   | 'leaveAllowanceRows'
-  | 'nextMonthAdjustmentRows';
+  | 'nextMonthAdjustmentRows'
+  | 'retirementRows';
 
 /** 対象月が空/判定不能だった行の格納先 (実際のYYYY-MM形式とは衝突しない固定文字列) */
 export const UNKNOWN_MONTH_KEY = '対象月不明';

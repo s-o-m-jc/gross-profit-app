@@ -16,7 +16,9 @@ import {
 import { Header } from './components/Header';
 import { CsvUploader } from './components/CsvUploader';
 import { MonthlyDataPanel } from './components/MonthlyDataPanel';
+import { ChangeHistoryPanel } from './components/ChangeHistoryPanel';
 import { ManualAdjustmentsPanel } from './components/ManualAdjustmentsPanel';
+import { RetirementPanel } from './components/RetirementPanel';
 import { MonthlyCalculationTable } from './components/MonthlyCalculationTable';
 import { AnomalyAuditPanel } from './components/AnomalyAuditPanel';
 import { FiscalYearAnalytics } from './components/FiscalYearAnalytics';
@@ -33,10 +35,11 @@ import {
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
 } from './types';
-import { calculateGrossProfit, calculateFiscalYearSummary } from './utils/calculator';
+import { calculateGrossProfit, calculateFiscalYearSummary, getFiscalYearMonths } from './utils/calculator';
 import { COMPANIES, DEFAULT_COMPANY_ID, getCompanyConfig, CompanyId } from './config/companies';
 import {
   AppMonthlyData,
+  CompanyMonthlyData,
   MonthlyDataState,
   ManualEntryCategory,
   initialAppMonthlyData,
@@ -53,6 +56,14 @@ import { loadAppState, saveAppState } from './utils/persistence';
 import { fetchMonthlyDataForCompanies, replaceCompanyMonthlyData } from './utils/supabaseSync';
 import { downloadBackupFile, parseBackupFile } from './utils/backupFile';
 import { useAuth, Profile } from './lib/AuthContext';
+
+/**
+ * ★2026-08-26: 拠点ごとの項目対応表の整理が終わるまで、休業分補償・休業手当・次月調整の
+ * 手入力調整パネルは実運用では使わない方針となったため、UI表示のみ一時的にオフにする。
+ * データモデル・保存ロジック(addManualEntryRow/removeManualEntryRow等)はそのまま残しており、
+ * このフラグをtrueに戻せば即座に再表示できる。
+ */
+const SHOW_MANUAL_ADJUSTMENTS_PANEL = false;
 
 /**
  * 決算開始月(会社ごとに異なる。src/config/companiesの設定テーブル参照)から、
@@ -166,6 +177,13 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // Supabaseへの接続に失敗し、IndexedDBキャッシュ(閲覧専用)にフォールバックしたかどうか
   const [isOffline, setIsOffline] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  // CSVアップロードの「取り消し」機能用。アップロード直前(1操作分のみ)の会社の月別データを保持する。
+  // 会社を切り替えると別会社のスナップショットは無効化する(canUndoの判定でcompanyId一致を必須にする)。
+  const [undoSnapshot, setUndoSnapshot] = useState<{
+    companyId: CompanyId;
+    companyMonths: CompanyMonthlyData;
+    label: string;
+  } | null>(null);
 
   const selectedCompanyMonths = monthlyData[selectedCompanyId];
   // 選択中の会社の全月のデータを1つのフラットな束にまとめる(粗利計算エンジンへの入力用)。
@@ -185,6 +203,12 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
   const [fiscalYear, setFiscalYear] = useState<string>(fiscalYearOptions[0].value);
   const [activeTab, setActiveTab] = useState<'monthly' | 'fiscal' | 'audit'>('monthly');
+  // 月次粗利明細一覧の「年間(決算期)」表示切替用: 選択中の決算期に属する12ヶ月分の対象年月一覧とラベル
+  const fiscalYearMonths = useMemo(() => getFiscalYearMonths(fiscalYear, 12), [fiscalYear]);
+  const fiscalYearLabel = useMemo(
+    () => fiscalYearOptions.find((opt) => opt.value === fiscalYear)?.label ?? fiscalYear,
+    [fiscalYearOptions, fiscalYear]
+  );
 
   // モーダル表示フラグ
   const [isMCodeGuideOpen, setIsMCodeGuideOpen] = useState(false);
@@ -282,7 +306,10 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // 選択中の会社・該当する対象月のバケツだけを更新するアップロードハンドラ群。
   // 同一月への再アップロードは、その月のそのカテゴリだけをクリーンに置き換える
   // (他の月・他のカテゴリ・他社のデータには一切触れない)。
+  // ★2026-08-26: 誤って別のCSVをアップロードした場合に備え、適用前の状態を1操作分だけ
+  // undoSnapshotに保持しておく(CsvUploaderの「直前のアップロードを取り消す」ボタン用)。
   const handlePayrollLoaded = (rows: PayrollRow[]) => {
+    setUndoSnapshot({ companyId: selectedCompanyId, companyMonths: selectedCompanyMonths, label: `給与データCSV読込 (${selectedCompany.name})` });
     setMonthlyData((prev) => ({
       ...prev,
       [selectedCompanyId]: mergeGroupedRowsIntoCompanyMonths(
@@ -293,6 +320,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     }));
   };
   const handleBillingLoaded = (rows: BillingRow[]) => {
+    setUndoSnapshot({ companyId: selectedCompanyId, companyMonths: selectedCompanyMonths, label: `請求データCSV読込 (${selectedCompany.name})` });
     setMonthlyData((prev) => ({
       ...prev,
       [selectedCompanyId]: mergeGroupedRowsIntoCompanyMonths(
@@ -302,19 +330,10 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       ),
     }));
   };
-  const handleRetirementLoaded = (rows: RetirementRow[]) => {
-    setMonthlyData((prev) => ({
-      ...prev,
-      [selectedCompanyId]: mergeGroupedRowsIntoCompanyMonths(
-        prev[selectedCompanyId],
-        'retirementRows',
-        groupByTargetMonth(rows)
-      ),
-    }));
-  };
   // 請求書印刷CSVも、請求支払一覧CSVと同じくファイル名から対象月を取得し(11-2章)、
   // 他の3カテゴリと同じ月バケツ方式で保持する。
   const handleInvoiceLoaded = (rows: InvoicePrintRow[]) => {
+    setUndoSnapshot({ companyId: selectedCompanyId, companyMonths: selectedCompanyMonths, label: `請求書印刷CSV読込 (${selectedCompany.name})` });
     setMonthlyData((prev) => ({
       ...prev,
       [selectedCompanyId]: mergeGroupedRowsIntoCompanyMonths(
@@ -323,6 +342,11 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         groupByTargetMonth(rows)
       ),
     }));
+  };
+  const handleUndoLastCsvUpload = () => {
+    if (!undoSnapshot || undoSnapshot.companyId !== selectedCompanyId) return;
+    setMonthlyData((prev) => ({ ...prev, [undoSnapshot.companyId]: undoSnapshot.companyMonths }));
+    setUndoSnapshot(null);
   };
 
   // 15章: 手入力調整項目(休業分補償・休業手当・次月調整)の追加/削除ハンドラ群。
@@ -355,6 +379,10 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     handleAddManualEntry('nextMonthAdjustmentRows', row);
   const handleRemoveNextMonthAdjustment = (row: NextMonthAdjustmentRow) =>
     handleRemoveManualEntry('nextMonthAdjustmentRows', row.targetMonth, row.id);
+  // 退職金配賦(★2026-08-26: CSV取込から手入力方式に変更。休業分補償等と同じく1件ずつ追加/削除する)
+  const handleAddRetirement = (row: RetirementRow) => handleAddManualEntry('retirementRows', row);
+  const handleRemoveRetirement = (row: RetirementRow) =>
+    handleRemoveManualEntry('retirementRows', row.targetMonth, row.id);
 
   const handleLoadSampleData = () => {
     setMonthlyData((prev) => ({
@@ -494,16 +522,33 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
           canEdit={canEdit}
         />
 
-        {/* 手入力調整パネル (休業分補償・休業手当・次月調整) */}
-        <ManualAdjustmentsPanel
+        {/* 変更履歴(自動バックアップ)パネル。adminのみ(RLSでもadminのみ参照可) */}
+        {canEdit && !isOffline && (
+          <ChangeHistoryPanel companyId={selectedCompanyId} companyName={selectedCompany.name} />
+        )}
+
+        {/* 手入力調整パネル (休業分補償・休業手当・次月調整)
+            ★2026-08-26: 拠点ごとの項目対応表の整理が終わるまでUI非表示(SHOW_MANUAL_ADJUSTMENTS_PANEL参照) */}
+        {SHOW_MANUAL_ADJUSTMENTS_PANEL && (
+          <ManualAdjustmentsPanel
+            companyName={selectedCompany.name}
+            companyMonths={selectedCompanyMonths}
+            onAddLeaveCompensation={handleAddLeaveCompensation}
+            onRemoveLeaveCompensation={handleRemoveLeaveCompensation}
+            onAddLeaveAllowance={handleAddLeaveAllowance}
+            onRemoveLeaveAllowance={handleRemoveLeaveAllowance}
+            onAddNextMonthAdjustment={handleAddNextMonthAdjustment}
+            onRemoveNextMonthAdjustment={handleRemoveNextMonthAdjustment}
+            canEdit={canEdit}
+          />
+        )}
+
+        {/* 退職金配賦 手入力パネル (★2026-08-26: CSV取込から手入力方式に変更) */}
+        <RetirementPanel
           companyName={selectedCompany.name}
           companyMonths={selectedCompanyMonths}
-          onAddLeaveCompensation={handleAddLeaveCompensation}
-          onRemoveLeaveCompensation={handleRemoveLeaveCompensation}
-          onAddLeaveAllowance={handleAddLeaveAllowance}
-          onRemoveLeaveAllowance={handleRemoveLeaveAllowance}
-          onAddNextMonthAdjustment={handleAddNextMonthAdjustment}
-          onRemoveNextMonthAdjustment={handleRemoveNextMonthAdjustment}
+          onAdd={handleAddRetirement}
+          onRemove={handleRemoveRetirement}
           canEdit={canEdit}
         />
 
@@ -513,12 +558,13 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             payrollRows={payrollRows}
             billingRows={billingRows}
             invoiceRows={invoiceRows}
-            retirementRows={retirementRows}
             onPayrollLoaded={handlePayrollLoaded}
             onBillingLoaded={handleBillingLoaded}
             onInvoiceLoaded={handleInvoiceLoaded}
-            onRetirementLoaded={handleRetirementLoaded}
             onClearAll={handleClearAll}
+            canUndo={!!undoSnapshot && undoSnapshot.companyId === selectedCompanyId}
+            undoLabel={undoSnapshot?.label}
+            onUndo={handleUndoLastCsvUpload}
           />
         )}
 
@@ -583,6 +629,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             taxRate={taxRate}
             lowMarginThreshold={defaultLowMarginThreshold}
             onExportCsv={() => setIsExportModalOpen(true)}
+            fiscalYearMonths={fiscalYearMonths}
+            fiscalYearLabel={fiscalYearLabel}
           />
         )}
 

@@ -1,6 +1,10 @@
 /**
  * 派遣事業 粗利・経理管理システム (Power Query v1.1 互換)
  * CSVファイル取り込みコンポーネント
+ *
+ * ★2026-08-26: 「④退職金・調整CSV」は手入力方式(RetirementPanel.tsx)に変更したため、
+ * このコンポーネントからは撤去した。あわせて、クリックでのファイル選択に加えて
+ * ドラッグ&ドロップでのアップロード、直前のアップロードを取り消す「取り消し」ボタンを追加した。
  */
 
 import React, { useRef, useState } from 'react';
@@ -14,51 +18,57 @@ import {
   AlertCircle,
   AlertTriangle,
   FileText,
+  Undo2,
 } from 'lucide-react';
 import {
   parsePayrollCsv,
   parseBillingCsv,
   parseInvoicePrintCsv,
-  parseRetirementCsv,
 } from '../utils/csvParser';
 import {
   SAMPLE_PAYROLL_CSV,
   SAMPLE_BILLING_CSV,
   SAMPLE_INVOICE_PRINT_CSV,
-  SAMPLE_RETIREMENT_CSV,
 } from '../utils/sampleData';
-import { PayrollRow, BillingRow, InvoicePrintRow, RetirementRow } from '../types';
+import { PayrollRow, BillingRow, InvoicePrintRow } from '../types';
+
+type UploadItemId = 'payroll' | 'billing' | 'invoice';
 
 interface CsvUploaderProps {
   payrollRows: PayrollRow[];
   billingRows: BillingRow[];
   invoiceRows: InvoicePrintRow[];
-  retirementRows: RetirementRow[];
   onPayrollLoaded: (data: PayrollRow[]) => void;
   onBillingLoaded: (data: BillingRow[]) => void;
   onInvoiceLoaded: (data: InvoicePrintRow[]) => void;
-  onRetirementLoaded: (data: RetirementRow[]) => void;
   onClearAll: () => void;
+  /** 直前のCSVアップロードを取り消せるか(1操作分のみ)。App.tsx側でアップロード前の状態を保持している。 */
+  canUndo: boolean;
+  /** 取り消し対象の操作の説明(ボタンのツールチップ表示用) */
+  undoLabel?: string;
+  onUndo: () => void;
 }
 
 export const CsvUploader: React.FC<CsvUploaderProps> = ({
   payrollRows,
   billingRows,
   invoiceRows,
-  retirementRows,
   onPayrollLoaded,
   onBillingLoaded,
   onInvoiceLoaded,
-  onRetirementLoaded,
   onClearAll,
+  canUndo,
+  undoLabel,
+  onUndo,
 }) => {
   const payrollInputRef = useRef<HTMLInputElement>(null);
   const billingInputRef = useRef<HTMLInputElement>(null);
   const invoiceInputRef = useRef<HTMLInputElement>(null);
-  const retirementInputRef = useRef<HTMLInputElement>(null);
 
   // 対象年月が判定できなかった場合の警告表示用
   const [monthWarning, setMonthWarning] = useState<string>('');
+  // ドラッグ&ドロップ中、どのカードの上にファイルがドラッグされているかのハイライト表示用
+  const [dragOverId, setDragOverId] = useState<UploadItemId | null>(null);
 
   // 文字化け検出: 出現頻度の高い置換文字(U+FFFD)や制御文字が多い場合はエンコード誤りとみなす
   const looksMojibake = (text: string): boolean => {
@@ -87,10 +97,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
     utf8Reader.readAsText(file, 'utf-8');
   };
 
-  const handleFileUpload = (
-    file: File,
-    type: 'payroll' | 'billing' | 'invoice' | 'retirement'
-  ) => {
+  const handleFileUpload = (file: File, type: UploadItemId) => {
     readFileWithEncodingFallback(file, (text) => {
       if (!text) return;
 
@@ -118,15 +125,19 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
             '請求書印刷CSVから対象年月を判定できませんでした。ファイル名に年月(例: 202410)を含めてください。'
           );
         }
-      } else if (type === 'retirement') {
-        const parsed = parseRetirementCsv(text);
-        onRetirementLoaded(parsed);
       }
     });
   };
 
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>, type: UploadItemId) => {
+    e.preventDefault();
+    setDragOverId(null);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileUpload(file, type);
+  };
+
   const downloadSampleCsv = (content: string, fileName: string) => {
-    const blob = new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -136,7 +147,18 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
     document.body.removeChild(link);
   };
 
-  const items = [
+  const items: {
+    id: UploadItemId;
+    title: string;
+    required: boolean;
+    count: number;
+    ref: React.RefObject<HTMLInputElement>;
+    sampleContent: string;
+    sampleName: string;
+    color: string;
+    iconColor: string;
+    description: string;
+  }[] = [
     {
       id: 'payroll',
       title: '① 給与データ CSV',
@@ -173,42 +195,42 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
       iconColor: 'text-purple-600',
       description: '請求No, 発行日, 振込予定日, 印刷ステータス, 送付ステータス（対象年月はファイル名から取得）',
     },
-    {
-      id: 'retirement',
-      title: '④ 退職金・調整 CSV',
-      required: false,
-      count: retirementRows.length,
-      ref: retirementInputRef,
-      sampleContent: SAMPLE_RETIREMENT_CSV,
-      sampleName: '退職金配賦データ_サンプル.csv',
-      color: 'border-amber-200 bg-amber-50/50 hover:bg-amber-50',
-      iconColor: 'text-amber-600',
-      description: '対象年月, スタッフNo, 退職金配賦額 (毎月定額/実績積立分)',
-    },
   ];
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
           <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
             <UploadCloud className="w-5 h-5 text-indigo-600" />
             <span>CSVデータ自動結合・取り込みエリア</span>
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            4つのCSVを読み込み、スタッフNoと対象年月で自動キー突合を行います (Power Query自動処理再現)
+            クリックでファイル選択、またはカードへドラッグ&ドロップでCSVを読み込みます。スタッフNoと対象年月で自動キー突合を行います (Power Query自動処理再現)
           </p>
         </div>
 
-        {(payrollRows.length > 0 || billingRows.length > 0) && (
-          <button
-            onClick={onClearAll}
-            className="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200 transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>データをクリア</span>
-          </button>
-        )}
+        <div className="flex items-center space-x-2">
+          {canUndo && (
+            <button
+              onClick={onUndo}
+              title={undoLabel ? `取り消す内容: ${undoLabel}` : undefined}
+              className="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg border border-amber-200 transition-colors"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span>直前のアップロードを取り消す</span>
+            </button>
+          )}
+          {(payrollRows.length > 0 || billingRows.length > 0) && (
+            <button
+              onClick={onClearAll}
+              className="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>データをクリア</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {monthWarning && (
@@ -218,11 +240,19 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {items.map((item) => (
           <div
             key={item.id}
-            className={`border-2 border-dashed rounded-xl p-4 transition-all flex flex-col justify-between relative ${item.color}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOverId(item.id);
+            }}
+            onDragLeave={() => setDragOverId((prev) => (prev === item.id ? null : prev))}
+            onDrop={(e) => handleDrop(e, item.id)}
+            className={`border-2 border-dashed rounded-xl p-4 transition-all flex flex-col justify-between relative ${
+              dragOverId === item.id ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-300' : item.color
+            }`}
           >
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -252,7 +282,8 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) handleFileUpload(file, item.id as any);
+                  if (file) handleFileUpload(file, item.id);
+                  e.target.value = '';
                 }}
               />
 
@@ -261,7 +292,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                 className="w-full py-2 px-3 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 shadow-sm flex items-center justify-center space-x-1.5 transition-colors"
               >
                 <FilePlus className={`w-4 h-4 ${item.iconColor}`} />
-                <span>CSVファイルを選択</span>
+                <span>CSVファイルを選択 (またはドラッグ&ドロップ)</span>
               </button>
 
               <button

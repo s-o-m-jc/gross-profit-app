@@ -122,3 +122,37 @@ export async function replaceCompanyMonthlyData(
     }
   }
 }
+
+export interface ChangeHistoryEntry {
+  id: string;
+  targetMonth: string;
+  operation: 'UPDATE' | 'DELETE';
+  changedAt: string;
+  state: Partial<MonthlyDataState> | null;
+}
+
+/**
+ * 変更履歴(自動バックアップ)を新しい順に取得する。monthly_data_historyはDBトリガーが
+ * 自動的に記録するテーブルで、adminロールのみ参照可能(RLS)。参照のみで復元操作は行わない
+ * (フェーズ1スコープ外。必要なJSONはダウンロードして手動で確認・復元する運用を想定)。
+ */
+export async function fetchChangeHistory(companyId: CompanyId, limit: number = 20): Promise<ChangeHistoryEntry[]> {
+  const { data, error } = await supabase
+    .from('monthly_data_history')
+    .select('id, target_month, operation, changed_at, state')
+    .eq('company_id', companyId)
+    .order('changed_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(`変更履歴の取得に失敗しました: ${error.message}`);
+  }
+
+  return (data || []).map((row) => ({
+    id: row.id as string,
+    targetMonth: row.target_month as string,
+    operation: row.operation as 'UPDATE' | 'DELETE',
+    changedAt: row.changed_at as string,
+    state: row.state as Partial<MonthlyDataState> | null,
+  }));
+}
