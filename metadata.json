@@ -1,0 +1,6 @@
+{
+  "name": "派遣事業 粗利・経理管理システム（3社統合版）",
+  "description": "給与・請求・印刷CSVの自動結合と退職金・紹介手数料・交通費検証を伴うPower Query v1.1互換の粗利・年間決算管理ツール。大阪人材・四国人材・松山人材の3社を1つのアプリ内でヘッダーの会社選択ドロップダウンから切り替えて運用する統合版(会社別設定はsrc/config/companies.tsで管理)。会社×対象月ごとにCSVデータを蓄積し、毎月アップロードを重ねながら決算期を通して使い続けられる。IndexedDBへの自動保存/復元と、バックアップファイルの保存/読込にも対応。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
