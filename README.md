@@ -26,6 +26,16 @@
 
 View your app in AI Studio: https://ai.studio/apps/0a46d36a-e9f6-4617-9a69-d0b40d1f25ce
 
+## 複数人アクセス対応 (Supabase + Vercel, ★2026-08-26)
+
+このアプリはSupabase(認証+DB)とVercel(ホスティング)を使い、拠点ごとの担当者が
+専用アカウントでアクセスできるWebアプリとして構成されている。
+
+- **認証**: メールアドレス+パスワードでログイン(`src/lib/AuthContext.tsx` / `src/components/LoginPage.tsx`)。未ログイン時は自動的にログイン画面へ。
+- **権限**: `profiles`テーブルの`role`が`admin`(全社・編集可)/`viewer`(自分の`company_id`の会社のみ・閲覧専用)を決める。UI側の出し分けは`App.tsx`の`canEdit`フラグで行う。
+- **データ保存**: メインはSupabase(`monthly_data`テーブル、会社×対象月ごとにJSONBで保存)。IndexedDBはオフライン時のローカルキャッシュとして残している(`src/utils/persistence.ts`)。
+- **DBスキーマ・RLS**: `supabase/migrations/`。適用手順・テストユーザー作成手順は`supabase/README.md`を参照。
+
 ## Run Locally
 
 **Prerequisites:**  Node.js
@@ -33,6 +43,6 @@ View your app in AI Studio: https://ai.studio/apps/0a46d36a-e9f6-4617-9a69-d0b40
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. `.env.local` に Supabase の Project URL / anon key を設定する(`.env.example`参照)
 3. Run the app:
    `npm run dev`
