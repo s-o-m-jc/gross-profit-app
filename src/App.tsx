@@ -212,6 +212,26 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     [fiscalYearOptions, fiscalYear]
   );
 
+  // ★2026-08-27追加(22-11章修正5): 選択中の対象年月("YYYY-MM"または"ALL")。
+  // 「月次粗利明細一覧」「スタッフ給与明細」の2タブで状態を共有する(タブを切り替えても
+  // 選択が保持されるように、App.tsx側で一元管理する)。ログイン直後・アプリ起動時(データが
+  // 初めて揃ったタイミング)のみ、直近の対象月を1度だけ自動選択する。
+  const [selectedTargetMonth, setSelectedTargetMonth] = useState<string>('ALL');
+  const didAutoSelectTargetMonth = useRef(false);
+  useEffect(() => {
+    if (didAutoSelectTargetMonth.current) return;
+    const months = Array.from(
+      new Set([...billingRows.map((b) => b.targetMonth), ...payrollRows.map((p) => p.targetMonth)])
+    )
+      .filter(Boolean)
+      .sort();
+    if (months.length > 0) {
+      setSelectedTargetMonth(months[months.length - 1]);
+      didAutoSelectTargetMonth.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [billingRows, payrollRows]);
+
   // モーダル表示フラグ
   const [isMCodeGuideOpen, setIsMCodeGuideOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -645,11 +665,19 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             onExportCsv={() => setIsExportModalOpen(true)}
             fiscalYearMonths={fiscalYearMonths}
             fiscalYearLabel={fiscalYearLabel}
+            selectedMonth={selectedTargetMonth}
+            onSelectedMonthChange={setSelectedTargetMonth}
           />
         )}
 
         {/* タブ: スタッフ給与明細 (★2026-08-27新設、22章タスク1) */}
-        {activeTab === 'staffPayroll' && <StaffPayrollDetail payrollRows={payrollRows} />}
+        {activeTab === 'staffPayroll' && (
+          <StaffPayrollDetail
+            payrollRows={payrollRows}
+            selectedMonth={selectedTargetMonth}
+            onSelectedMonthChange={setSelectedTargetMonth}
+          />
+        )}
 
         {/* タブ 2: 数値検証 & 監査アラート */}
         {activeTab === 'audit' && (

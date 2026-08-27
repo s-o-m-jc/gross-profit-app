@@ -16,14 +16,24 @@
  * 「一覧テーブル(主要な小計を列表示)＋行クリックで詳細内訳を展開」の2段階構成に変更した。
  * 詳細内訳の内容・ロジック自体は変更していない(表示のきっかけをアコーディオンから
  * テーブル行クリックに変えただけ)。
+ *
+ * ★2026-08-27再改修(22-10・22-11章修正6): 一覧テーブルの列構成を運用者フィードバックに
+ * より変更(出勤日数/有給日数/労働時間(合計)/時間内時間/時間外時間/休出時間/給与(課税)計/
+ * 給与(非課税/交通費)計/立替金/研修手当/社保合計額/控除額計/差引支給額)。有給金額列は
+ * 一覧テーブルからは削除したが、行クリックで開く詳細内訳の「有給」カテゴリからは削除していない。
+ * また対象月の選択状態は、月次粗利明細一覧タブと共有するためApp.tsx(AppShell)側で
+ * 一元管理する状態に変更した(修正5。selectedMonth/onSelectedMonthChangeをpropsで受け取る)。
  */
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Search, User, ChevronDown, ChevronUp } from 'lucide-react';
 import { PayrollRow } from '../types';
 
 interface StaffPayrollDetailProps {
   payrollRows: PayrollRow[];
+  /** 選択中の対象年月("YYYY-MM"または"ALL")。月次粗利明細一覧タブと状態を共有する。 */
+  selectedMonth: string;
+  onSelectedMonthChange: (month: string) => void;
 }
 
 const yen = (v: number | undefined) => `¥${(v ?? 0).toLocaleString()}`;
@@ -125,7 +135,12 @@ function buildCategories(p: PayrollRow): CategorySpec[] {
   ];
 }
 
-/** 一覧テーブルの列に表示する主要小計。既存の集計ロジック(csvParser.ts由来の値)からそのまま算出し、新規の計算ロジックは追加しない。 */
+/**
+ * 一覧テーブルの列に表示する主要小計。既存で保持済みのCSV由来項目の単純合算のみで、
+ * 新規の計算ロジックは追加しない。
+ * ★2026-08-27改修(22-11章修正6): 運用者フィードバックにより列構成を変更。
+ * 有給日数は0.5日刻みの実データがそのまま出るよう丸めない。
+ */
 function computeSummary(p: PayrollRow) {
   const taxableSalary =
     (p.regularAmount ?? 0) +
@@ -143,35 +158,45 @@ function computeSummary(p: PayrollRow) {
     (p.taxableOtherAllowances ?? 0);
   const nonTaxableSalary =
     (p.salaryTransport ?? 0) + (p.transportTaxable ?? 0) + (p.commsAllowance ?? 0) + (p.nonTaxableOtherAllowances ?? 0);
+  // 労働時間(合計) = 時間内時間・時間外時間・深夜内時間・深夜外時間・休日出時間・その他時間外(時間)の合算
+  const totalWorkHours =
+    (p.regularHours ?? 0) +
+    (p.overtimeHours ?? 0) +
+    (p.nightHours ?? 0) +
+    (p.nightOvertimeHours ?? 0) +
+    (p.holidayWorkHours ?? 0) +
+    (p.otherOvertimeHours ?? 0);
   return {
     workDays: p.workDays ?? 0,
     paidLeaveDays: p.paidLeaveDays ?? 0,
+    totalWorkHours,
+    regularHours: p.regularHours ?? 0,
+    overtimeHours: p.overtimeHours ?? 0,
+    holidayWorkHours: p.holidayWorkHours ?? 0,
     taxableSalary,
     nonTaxableSalary,
-    paidLeaveAllowance: p.paidLeaveAllowance ?? 0,
+    reimbursement: p.reimbursement ?? 0,
+    trainingAllowance: p.trainingAllowance ?? 0,
     socialInsurance: p.socialInsurance ?? 0,
+    totalDeduction: p.totalDeduction ?? 0,
     netPayment: p.netPayment || p.paymentAmount,
   };
 }
 
-export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({ payrollRows }) => {
+const hours = (v: number) => `${v.toFixed(1)}h`;
+
+export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
+  payrollRows,
+  selectedMonth,
+  onSelectedMonthChange,
+}) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const availableMonths = useMemo(
     () => Array.from(new Set(payrollRows.map((p) => p.targetMonth))).sort(),
     [payrollRows]
   );
-
-  // 初回にデータが揃った時点で1度だけ、直近の対象月を既定選択にする(全件一括表示を避けるため)
-  const didAutoSelectMonth = useRef(false);
-  useEffect(() => {
-    if (!didAutoSelectMonth.current && availableMonths.length > 0) {
-      setSelectedMonth(availableMonths[availableMonths.length - 1]);
-      didAutoSelectMonth.current = true;
-    }
-  }, [availableMonths]);
 
   const filteredRows = useMemo(() => {
     return payrollRows
@@ -216,7 +241,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({ payrollR
           </div>
           <select
             value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
+            onChange={(e) => onSelectedMonthChange(e.target.value)}
             className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
           >
             <option value="ALL">全対象年月 ({payrollRows.length}件)</option>
@@ -247,10 +272,16 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({ payrollR
                 <th className="py-3 px-3">対象月</th>
                 <th className="py-3 px-3 text-right">出勤日数</th>
                 <th className="py-3 px-3 text-right">有給日数</th>
+                <th className="py-3 px-3 text-right">労働時間(合計)</th>
+                <th className="py-3 px-3 text-right">時間内時間</th>
+                <th className="py-3 px-3 text-right">時間外時間</th>
+                <th className="py-3 px-3 text-right">休出時間</th>
                 <th className="py-3 px-3 text-right">給与(課税)計</th>
                 <th className="py-3 px-3 text-right">給与(非課税/交通費)計</th>
-                <th className="py-3 px-3 text-right">有給金額</th>
+                <th className="py-3 px-3 text-right">立替金</th>
+                <th className="py-3 px-3 text-right">研修手当</th>
                 <th className="py-3 px-3 text-right">社保合計額</th>
+                <th className="py-3 px-3 text-right">控除額計</th>
                 <th className="py-3 px-3 text-right bg-indigo-50/50">差引支給額</th>
               </tr>
             </thead>
@@ -269,7 +300,14 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({ payrollR
                         <div className="flex items-center space-x-1.5">
                           <User className="w-3.5 h-3.5 text-slate-400" />
                           <div>
-                            <div className="font-bold text-slate-900">{p.staffName}</div>
+                            <div className="font-bold text-slate-900 flex items-center space-x-1">
+                              <span>{p.staffName}</span>
+                              {p.staffCategory && (
+                                <span className="text-[9px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded px-1 py-0.5">
+                                  {p.staffCategory}
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[10px] text-slate-400 font-mono">{p.staffNo}</div>
                           </div>
                         </div>
@@ -277,17 +315,23 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({ payrollR
                       <td className="py-2.5 px-3 font-semibold text-slate-600 whitespace-nowrap">{p.targetMonth}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{s.workDays}日</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{s.paidLeaveDays}日</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{hours(s.totalWorkHours)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.regularHours)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.overtimeHours)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.holidayWorkHours)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.taxableSalary)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.nonTaxableSalary)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.paidLeaveAllowance)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.reimbursement)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.trainingAllowance)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.socialInsurance)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.totalDeduction)}</td>
                       <td className="py-2.5 px-3 text-right font-mono font-extrabold text-slate-900 bg-indigo-50/30">
                         {yen(s.netPayment)}
                       </td>
                     </tr>
                     {expanded && (
                       <tr>
-                        <td colSpan={10} className="bg-slate-50/60 px-4 py-4">
+                        <td colSpan={16} className="bg-slate-50/60 px-4 py-4">
                           {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
                           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                             {buildCategories(p).map((cat) => (

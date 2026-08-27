@@ -11,7 +11,7 @@
  * - ヘッダーの消費税率設定を「請求額」「粗利益」に反映する税抜/税込表示切替を追加。
  */
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Search,
   AlertTriangle,
@@ -35,6 +35,10 @@ interface MonthlyCalculationTableProps {
   fiscalYearMonths: string[];
   /** 選択中の決算期のラベル(ヘッダーの決算期セレクタと同一の表示文字列) */
   fiscalYearLabel: string;
+  /** 選択中の対象年月("YYYY-MM"または"ALL")。★2026-08-27(22-11章修正5):
+   * 「スタッフ給与明細」タブと状態を共有するため、App.tsx(AppShell)側で一元管理する。 */
+  selectedMonth: string;
+  onSelectedMonthChange: (month: string) => void;
 }
 
 type ViewScope = 'month' | 'fiscalYear';
@@ -47,10 +51,11 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
   onExportCsv,
   fiscalYearMonths,
   fiscalYearLabel,
+  selectedMonth,
+  onSelectedMonthChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewScope, setViewScope] = useState<ViewScope>('month');
-  const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
   const [filterType, setFilterType] = useState<string>('ALL');
   const [amountDisplay, setAmountDisplay] = useState<AmountDisplay>('exTax');
   const [sortField, setSortField] = useState<keyof GrossProfitResult>('targetMonth');
@@ -61,17 +66,6 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
     const months = Array.from(new Set(results.map((r) => r.targetMonth))).sort();
     return months;
   }, [results]);
-
-  // 初回にデータが揃った時点で1度だけ、既定の月フィルタを「直近の対象月」に自動設定する
-  // (全514件のような大量データを毎回一括表示しないための既定値。ユーザーが明示的に「全期間」
-  //  を選び直した場合はそれ以降上書きしない)
-  const didAutoSelectMonth = useRef(false);
-  useEffect(() => {
-    if (!didAutoSelectMonth.current && availableMonths.length > 0) {
-      setSelectedMonth(availableMonths[availableMonths.length - 1]);
-      didAutoSelectMonth.current = true;
-    }
-  }, [availableMonths]);
 
   const fiscalYearMonthSet = useMemo(() => new Set(fiscalYearMonths), [fiscalYearMonths]);
 
@@ -163,7 +157,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
           {viewScope === 'month' ? (
             <select
               value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
+              onChange={(e) => onSelectedMonthChange(e.target.value)}
               className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
             >
               <option value="ALL">全対象年月 ({results.length}件)</option>
