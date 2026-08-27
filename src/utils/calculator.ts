@@ -641,6 +641,10 @@ export function calculateFiscalYearSummary(
 
   const staffSet = new Set<string>();
   const clientMap = new Map<string, ClientRanking>();
+  // ★2026-08-27追加(22章タスク3): クライアント別・名目粗利率(契約単価の単純合計ベース)算出用に、
+  // クライアントごとの請求＠(billingUnitPrice)・支払＠(payUnitPrice)合計、および月次内訳を集計する。
+  const clientUnitPriceTotals = new Map<string, { billingUnitPriceSum: number; payUnitPriceSum: number }>();
+  const clientMonthlyUnitPrice = new Map<string, Map<string, { billingUnitPriceSum: number; payUnitPriceSum: number }>>();
 
   // 月別マップ初期化
   const monthlyMap = new Map<string, MonthlyTrend>();
@@ -659,6 +663,9 @@ export function calculateFiscalYearSummary(
       billingUnitPriceSum: 0,
       payUnitPriceSum: 0,
       alertCount: 0,
+      socialInsurance: 0,
+      employmentInsurance: 0,
+      transportSalary: 0,
     });
   });
 
@@ -703,6 +710,9 @@ export function calculateFiscalYearSummary(
         totalGrossProfit: 0,
         grossMarginRate: 0,
         staffCount: 0,
+        nominalGrossMarginRate: 0,
+        nominalGrossMarginRateDataAvailable: false,
+        monthlyNominalMarginTrend: [],
       };
       existing.totalSales += r.billingAmountExTax;
       existing.totalGrossProfit += r.grossProfitExTax;
@@ -712,6 +722,19 @@ export function calculateFiscalYearSummary(
           ? Number(((existing.totalGrossProfit / existing.totalSales) * 100).toFixed(2))
           : 0;
       clientMap.set(r.clientCode, existing);
+
+      // 名目粗利率(契約単価の単純合計ベース)算出用の請求＠・支払＠集計(全期間・月次の両方)
+      const unitTotals = clientUnitPriceTotals.get(r.clientCode) || { billingUnitPriceSum: 0, payUnitPriceSum: 0 };
+      unitTotals.billingUnitPriceSum += r.billingUnitPrice;
+      unitTotals.payUnitPriceSum += r.payUnitPrice;
+      clientUnitPriceTotals.set(r.clientCode, unitTotals);
+
+      const monthlyForClient = clientMonthlyUnitPrice.get(r.clientCode) || new Map();
+      const monthTotals = monthlyForClient.get(r.targetMonth) || { billingUnitPriceSum: 0, payUnitPriceSum: 0 };
+      monthTotals.billingUnitPriceSum += r.billingUnitPrice;
+      monthTotals.payUnitPriceSum += r.payUnitPrice;
+      monthlyForClient.set(r.targetMonth, monthTotals);
+      clientMonthlyUnitPrice.set(r.clientCode, monthlyForClient);
     }
 
     // 月別推移集計
@@ -726,11 +749,38 @@ export function calculateFiscalYearSummary(
       mTrend.billingUnitPriceSum += r.billingUnitPrice;
       mTrend.payUnitPriceSum += r.payUnitPrice;
       mTrend.alertCount += countActionableAlerts(r.alerts);
+      // ★2026-08-27追加(22章タスク2): 自社負担コスト(雇用保険・社会保険・交通費)の月次内訳
+      mTrend.socialInsurance += r.socialInsurance;
+      mTrend.employmentInsurance += r.employmentInsurance;
+      mTrend.transportSalary += r.salaryTransport;
       mTrend.grossMarginRate =
         mTrend.dispatchSales > 0
           ? Number(((mTrend.grossProfit / mTrend.dispatchSales) * 100).toFixed(2))
           : 0;
     }
+  });
+
+  // クライアントごとの名目粗利率(全期間)・月次推移を確定する
+  clientMap.forEach((client, clientCode) => {
+    const totals = clientUnitPriceTotals.get(clientCode);
+    if (totals && totals.billingUnitPriceSum > 0) {
+      client.nominalGrossMarginRateDataAvailable = true;
+      client.nominalGrossMarginRate = Number(
+        ((1 - totals.payUnitPriceSum / totals.billingUnitPriceSum) * 100).toFixed(2)
+      );
+    }
+    const monthlyForClient = clientMonthlyUnitPrice.get(clientCode);
+    client.monthlyNominalMarginTrend = targetMonths.map((m) => {
+      const agg = monthlyForClient?.get(m);
+      if (!agg || agg.billingUnitPriceSum <= 0) {
+        return { month: m, nominalGrossMarginRate: 0, dataAvailable: false };
+      }
+      return {
+        month: m,
+        nominalGrossMarginRate: Number(((1 - agg.payUnitPriceSum / agg.billingUnitPriceSum) * 100).toFixed(2)),
+        dataAvailable: true,
+      };
+    });
   });
 
   // 有給金額・有給(日) (決算期合計) = 対象期間の全給与行の単純合計(上記コメント参照)
@@ -744,6 +794,66 @@ export function calculateFiscalYearSummary(
       mTrend.paidLeaveDays += p.paidLeaveDays || 0;
     }
   });
+
+  // ★2026-08-27追加(22章タスク2): 有給残日数アラート用。
+  // 「有給残日数」は月ごとの残高(累積値)であり、対象期間の全月を単純合計すると二重計上になるため、
+  // スタッフごとに対象期間内で最も新しい対象月の値だけを採用する。
+  const latestPayrollByStaff = new Map<string, PayrollRow>();
+  periodPayrolls.forEach((p) => {
+    if (!p.staffNo) return;
+    const existing = latestPayrollByStaff.get(p.staffNo);
+    if (!existing || p.targetMonth > existing.targetMonth) {
+      latestPayrollByStaff.set(p.staffNo, p);
+    }
+  });
+  const staffPaidLeaveBalances: FiscalYearSummary['staffPaidLeaveBalances'] = [];
+  latestPayrollByStaff.forEach((p) => {
+    staffPaidLeaveBalances.push({
+      staffNo: p.staffNo,
+      staffName: p.staffName,
+      targetMonth: p.targetMonth,
+      paidLeaveRemainingDays: p.paidLeaveRemainingDays ?? 0,
+    });
+  });
+  staffPaidLeaveBalances.sort((a, b) => b.paidLeaveRemainingDays - a.paidLeaveRemainingDays);
+  // 有給取得率(%相当の平均値) = 有給取得日数合計 ÷ スタッフ人数 (=avgPaidLeaveDaysPerStaffと同一定義)。
+  // ★2026-08-27修正(22-5・22-7章): 当初「取得日数÷(取得日数+有給残日数)」という消化率の
+  // 近似式で実装していたが、運用者確認の結果「有給残日数はスタッフの有給管理上それ自体が
+  // 正確さを求められる数値であり、他の値と組み合わせて近似的な指標を作る材料には使わない」
+  // 方針となったため、有給残日数を一切使わない実績値のみの定義(22-2の当初依頼どおり)に戻した。
+  // 有給残日数そのもの(staffPaidLeaveBalances・アラート機能)は従来どおり使用する。
+  const paidLeaveUtilizationRateDataAvailable = staffSet.size > 0;
+  const paidLeaveUtilizationRate =
+    staffSet.size > 0 ? Number((totalPaidLeaveDays / staffSet.size).toFixed(2)) : 0;
+
+  // ★2026-08-27追加(22章タスク2)。★2026-08-27修正(22-5・22-7章): 当初「スタッフ区分」列の
+  // 文字列に「退職」を含むかで判定していたが、運用者が実データを確認した結果そのような
+  // 文字列は出現しないことが判明した(常に離職率0%になるバグ)。21-5の当初設計どおり、
+  // スタッフ区分の内容には依存しない「在籍有無ベース」に戻す: ある月の給与CSVに
+  // 存在した(=在籍していた)スタッフNoが、対象期間内の以降のどの月の給与CSVにも
+  // 現れなくなった割合を算出する。新規のCSV取り込みは不要(既存の給与CSVの蓄積のみで算出可能)。
+  const monthsWithPayrollData = targetMonths.filter((m) => periodPayrolls.some((p) => p.targetMonth === m));
+  const activeStaffByMonth = new Map<string, Set<string>>();
+  monthsWithPayrollData.forEach((m) => activeStaffByMonth.set(m, new Set()));
+  periodPayrolls.forEach((p) => {
+    if (!p.staffNo) return;
+    activeStaffByMonth.get(p.targetMonth)?.add(p.staffNo);
+  });
+  let turnoverBase = 0;
+  let turnoverLeavers = 0;
+  for (let i = 0; i < monthsWithPayrollData.length - 1; i++) {
+    const base = activeStaffByMonth.get(monthsWithPayrollData[i])!;
+    const laterUnion = new Set<string>();
+    for (let j = i + 1; j < monthsWithPayrollData.length; j++) {
+      activeStaffByMonth.get(monthsWithPayrollData[j])!.forEach((s) => laterUnion.add(s));
+    }
+    base.forEach((staffNo) => {
+      turnoverBase += 1;
+      if (!laterUnion.has(staffNo)) turnoverLeavers += 1;
+    });
+  }
+  const turnoverRateDataAvailable = monthsWithPayrollData.length >= 2 && turnoverBase > 0;
+  const turnoverRate = turnoverBase > 0 ? Number(((turnoverLeavers / turnoverBase) * 100).toFixed(2)) : 0;
 
   const totalRevenueExTax = totalSalesExTax + totalReferralFee;
   const totalCostExTax = totalSalary + totalSocialInsurance + totalParkingFee + totalRetirement;
@@ -794,6 +904,13 @@ export function calculateFiscalYearSummary(
     totalPaidLeaveAmount,
     totalPaidLeaveDays,
     avgPaidLeaveDaysPerStaff,
+    avgPaidLeaveAmountPerStaff:
+      staffSet.size > 0 ? Number((totalPaidLeaveAmount / staffSet.size).toFixed(2)) : 0,
+    paidLeaveUtilizationRate,
+    paidLeaveUtilizationRateDataAvailable,
+    staffPaidLeaveBalances,
+    turnoverRate,
+    turnoverRateDataAvailable,
     totalBillingUnitPrice,
     billingUnitPriceDataAvailable,
     totalPayUnitPrice,

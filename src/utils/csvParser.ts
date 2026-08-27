@@ -152,6 +152,64 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const transportDupKey = findColumnKey(row, ['交通費_1']);
       const paidLeaveAllowanceKey = findColumnKey(row, ['有給手当']);
       const paidLeaveDaysKey = findColumnKey(row, ['有給日数']);
+      // ★2026-08-27追加(22章タスク1「スタッフ給与明細」ビュー向け)。給与計算CSV(76列)の
+      // うち、粗利計算には使わないが給与支給額の内訳確認に必要な項目を追加抽出する。
+      const staffNameKanaKey = findColumnKey(row, ['スタッフ氏名ｶﾅ', 'スタッフ氏名カナ']);
+      const staffCategoryKey = findColumnKey(row, ['スタッフ区分']);
+      const workDaysKey = findColumnKey(row, ['出勤日数']);
+      const absenceDaysKey = findColumnKey(row, ['欠勤日数']);
+      const holidayWorkDaysKey = findColumnKey(row, ['休出日数']);
+      const lateEarlyDaysKey = findColumnKey(row, ['遅早日数']);
+      const specialLeaveDaysKey = findColumnKey(row, ['特別休暇日数']);
+      const leave2DaysKey = findColumnKey(row, ['休暇２日数', '休暇2日数']);
+      const leave3DaysKey = findColumnKey(row, ['休暇３日数', '休暇3日数']);
+      const leave4DaysKey = findColumnKey(row, ['休暇４日数', '休暇4日数']);
+      const paidLeaveRemainingDaysKey = findColumnKey(row, ['有給残日数']);
+      const overtimeHoursKey = findColumnKey(row, ['時間外時間']);
+      const nightHoursKey = findColumnKey(row, ['深夜内時間']);
+      const nightOvertimeHoursKey = findColumnKey(row, ['深夜外時間']);
+      const holidayWorkHoursKey = findColumnKey(row, ['休日出時間']);
+      const otherOvertimeHoursKey = findColumnKey(row, ['その他時間外']);
+      const paidLeaveHoursKey = findColumnKey(row, ['有給時間']);
+      const lateEarlyHoursKey = findColumnKey(row, ['遅早']);
+      const paidLeaveRemainingHoursKey = findColumnKey(row, ['有給残時間']);
+      const overtimeAmountKey = findColumnKey(row, ['時間外']);
+      const nightAmountKey = findColumnKey(row, ['深夜内']);
+      const nightOvertimeAmountKey = findColumnKey(row, ['深夜外']);
+      const holidayWorkAmountKey = findColumnKey(row, ['休日出']);
+      const otherOvertimeAllowanceKey = findColumnKey(row, ['その他時間外手当']);
+      const leaveAllowanceKey = findColumnKey(row, ['休暇手当']);
+      const absenceLeaveAllowanceKey = findColumnKey(row, ['欠勤休業手当']);
+      const specialLeaveAllowanceKey = findColumnKey(row, ['特休手当']);
+      const trainingAllowanceKey = findColumnKey(row, ['研修手当']);
+      const welfareAllowanceKey = findColumnKey(row, ['福祉手当']);
+      const paidLeaveAllowance2Key = findColumnKey(row, ['有休手当']);
+      const taxableOther8Key = findColumnKey(row, ['課税他８', '課税他8']);
+      const taxableOther9Key = findColumnKey(row, ['課税他９', '課税他9']);
+      const taxableOther10Key = findColumnKey(row, ['課税他１０', '課税他10']);
+      const transportTaxableKey = findColumnKey(row, ['交通費課税']);
+      const commsAllowanceKey = findColumnKey(row, ['通信費']);
+      const nonTaxableOther3Key = findColumnKey(row, ['非課税他３', '非課税他3']);
+      const nonTaxableOther4Key = findColumnKey(row, ['非課税他４', '非課税他4']);
+      const reimbursementKey = findColumnKey(row, ['立替金']);
+      const lateEarlyDeductionKey = findColumnKey(row, ['遅早控除']);
+      const absenceDeductionKey = findColumnKey(row, ['欠勤控除']);
+      const leaveDeductionKey = findColumnKey(row, ['休暇控除']);
+      const employmentInsuranceBaseKey = findColumnKey(row, ['雇用保険対象額']);
+      const healthInsuranceKey = findColumnKey(row, ['健康保険']);
+      const nursingInsuranceKey = findColumnKey(row, ['介護保険']);
+      const pensionInsuranceKey = findColumnKey(row, ['厚生年金']);
+      const pensionFundKey = findColumnKey(row, ['厚生年金基金']);
+      const taxableIncomeBaseKey = findColumnKey(row, ['課税対象額']);
+      const incomeTaxKey = findColumnKey(row, ['所得税']);
+      const yearEndAdjustmentKey = findColumnKey(row, ['年調過不足額']);
+      const residentTaxKey = findColumnKey(row, ['住民税']);
+      const lunchFeeKey = findColumnKey(row, ['昼食代']);
+      const healthCheckFeeKey = findColumnKey(row, ['健康診断料']);
+      const cleaningFeeKey = findColumnKey(row, ['ｸﾘｰﾆﾝｸﾞ代', 'クリーニング代']);
+      const advancePaymentSettlementKey = findColumnKey(row, ['仮払精算']);
+      const totalDeductionKey = findColumnKey(row, ['総控除額']);
+      const netPaymentKey = findColumnKey(row, ['差引支給額']);
       // 支払＠(支払単価)算出用。運用者確認・実データ検算済み(2026-08-21): 賃金台帳CSVは
       // 給与計算CSVと列構成が完全に同一のため、このCSVから直接取得できる。
       // ★2026-08-21確定: 金額列は「時間内」で確定(候補'基本'は削除済み)。以前「基本」列名の
@@ -199,6 +257,67 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
         regularHours: parseHoursMinutesToDecimal(row[regularHoursKey]),
         payDate: payDate || undefined,
         remarks: row['備考'] || row['Remarks'] || '',
+
+        // ★2026-08-27追加(22章タスク1)。詳細はtypes.tsのコメント・上記キー抽出部分を参照。
+        staffNameKana: parseSafeString(row[staffNameKanaKey]) || undefined,
+        staffCategory: parseSafeString(row[staffCategoryKey]) || undefined,
+
+        workDays: parseSafeNumber(row[workDaysKey]),
+        absenceDays: parseSafeNumber(row[absenceDaysKey]),
+        holidayWorkDays: parseSafeNumber(row[holidayWorkDaysKey]),
+        lateEarlyDays: parseSafeNumber(row[lateEarlyDaysKey]),
+        specialLeaveDays: parseSafeNumber(row[specialLeaveDaysKey]),
+        otherLeaveDays:
+          parseSafeNumber(row[leave2DaysKey]) + parseSafeNumber(row[leave3DaysKey]) + parseSafeNumber(row[leave4DaysKey]),
+        paidLeaveRemainingDays: parseSafeNumber(row[paidLeaveRemainingDaysKey]),
+
+        overtimeHours: parseHoursMinutesToDecimal(row[overtimeHoursKey]),
+        nightHours: parseHoursMinutesToDecimal(row[nightHoursKey]),
+        nightOvertimeHours: parseHoursMinutesToDecimal(row[nightOvertimeHoursKey]),
+        holidayWorkHours: parseHoursMinutesToDecimal(row[holidayWorkHoursKey]),
+        otherOvertimeHours: parseHoursMinutesToDecimal(row[otherOvertimeHoursKey]),
+        paidLeaveHours: parseHoursMinutesToDecimal(row[paidLeaveHoursKey]),
+        lateEarlyHours: parseHoursMinutesToDecimal(row[lateEarlyHoursKey]),
+        paidLeaveRemainingHours: parseHoursMinutesToDecimal(row[paidLeaveRemainingHoursKey]),
+
+        overtimeAmount: parseSafeNumber(row[overtimeAmountKey]),
+        nightAmount: parseSafeNumber(row[nightAmountKey]),
+        nightOvertimeAmount: parseSafeNumber(row[nightOvertimeAmountKey]),
+        holidayWorkAmount: parseSafeNumber(row[holidayWorkAmountKey]),
+        otherOvertimeAllowance: parseSafeNumber(row[otherOvertimeAllowanceKey]),
+        leaveAllowance: parseSafeNumber(row[leaveAllowanceKey]),
+        absenceLeaveAllowance: parseSafeNumber(row[absenceLeaveAllowanceKey]),
+        specialLeaveAllowance: parseSafeNumber(row[specialLeaveAllowanceKey]),
+        trainingAllowance: parseSafeNumber(row[trainingAllowanceKey]),
+        welfareAllowance: parseSafeNumber(row[welfareAllowanceKey]),
+        paidLeaveAllowance2: parseSafeNumber(row[paidLeaveAllowance2Key]),
+        taxableOtherAllowances:
+          parseSafeNumber(row[taxableOther8Key]) + parseSafeNumber(row[taxableOther9Key]) + parseSafeNumber(row[taxableOther10Key]),
+
+        transportTaxable: parseSafeNumber(row[transportTaxableKey]),
+        commsAllowance: parseSafeNumber(row[commsAllowanceKey]),
+        nonTaxableOtherAllowances: parseSafeNumber(row[nonTaxableOther3Key]) + parseSafeNumber(row[nonTaxableOther4Key]),
+        reimbursement: parseSafeNumber(row[reimbursementKey]),
+
+        lateEarlyDeduction: parseSafeNumber(row[lateEarlyDeductionKey]),
+        absenceDeduction: parseSafeNumber(row[absenceDeductionKey]),
+        leaveDeduction: parseSafeNumber(row[leaveDeductionKey]),
+        employmentInsuranceBase: parseSafeNumber(row[employmentInsuranceBaseKey]),
+        healthInsurance: parseSafeNumber(row[healthInsuranceKey]),
+        nursingInsurance: parseSafeNumber(row[nursingInsuranceKey]),
+        pensionInsurance: parseSafeNumber(row[pensionInsuranceKey]),
+        pensionFund: parseSafeNumber(row[pensionFundKey]),
+        taxableIncomeBase: parseSafeNumber(row[taxableIncomeBaseKey]),
+        incomeTax: parseSafeNumber(row[incomeTaxKey]),
+        yearEndAdjustment: parseSafeNumber(row[yearEndAdjustmentKey]),
+        residentTax: parseSafeNumber(row[residentTaxKey]),
+        lunchFee: parseSafeNumber(row[lunchFeeKey]),
+        healthCheckFee: parseSafeNumber(row[healthCheckFeeKey]),
+        cleaningFee: parseSafeNumber(row[cleaningFeeKey]),
+        advancePaymentSettlement: parseSafeNumber(row[advancePaymentSettlementKey]),
+        totalDeduction: parseSafeNumber(row[totalDeductionKey]),
+
+        netPayment: parseSafeNumber(row[netPaymentKey]),
       };
     })
     .filter((r) => r.staffNo);

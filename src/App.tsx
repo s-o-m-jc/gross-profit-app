@@ -12,6 +12,7 @@ import {
   FileSpreadsheet,
   Loader2,
   AlertTriangle,
+  Wallet,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CsvUploader } from './components/CsvUploader';
@@ -20,6 +21,7 @@ import { ChangeHistoryPanel } from './components/ChangeHistoryPanel';
 import { ManualAdjustmentsPanel } from './components/ManualAdjustmentsPanel';
 import { RetirementPanel } from './components/RetirementPanel';
 import { MonthlyCalculationTable } from './components/MonthlyCalculationTable';
+import { StaffPayrollDetail } from './components/StaffPayrollDetail';
 import { AnomalyAuditPanel } from './components/AnomalyAuditPanel';
 import { FiscalYearAnalytics } from './components/FiscalYearAnalytics';
 import { MCodeReferenceModal } from './components/MCodeReferenceModal';
@@ -202,7 +204,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
   const [fiscalYear, setFiscalYear] = useState<string>(fiscalYearOptions[0].value);
-  const [activeTab, setActiveTab] = useState<'monthly' | 'fiscal' | 'audit'>('monthly');
+  const [activeTab, setActiveTab] = useState<'monthly' | 'staffPayroll' | 'fiscal' | 'audit'>('monthly');
   // 月次粗利明細一覧の「年間(決算期)」表示切替用: 選択中の決算期に属する12ヶ月分の対象年月一覧とラベル
   const fiscalYearMonths = useMemo(() => getFiscalYearMonths(fiscalYear, 12), [fiscalYear]);
   const fiscalYearLabel = useMemo(
@@ -584,6 +586,18 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             </button>
 
             <button
+              onClick={() => setActiveTab('staffPayroll')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'staffPayroll'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Wallet className="w-4 h-4" />
+              <span>スタッフ給与明細</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('audit')}
               className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all relative ${
                 activeTab === 'audit'
@@ -633,6 +647,9 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             fiscalYearLabel={fiscalYearLabel}
           />
         )}
+
+        {/* タブ: スタッフ給与明細 (★2026-08-27新設、22章タスク1) */}
+        {activeTab === 'staffPayroll' && <StaffPayrollDetail payrollRows={payrollRows} />}
 
         {/* タブ 2: 数値検証 & 監査アラート */}
         {activeTab === 'audit' && (

@@ -21,6 +21,78 @@ export interface PayrollRow {
   regularHours: number;        // 時間内時間 - 通常時間帯の稼働時間(10進数に変換済み。"164:30"→164.5)
   payDate?: string;            // 支給日 (対象年月算出のソース)
   remarks?: string;            // 備考
+
+  // ★2026-08-27追加(22章タスク1「スタッフ給与明細」ビュー向け)。
+  // 給与計算CSV(未払計上表、全76列。2-1章参照)のうち、粗利計算には使わないが
+  // 実際の給与支払い確認に必要な内訳項目。実データにない項目は作らない方針(22-2章)のため、
+  // いずれも実CSVの列(2-1章の列名一覧)に1:1対応する(複数の枝番列は合算して1項目にまとめた
+  // ものがあり、その場合はコメントで明記している)。すべて未読込データとの後方互換のため
+  // オプショナルにしている(未指定時は0/未設定として扱う)。
+
+  // --- 属性・区分 ---
+  staffNameKana?: string;          // スタッフ氏名カナ
+  staffCategory?: string;          // スタッフ区分 (稼働中/退職等。離職率算出に使用)
+
+  // --- 勤怠(日数) ---
+  workDays?: number;               // 出勤日数
+  absenceDays?: number;            // 欠勤日数
+  holidayWorkDays?: number;        // 休出日数
+  lateEarlyDays?: number;          // 遅早日数
+  specialLeaveDays?: number;       // 特別休暇日数
+  otherLeaveDays?: number;         // 休暇２日数・休暇３日数・休暇４日数の合計 (いずれも稀にしか使われない休暇区分のため合算)
+  paidLeaveRemainingDays?: number; // 有給残日数 (有給残日数アラートに使用)
+
+  // --- 勤怠(時間) ---
+  overtimeHours?: number;          // 時間外時間
+  nightHours?: number;             // 深夜内時間
+  nightOvertimeHours?: number;     // 深夜外時間
+  holidayWorkHours?: number;       // 休日出時間
+  otherOvertimeHours?: number;     // その他時間外(時間)
+  paidLeaveHours?: number;         // 有給時間
+  lateEarlyHours?: number;         // 遅早(時間)
+  paidLeaveRemainingHours?: number;// 有給残時間
+
+  // --- 給与(課税・手当金額) ---
+  overtimeAmount?: number;         // 時間外(金額)
+  nightAmount?: number;            // 深夜内(金額)
+  nightOvertimeAmount?: number;    // 深夜外(金額)
+  holidayWorkAmount?: number;      // 休日出(金額)
+  otherOvertimeAllowance?: number; // その他時間外手当
+  leaveAllowance?: number;         // 休暇手当
+  absenceLeaveAllowance?: number;  // 欠勤休業手当 (CSV由来の参考値。手入力の「休業手当」(LeaveAllowanceRow)とは別物)
+  specialLeaveAllowance?: number;  // 特休手当
+  trainingAllowance?: number;      // 研修手当
+  welfareAllowance?: number;       // 福祉手当
+  paidLeaveAllowance2?: number;    // 有休手当 (「有給手当」列とは別に存在する実列)
+  taxableOtherAllowances?: number; // 課税他８・課税他９・課税他１０の合計
+
+  // --- 給与(非課税) ---
+  transportTaxable?: number;         // 交通費課税
+  commsAllowance?: number;           // 通信費
+  nonTaxableOtherAllowances?: number;// 非課税他３・非課税他４の合計
+  reimbursement?: number;            // 立替金 (粗利計算には影響しない。15章参照)
+
+  // --- 控除 ---
+  lateEarlyDeduction?: number;       // 遅早控除
+  absenceDeduction?: number;         // 欠勤控除
+  leaveDeduction?: number;           // 休暇控除
+  employmentInsuranceBase?: number;  // 雇用保険対象額
+  healthInsurance?: number;          // 健康保険
+  nursingInsurance?: number;         // 介護保険
+  pensionInsurance?: number;         // 厚生年金
+  pensionFund?: number;              // 厚生年金基金
+  taxableIncomeBase?: number;        // 課税対象額
+  incomeTax?: number;                // 所得税
+  yearEndAdjustment?: number;        // 年調過不足額
+  residentTax?: number;              // 住民税
+  lunchFee?: number;                 // 昼食代
+  healthCheckFee?: number;           // 健康診断料
+  cleaningFee?: number;              // クリーニング代
+  advancePaymentSettlement?: number; // 仮払精算
+  totalDeduction?: number;           // 総控除額
+
+  // --- 支給額 ---
+  netPayment?: number;               // 差引支給額
 }
 
 // 請求CSVレコード (請求支払一覧表印刷CSV)
@@ -260,6 +332,25 @@ export interface FiscalYearSummary {
   totalBillingCount: number;   // 総請求件数
   alertCount: number;          // 要確認アラート総数
 
+  // ★2026-08-27追加(22章タスク2)。有給金額の1人当たり平均(有給日数の1人当たり平均=
+  // avgPaidLeaveDaysPerStaffは既存)。
+  avgPaidLeaveAmountPerStaff: number;
+
+  // 有給取得率(%) = 対象期間に取得した有給日数の合計 ÷ (取得日数合計 + 期末時点の有給残日数合計) × 100。
+  // 給与CSVに「有給残日数」列が1件も無い場合は算出不可(0・falseを返す)。
+  paidLeaveUtilizationRate: number;
+  paidLeaveUtilizationRateDataAvailable: boolean;
+
+  // 有給残日数アラート用: スタッフごとの直近(対象期間内で最も新しい対象月)の有給残日数一覧。
+  // 閾値でのフィルタ・表示はUI側(FiscalYearAnalytics)で行う。
+  staffPaidLeaveBalances: { staffNo: string; staffName: string; targetMonth: string; paidLeaveRemainingDays: number }[];
+
+  // 離職率(%): 給与CSVの「スタッフ区分」列の月次推移から算出。ある月に存在した(在籍していた)
+  // スタッフNoが、翌月以降のデータで見られなくなった割合の対象期間内平均。
+  // データが連続する2ヶ月分に満たない、またはスタッフ区分列が1件も無い場合は算出不可。
+  turnoverRate: number;
+  turnoverRateDataAvailable: boolean;
+
   monthlyTrends: MonthlyTrend[];// 月次推移データ
   clientRankings: ClientRanking[]; // 得意先別実績
 }
@@ -279,6 +370,11 @@ export interface MonthlyTrend {
   billingUnitPriceSum: number; // 請求＠ (当月の契約ごとの請求単価の単純合計。FiscalYearSummary.totalBillingUnitPrice参照)
   payUnitPriceSum: number;     // 支払＠ (当月の給与行ごとの支払単価の単純合計。FiscalYearSummary.totalPayUnitPrice参照)
   alertCount: number;          // アラート数
+
+  // ★2026-08-27追加(22章タスク2): 自社負担コスト(雇用保険・社会保険・交通費)の月次推移グラフ用内訳
+  socialInsurance: number;     // 社保負担額 (当月合計)
+  employmentInsurance: number; // 雇用保険会社負担額 (当月合計・参考値)
+  transportSalary: number;     // 給与交通費支給額 (当月合計・自社負担分)
 }
 
 // 得意先別順位
@@ -287,8 +383,17 @@ export interface ClientRanking {
   clientName: string;
   totalSales: number;
   totalGrossProfit: number;
-  grossMarginRate: number;
+  grossMarginRate: number;   // 実額ベースの粗利率(=totalGrossProfit/totalSales)。参考値。
   staffCount: number;
+
+  // ★2026-08-27追加(22章タスク3)。クライアント別ランキング・トレンドは、休業手当・有給取得等の
+  // 影響でブレの大きい実質粗利率(grossMarginRate)ではなく、契約単価の単純合計から算出する
+  // 名目粗利率(大阪人材集計シート方式。FiscalYearSummary.nominalGrossMarginRateと同一定義)を
+  // 基準に使う(運用者確認・21-5章参照)。
+  nominalGrossMarginRate: number;
+  nominalGrossMarginRateDataAvailable: boolean; // 請求書印刷CSV等の単価データが1件も無い場合false
+  // クライアント別・月次の名目粗利率推移(トレンド表示用)
+  monthlyNominalMarginTrend: { month: string; nominalGrossMarginRate: number; dataAvailable: boolean }[];
 }
 
 // Power Query Mコード対応参照型
