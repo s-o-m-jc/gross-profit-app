@@ -23,6 +23,14 @@
  * 一覧テーブルからは削除したが、行クリックで開く詳細内訳の「有給」カテゴリからは削除していない。
  * また対象月の選択状態は、月次粗利明細一覧タブと共有するためApp.tsx(AppShell)側で
  * 一元管理する状態に変更した(修正5。selectedMonth/onSelectedMonthChangeをpropsで受け取る)。
+ *
+ * ★2026-08-27再々改修(22-19〜22-21章修正11・12): 列構成を再度変更(出勤日数/有給日数/
+ * 労働時間(合計)/時間内時間/時間外時間/休出時間/交通費/立替金/研修手当/総支給額/
+ * 社保合計額/控除額計/差引支給額)。「給与(課税)計」を削除し代わりに生CSVの「総支給額」を
+ * 使用、「給与(非課税/交通費)計」は計算内容そのままで列名のみ「交通費」に変更した。
+ * あわせて一覧上部の集計を、主要4項目のKPIカードから、★派遣明細202410.xlsm(未払計上表
+ * シート)の合計行を踏襲した「一覧テーブルの全13列について列ごとの合計を出す合計行」形式に
+ * 拡充した(表内、ヘッダー直下に固定表示)。
  */
 
 import React, { useState, useMemo } from 'react';
@@ -141,23 +149,13 @@ function buildCategories(p: PayrollRow): CategorySpec[] {
  * 新規の計算ロジックは追加しない。
  * ★2026-08-27改修(22-11章修正6): 運用者フィードバックにより列構成を変更。
  * 有給日数は0.5日刻みの実データがそのまま出るよう丸めない。
+ * ★2026-08-27再改修(22-19章修正11): 「給与(課税)計」列を削除し「総支給額」(p.paymentAmount
+ * をそのまま使用)に置き換え、「給与(非課税/交通費)計」は同じ計算のまま列名のみ「交通費」に変更。
+ * taxableSalaryはどの列にも使われなくなったため削除した。
  */
 function computeSummary(p: PayrollRow) {
-  const taxableSalary =
-    (p.regularAmount ?? 0) +
-    (p.overtimeAmount ?? 0) +
-    (p.nightAmount ?? 0) +
-    (p.nightOvertimeAmount ?? 0) +
-    (p.holidayWorkAmount ?? 0) +
-    (p.otherOvertimeAllowance ?? 0) +
-    (p.leaveAllowance ?? 0) +
-    (p.absenceLeaveAllowance ?? 0) +
-    (p.specialLeaveAllowance ?? 0) +
-    (p.trainingAllowance ?? 0) +
-    (p.welfareAllowance ?? 0) +
-    (p.paidLeaveAllowance2 ?? 0) +
-    (p.taxableOtherAllowances ?? 0);
-  const nonTaxableSalary =
+  // 交通費(列名変更前の「給与(非課税/交通費)計」と同一の計算。中身は変更しない)
+  const transportSummary =
     (p.salaryTransport ?? 0) + (p.transportTaxable ?? 0) + (p.commsAllowance ?? 0) + (p.nonTaxableOtherAllowances ?? 0);
   // 労働時間(合計) = 時間内時間・時間外時間・深夜内時間・深夜外時間・休日出時間・その他時間外(時間)の合算
   const totalWorkHours =
@@ -174,10 +172,10 @@ function computeSummary(p: PayrollRow) {
     regularHours: p.regularHours ?? 0,
     overtimeHours: p.overtimeHours ?? 0,
     holidayWorkHours: p.holidayWorkHours ?? 0,
-    taxableSalary,
-    nonTaxableSalary,
+    transportSummary,
     reimbursement: p.reimbursement ?? 0,
     trainingAllowance: p.trainingAllowance ?? 0,
+    paymentAmount: p.paymentAmount ?? 0,
     socialInsurance: p.socialInsurance ?? 0,
     totalDeduction: p.totalDeduction ?? 0,
     netPayment: p.netPayment || p.paymentAmount,
@@ -216,19 +214,44 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
       .sort((a, b) => (a.targetMonth === b.targetMonth ? a.staffNo.localeCompare(b.staffNo) : b.targetMonth.localeCompare(a.targetMonth)));
   }, [payrollRows, searchQuery, selectedMonth]);
 
-  // ★2026-08-27追加(22-14章修正8): 一覧テーブル上部の集計セクション。
+  // ★2026-08-27追加(22-14章修正8)・拡充(22-20/22-21章修正12): 一覧テーブル上部の集計セクション。
   // 表示中(フィルタ適用後)の行を対象に、既存の値をそのまま合算するだけで新規の計算ロジックは追加しない。
-  const summaryStats = useMemo(() => {
+  // 当初は主要4項目のみのKPIカードだったが、★派遣明細202410.xlsm(未払計上表シート)の
+  // 合計行に合わせ、一覧テーブルの13列すべてについて列ごとの合計を出す「合計行」形式に拡充した。
+  const totals = useMemo(() => {
     const staffCount = new Set(filteredRows.map((p) => p.staffNo)).size;
-    let totalPayment = 0;
-    let totalNetPayment = 0;
-    let totalSocialInsurance = 0;
+    const acc = {
+      workDays: 0,
+      paidLeaveDays: 0,
+      totalWorkHours: 0,
+      regularHours: 0,
+      overtimeHours: 0,
+      holidayWorkHours: 0,
+      transportSummary: 0,
+      reimbursement: 0,
+      trainingAllowance: 0,
+      paymentAmount: 0,
+      socialInsurance: 0,
+      totalDeduction: 0,
+      netPayment: 0,
+    };
     filteredRows.forEach((p) => {
-      totalPayment += p.paymentAmount ?? 0;
-      totalNetPayment += p.netPayment || p.paymentAmount || 0;
-      totalSocialInsurance += p.socialInsurance ?? 0;
+      const s = computeSummary(p);
+      acc.workDays += s.workDays;
+      acc.paidLeaveDays += s.paidLeaveDays;
+      acc.totalWorkHours += s.totalWorkHours;
+      acc.regularHours += s.regularHours;
+      acc.overtimeHours += s.overtimeHours;
+      acc.holidayWorkHours += s.holidayWorkHours;
+      acc.transportSummary += s.transportSummary;
+      acc.reimbursement += s.reimbursement;
+      acc.trainingAllowance += s.trainingAllowance;
+      acc.paymentAmount += s.paymentAmount;
+      acc.socialInsurance += s.socialInsurance;
+      acc.totalDeduction += s.totalDeduction;
+      acc.netPayment += s.netPayment;
     });
-    return { staffCount, totalPayment, totalNetPayment, totalSocialInsurance };
+    return { staffCount, ...acc };
   }, [filteredRows]);
 
   // ★2026-08-27追加(22-16・22-17章): 表示中の行に、型拡張前に保存された旧形式のデータ
@@ -289,31 +312,6 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
         </div>
       )}
 
-      {/* 集計セクション (★2026-08-27追加・22-14章修正8): 表示中(フィルタ適用後)の行の集計 */}
-      {filteredRows.length > 0 && (
-        <div className="px-4 py-3 bg-indigo-50/40 border-b border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div>
-            <span className="text-[10px] text-slate-500 font-semibold block">スタッフ人数</span>
-            <span className="text-sm font-extrabold font-mono text-slate-900 flex items-center space-x-1">
-              <Users className="w-3.5 h-3.5 text-indigo-600" />
-              <span>{summaryStats.staffCount}名</span>
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 font-semibold block">総支給額合計</span>
-            <span className="text-sm font-extrabold font-mono text-slate-900">{yen(summaryStats.totalPayment)}</span>
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 font-semibold block">社保合計額合計</span>
-            <span className="text-sm font-extrabold font-mono text-slate-900">{yen(summaryStats.totalSocialInsurance)}</span>
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 font-semibold block">差引支給額合計</span>
-            <span className="text-sm font-extrabold font-mono text-indigo-700">{yen(summaryStats.totalNetPayment)}</span>
-          </div>
-        </div>
-      )}
-
       {filteredRows.length === 0 ? (
         <div className="py-12 text-center text-slate-400 text-sm">
           該当する給与データが見つかりません。給与計算CSVを読み込んでください。
@@ -332,13 +330,39 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                 <th className="py-3 px-3 text-right">時間内時間</th>
                 <th className="py-3 px-3 text-right">時間外時間</th>
                 <th className="py-3 px-3 text-right">休出時間</th>
-                <th className="py-3 px-3 text-right">給与(課税)計</th>
-                <th className="py-3 px-3 text-right">給与(非課税/交通費)計</th>
+                <th className="py-3 px-3 text-right">交通費</th>
                 <th className="py-3 px-3 text-right">立替金</th>
                 <th className="py-3 px-3 text-right">研修手当</th>
+                <th className="py-3 px-3 text-right">総支給額</th>
                 <th className="py-3 px-3 text-right">社保合計額</th>
                 <th className="py-3 px-3 text-right">控除額計</th>
                 <th className="py-3 px-3 text-right bg-indigo-50/50">差引支給額</th>
+              </tr>
+              {/* 合計行 (★2026-08-27追加・22-20/22-21章修正12): 表示中(フィルタ適用後)の
+                  全スタッフ分について、右側の各列と同じ並びで列ごとの合計値を表示する。
+                  ★派遣明細202410.xlsm(未払計上表シート)の合計行(9〜10行目)を踏襲。 */}
+              <tr className="bg-indigo-50 text-indigo-900 font-extrabold border-b-2 border-indigo-200">
+                <td className="py-2.5 px-3"></td>
+                <td className="py-2.5 px-3 whitespace-nowrap">
+                  <div className="flex items-center space-x-1.5">
+                    <Users className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>合計 ({totals.staffCount}名)</span>
+                  </div>
+                </td>
+                <td className="py-2.5 px-3"></td>
+                <td className="py-2.5 px-3 text-right font-mono">{totals.workDays}日</td>
+                <td className="py-2.5 px-3 text-right font-mono">{totals.paidLeaveDays}日</td>
+                <td className="py-2.5 px-3 text-right font-mono">{hours(totals.totalWorkHours)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{hours(totals.regularHours)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{hours(totals.overtimeHours)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{hours(totals.holidayWorkHours)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.transportSummary)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.reimbursement)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.trainingAllowance)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.paymentAmount)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.socialInsurance)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.totalDeduction)}</td>
+                <td className="py-2.5 px-3 text-right font-mono bg-indigo-100">{yen(totals.netPayment)}</td>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
@@ -375,10 +399,10 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                       <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.regularHours)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.overtimeHours)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.holidayWorkHours)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.taxableSalary)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.nonTaxableSalary)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.transportSummary)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.reimbursement)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.trainingAllowance)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.paymentAmount)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.socialInsurance)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.totalDeduction)}</td>
                       <td className="py-2.5 px-3 text-right font-mono font-extrabold text-slate-900 bg-indigo-50/30">
