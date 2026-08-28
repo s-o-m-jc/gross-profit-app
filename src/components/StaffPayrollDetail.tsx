@@ -319,8 +319,13 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
       ) : (
         <div className="overflow-x-auto table-scroll">
           <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-100/80 text-slate-700 font-bold border-b border-slate-200">
+            {/* ★2026-08-27追加(22-22/22-23章修正13): 縦スクロールしても列見出し・合計行が
+                画面上部に固定表示され続けるようsticky指定。top-16はHeader.tsx(h-16・sticky
+                top-0)の高さ分のオフセット。thead内の2行(見出し行・合計行)はまとめてsticky化
+                される(スタック順はDOM順のまま)。背景を半透明のままにすると固定時にスクロール
+                中の本文が透けるため、この変更にあわせて不透明色に統一した。 */}
+            <thead className="sticky top-16 z-20 shadow-sm">
+              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                 <th className="py-3 px-3 w-6"></th>
                 <th className="py-3 px-3">スタッフ</th>
                 <th className="py-3 px-3">対象月</th>
@@ -336,7 +341,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                 <th className="py-3 px-3 text-right">総支給額</th>
                 <th className="py-3 px-3 text-right">社保合計額</th>
                 <th className="py-3 px-3 text-right">控除額計</th>
-                <th className="py-3 px-3 text-right bg-indigo-50/50">差引支給額</th>
+                <th className="py-3 px-3 text-right bg-indigo-100/70">差引支給額</th>
               </tr>
               {/* 合計行 (★2026-08-27追加・22-20/22-21章修正12): 表示中(フィルタ適用後)の
                   全スタッフ分について、右側の各列と同じ並びで列ごとの合計値を表示する。
