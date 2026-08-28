@@ -195,6 +195,26 @@ export function listRealMonths(companyMonths: CompanyMonthlyData): string[] {
 }
 
 /**
+ * ★2026-08-27追加(22-16・22-17章)。給与CSVの行が、PayrollRow型の拡張(22章タスク1で
+ * 出勤日数・時間内時間等を追加)より前にアップロード・保存された「旧形式」かどうかを判定する。
+ *
+ * このアプリはCSVの生テキストを保持せず、パース済みのPayrollRow[]をIndexedDB/Supabaseへ
+ * そのまま保存する設計のため、型拡張前に保存された行にはworkDays等の新しいフィールドが
+ * そもそも存在しない(undefined)。値が0なのではなくフィールド自体が無いため、値の0判定
+ * ではなくプロパティの有無で判定する必要がある(実データ検証で、実CSVには出勤日数が
+ * 全件非ゼロで入っているにも関わらず画面上0表示になる不具合の根本原因と判明した。22-16章参照)。
+ * 該当する場合、その月のCSVを再アップロードすることで解消する(他に復元手段はない)。
+ */
+export function isLegacyPayrollRow(row: { workDays?: number; totalDeduction?: number }): boolean {
+  return row.workDays === undefined && row.totalDeduction === undefined;
+}
+
+/** 給与CSVの行の配列に、1件でも旧形式(isLegacyPayrollRow参照)の行が含まれるか */
+export function hasLegacyPayrollRows(rows: { workDays?: number; totalDeduction?: number }[]): boolean {
+  return rows.length > 0 && rows.some(isLegacyPayrollRow);
+}
+
+/**
  * 旧バージョンで固定バケツ(LEGACY_INVOICE_BUCKET_KEY)に格納されていた請求書印刷データを、
  * UNKNOWN_MONTH_KEYへ移行する(データを消さずに保持したまま、月バケツ方式へ統一する)。
  * IndexedDB復元・バックアップファイル読込のどちらでも呼び出す。該当データが無ければ何もしない。

@@ -139,7 +139,10 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const payDateKey = findColumnKey(row, ['支給日']);
       const monthKey = findColumnKey(row, ['対象年月', '年月']);
       const payKey = findColumnKey(row, ['総支給額', '給与支給総額', '支給総額', '支給額']);
-      const socialKey = findColumnKey(row, ['社保合計', '社会保険', '健康保険']);
+      // ★2026-08-27修正(22-14章調査1で発見): 実CSVの列名は「社保合計額」(2-1章の全76列
+      // 確定リスト)だが、旧候補リストには額を含まない「社保合計」しかなく、フォールバック
+      // 候補の「健康保険」が誤って一致していた(健康保険は社保合計額の内訳の一部にすぎない)。
+      const socialKey = findColumnKey(row, ['社保合計額', '社保合計', '社会保険']);
       const empInsKey = findColumnKey(row, ['雇用保険']);
       const parkingKey = findColumnKey(row, ['駐車場手当', '駐車場代', '駐車場']);
       const transport1Key = findColumnKey(row, ['交通費1']);

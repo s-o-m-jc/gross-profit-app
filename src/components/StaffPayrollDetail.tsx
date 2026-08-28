@@ -26,8 +26,9 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Search, User, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, User, Users, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { PayrollRow } from '../types';
+import { hasLegacyPayrollRows } from '../utils/monthlyData';
 
 interface StaffPayrollDetailProps {
   payrollRows: PayrollRow[];
@@ -215,6 +216,26 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
       .sort((a, b) => (a.targetMonth === b.targetMonth ? a.staffNo.localeCompare(b.staffNo) : b.targetMonth.localeCompare(a.targetMonth)));
   }, [payrollRows, searchQuery, selectedMonth]);
 
+  // ★2026-08-27追加(22-14章修正8): 一覧テーブル上部の集計セクション。
+  // 表示中(フィルタ適用後)の行を対象に、既存の値をそのまま合算するだけで新規の計算ロジックは追加しない。
+  const summaryStats = useMemo(() => {
+    const staffCount = new Set(filteredRows.map((p) => p.staffNo)).size;
+    let totalPayment = 0;
+    let totalNetPayment = 0;
+    let totalSocialInsurance = 0;
+    filteredRows.forEach((p) => {
+      totalPayment += p.paymentAmount ?? 0;
+      totalNetPayment += p.netPayment || p.paymentAmount || 0;
+      totalSocialInsurance += p.socialInsurance ?? 0;
+    });
+    return { staffCount, totalPayment, totalNetPayment, totalSocialInsurance };
+  }, [filteredRows]);
+
+  // ★2026-08-27追加(22-16・22-17章): 表示中の行に、型拡張前に保存された旧形式のデータ
+  // (出勤日数等のフィールド自体を持たない)が含まれる場合、原因不明のまま0表示になるのを
+  // 避けるため案内バナーを表示する。解消するには該当月のCSVを再アップロードする必要がある。
+  const showLegacyDataWarning = useMemo(() => hasLegacyPayrollRows(filteredRows), [filteredRows]);
+
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -257,6 +278,41 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
           <span className="ml-2 text-slate-400">(行をクリックすると詳細内訳が開きます)</span>
         </span>
       </div>
+
+      {/* 旧形式データの案内バナー (★2026-08-27追加・22-16/22-17章) */}
+      {showLegacyDataWarning && (
+        <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex items-start space-x-2 text-xs text-amber-800">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            表示中のデータの一部は、出勤日数等の項目が追加される前のバージョンで取り込まれた旧形式のため、それらの項目が0表示になっています。正しく表示するには、「データ管理」タブで対象月を確認のうえ、該当月の給与データCSVを再アップロードしてください。
+          </span>
+        </div>
+      )}
+
+      {/* 集計セクション (★2026-08-27追加・22-14章修正8): 表示中(フィルタ適用後)の行の集計 */}
+      {filteredRows.length > 0 && (
+        <div className="px-4 py-3 bg-indigo-50/40 border-b border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div>
+            <span className="text-[10px] text-slate-500 font-semibold block">スタッフ人数</span>
+            <span className="text-sm font-extrabold font-mono text-slate-900 flex items-center space-x-1">
+              <Users className="w-3.5 h-3.5 text-indigo-600" />
+              <span>{summaryStats.staffCount}名</span>
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-slate-500 font-semibold block">総支給額合計</span>
+            <span className="text-sm font-extrabold font-mono text-slate-900">{yen(summaryStats.totalPayment)}</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-slate-500 font-semibold block">社保合計額合計</span>
+            <span className="text-sm font-extrabold font-mono text-slate-900">{yen(summaryStats.totalSocialInsurance)}</span>
+          </div>
+          <div>
+            <span className="text-[10px] text-slate-500 font-semibold block">差引支給額合計</span>
+            <span className="text-sm font-extrabold font-mono text-indigo-700">{yen(summaryStats.totalNetPayment)}</span>
+          </div>
+        </div>
+      )}
 
       {filteredRows.length === 0 ? (
         <div className="py-12 text-center text-slate-400 text-sm">

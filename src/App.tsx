@@ -13,6 +13,8 @@ import {
   Loader2,
   AlertTriangle,
   Wallet,
+  Briefcase,
+  Database,
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CsvUploader } from './components/CsvUploader';
@@ -204,7 +206,9 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
   const [fiscalYear, setFiscalYear] = useState<string>(fiscalYearOptions[0].value);
-  const [activeTab, setActiveTab] = useState<'monthly' | 'staffPayroll' | 'fiscal' | 'audit'>('monthly');
+  const [activeTab, setActiveTab] = useState<
+    'monthly' | 'staffPayroll' | 'retirement' | 'fiscal' | 'audit' | 'dataManagement'
+  >('monthly');
   // 月次粗利明細一覧の「年間(決算期)」表示切替用: 選択中の決算期に属する12ヶ月分の対象年月一覧とラベル
   const fiscalYearMonths = useMemo(() => getFiscalYearMonths(fiscalYear, 12), [fiscalYear]);
   const fiscalYearLabel = useMemo(
@@ -535,20 +539,6 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
       {/* メインコンテンツ */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* データ管理パネル (月別データ一覧・ファイル保存/読込) */}
-        <MonthlyDataPanel
-          companyName={selectedCompany.name}
-          companyMonths={selectedCompanyMonths}
-          onSaveToFile={handleSaveToFile}
-          onLoadFromFile={handleLoadFromFile}
-          canEdit={canEdit}
-        />
-
-        {/* 変更履歴(自動バックアップ)パネル。adminのみ(RLSでもadminのみ参照可) */}
-        {canEdit && !isOffline && (
-          <ChangeHistoryPanel companyId={selectedCompanyId} companyName={selectedCompany.name} />
-        )}
-
         {/* 手入力調整パネル (休業分補償・休業手当・次月調整)
             ★2026-08-26: 拠点ごとの項目対応表の整理が終わるまでUI非表示(SHOW_MANUAL_ADJUSTMENTS_PANEL参照) */}
         {SHOW_MANUAL_ADJUSTMENTS_PANEL && (
@@ -564,15 +554,6 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             canEdit={canEdit}
           />
         )}
-
-        {/* 退職金配賦 手入力パネル (★2026-08-26: CSV取込から手入力方式に変更) */}
-        <RetirementPanel
-          companyName={selectedCompany.name}
-          companyMonths={selectedCompanyMonths}
-          onAdd={handleAddRetirement}
-          onRemove={handleRemoveRetirement}
-          canEdit={canEdit}
-        />
 
         {/* CSVアップローダー (閲覧専用ユーザーには表示しない) */}
         {canEdit && (
@@ -615,6 +596,30 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             >
               <Wallet className="w-4 h-4" />
               <span>スタッフ給与明細</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('retirement')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'retirement'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Briefcase className="w-4 h-4" />
+              <span>退職金配賦</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('dataManagement')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'dataManagement'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Database className="w-4 h-4" />
+              <span>データ管理</span>
             </button>
 
             <button
@@ -677,6 +682,34 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             selectedMonth={selectedTargetMonth}
             onSelectedMonthChange={setSelectedTargetMonth}
           />
+        )}
+
+        {/* タブ: 退職金配賦 (★2026-08-27改修・22-14章修正9: データ管理エリア埋め込みから独立タブへ分離) */}
+        {activeTab === 'retirement' && (
+          <RetirementPanel
+            companyName={selectedCompany.name}
+            companyMonths={selectedCompanyMonths}
+            onAdd={handleAddRetirement}
+            onRemove={handleRemoveRetirement}
+            canEdit={canEdit}
+          />
+        )}
+
+        {/* タブ: データ管理 (★2026-08-27改修・22-17章修正10: メイン画面埋め込みから独立タブへ分離。
+            「データ管理」(月別データ一覧・ファイル保存/読込)と「変更履歴」(自動バックアップ)を1つのタブにまとめる) */}
+        {activeTab === 'dataManagement' && (
+          <>
+            <MonthlyDataPanel
+              companyName={selectedCompany.name}
+              companyMonths={selectedCompanyMonths}
+              onSaveToFile={handleSaveToFile}
+              onLoadFromFile={handleLoadFromFile}
+              canEdit={canEdit}
+            />
+            {canEdit && !isOffline && (
+              <ChangeHistoryPanel companyId={selectedCompanyId} companyName={selectedCompany.name} />
+            )}
+          </>
         )}
 
         {/* タブ 2: 数値検証 & 監査アラート */}

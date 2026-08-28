@@ -5,8 +5,8 @@
  */
 
 import React, { useRef } from 'react';
-import { Database, Save, Upload, CheckCircle2, XCircle } from 'lucide-react';
-import { CompanyMonthlyData, listRealMonths } from '../utils/monthlyData';
+import { Database, Save, Upload, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import { CompanyMonthlyData, listRealMonths, hasLegacyPayrollRows } from '../utils/monthlyData';
 
 interface MonthlyDataPanelProps {
   companyName: string;
@@ -126,16 +126,30 @@ export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
               </tr>
             </thead>
             <tbody>
-              {months.map((month) => (
-                <tr key={month} className="border-b border-slate-50 last:border-0">
-                  <td className="py-1.5 pr-3 font-bold text-slate-800 whitespace-nowrap">{month}</td>
-                  {CATEGORY_COLUMNS.map((c) => (
-                    <td key={c.key} className="py-1.5 pr-3">
-                      <CountBadge count={companyMonths[month]?.[c.key]?.length || 0} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {months.map((month) => {
+                const payrollRows = companyMonths[month]?.payrollRows || [];
+                const isLegacyPayroll = hasLegacyPayrollRows(payrollRows);
+                return (
+                  <tr key={month} className="border-b border-slate-50 last:border-0">
+                    <td className="py-1.5 pr-3 font-bold text-slate-800 whitespace-nowrap">{month}</td>
+                    {CATEGORY_COLUMNS.map((c) => (
+                      <td key={c.key} className="py-1.5 pr-3">
+                        <div className="flex items-center space-x-1">
+                          <CountBadge count={companyMonths[month]?.[c.key]?.length || 0} />
+                          {c.key === 'payrollRows' && isLegacyPayroll && (
+                            <span
+                              title="以前のバージョンで取り込まれた旧形式のデータのため、出勤日数等の詳細項目を保持していません。正しく表示するには、この月の給与データCSVを再アップロードしてください。"
+                              className="inline-flex items-center text-amber-500"
+                            >
+                              <AlertTriangle className="w-3 h-3" />
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
