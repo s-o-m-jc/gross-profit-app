@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CsvUploader } from './components/CsvUploader';
+import { PastExcelImportPanel } from './components/PastExcelImportPanel';
 import { MonthlyDataPanel } from './components/MonthlyDataPanel';
 import { ChangeHistoryPanel } from './components/ChangeHistoryPanel';
 import { ManualAdjustmentsPanel } from './components/ManualAdjustmentsPanel';
@@ -552,6 +553,15 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             onAddNextMonthAdjustment={handleAddNextMonthAdjustment}
             onRemoveNextMonthAdjustment={handleRemoveNextMonthAdjustment}
             canEdit={canEdit}
+          />
+        )}
+
+        {/* 過去実績Excel取り込み(フェーズ2、四国・松山のみ対象。閲覧専用ユーザーには表示しない) */}
+        {canEdit && (
+          <PastExcelImportPanel
+            selectedCompanyId={selectedCompanyId}
+            onPayrollLoaded={handlePayrollLoaded}
+            onBillingLoaded={handleBillingLoaded}
           />
         )}
 
