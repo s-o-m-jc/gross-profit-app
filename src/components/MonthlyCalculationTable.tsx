@@ -30,6 +30,8 @@ interface MonthlyCalculationTableProps {
   results: GrossProfitResult[];
   taxRate: number;
   lowMarginThreshold: number;
+  /** ★2026-09-01追加: viewer(閲覧専用)権限ではCSVエクスポートボタン自体を出さない(20-2章の既知バグ修正) */
+  canExportCsv: boolean;
   onExportCsv: () => void;
   /** 選択中の決算期に属する対象年月一覧("YYYY-MM"×12)。「年間(決算期)」表示切替で使用 */
   fiscalYearMonths: string[];
@@ -48,6 +50,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
   results,
   taxRate,
   lowMarginThreshold,
+  canExportCsv,
   onExportCsv,
   fiscalYearMonths,
   fiscalYearLabel,
@@ -230,13 +233,15 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               表示: <strong className="text-slate-800 font-bold">{filteredResults.length}</strong> / {results.length} 件
             </span>
 
-            <button
-              onClick={onExportCsv}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>CSVエクスポート</span>
-            </button>
+            {canExportCsv && (
+              <button
+                onClick={onExportCsv}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>CSVエクスポート</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

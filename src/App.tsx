@@ -652,13 +652,17 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             </button>
           </div>
 
-          <button
-            onClick={() => setIsExportModalOpen(true)}
-            className="hidden sm:inline-flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition-colors"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>結果出力 (CSV/Excel)</span>
-          </button>
+          {/* ★2026-09-01修正(20-2章の既知バグ): viewer(閲覧専用)権限でもCSV/Excelダウンロードが
+              できてしまっていた不具合を修正。canEdit(=admin判定)でボタン自体を非表示にする。 */}
+          {canEdit && (
+            <button
+              onClick={() => setIsExportModalOpen(true)}
+              className="hidden sm:inline-flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition-colors"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>結果出力 (CSV/Excel)</span>
+            </button>
+          )}
         </div>
 
         {/* タブ 1: 月次粗利明細一覧 */}
@@ -667,6 +671,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             results={calculatedResults}
             taxRate={taxRate}
             lowMarginThreshold={defaultLowMarginThreshold}
+            canExportCsv={canEdit}
             onExportCsv={() => setIsExportModalOpen(true)}
             fiscalYearMonths={fiscalYearMonths}
             fiscalYearLabel={fiscalYearLabel}
@@ -749,12 +754,15 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         onClose={() => setIsMCodeGuideOpen(false)}
       />
 
-      {/* エクスポートモーダル */}
-      <ExportModal
-        isOpen={isExportModalOpen}
-        onClose={() => setIsExportModalOpen(false)}
-        results={calculatedResults}
-      />
+      {/* エクスポートモーダル (★2026-09-01: 万一ボタン以外の経路で開かれても、
+          viewer(閲覧専用)には出さないよう二重に防御する) */}
+      {canEdit && (
+        <ExportModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          results={calculatedResults}
+        />
+      )}
     </div>
   );
 }
