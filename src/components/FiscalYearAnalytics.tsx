@@ -11,8 +11,6 @@ import {
   Users,
   Building,
   Briefcase,
-  AlertTriangle,
-  Award,
   BarChart2,
   FileCheck,
   ChevronDown,
@@ -67,8 +65,12 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
 
   return (
     <div className="space-y-6 mb-8">
-      {/* 1. エグゼクティブKPIサマリーカード */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-3">
+      {/* 1. エグゼクティブKPIサマリーカード
+          ★2026-09-02: 「要確認アラート数」カードを削除(分析画面ではなく数値検証&監査アラート画面の役割のため)。
+          「総直接原価」カードも削除(この画面の目的は契約金額(売上)と支払(原価)から結果的な粗利がいくらか
+          を可視化することであり、原価単体の表示は不要というユーザー判断)。上記2枚削除に伴いカード数が
+          9→7枚になったため lg:grid-cols-9 → lg:grid-cols-7 に変更。 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {/* 総売上高 */}
         <div className="bg-slate-900 text-white rounded-xl p-4 shadow-sm border border-slate-800">
           <span className="text-[11px] text-slate-400 font-semibold block mb-1">
@@ -96,20 +98,6 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
             全体粗利率: <strong className="text-white text-xs">{summary.overallGrossMarginRate}%</strong>
             <br />
             税込換算: ¥{summary.totalGrossProfitIncTax.toLocaleString()}
-          </div>
-        </div>
-
-        {/* 総原価 */}
-        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
-          <span className="text-[11px] text-slate-500 font-semibold block mb-1">
-            総直接原価
-          </span>
-          <div className="text-base font-bold font-mono text-slate-900">
-            ¥{summary.totalCostExTax.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-slate-400 mt-1">
-            給与: ¥{summary.totalSalary.toLocaleString()} <br />
-            社保: ¥{summary.totalSocialInsurance.toLocaleString()}
           </div>
         </div>
 
@@ -195,77 +183,15 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
             月次の給与CSV在籍有無の推移から算出
           </div>
         </div>
-
-        {/* 監査要確認件数 */}
-        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
-          <span className="text-[11px] text-slate-500 font-semibold block mb-1">
-            要確認アラート数
-          </span>
-          <div className={`text-base font-bold font-mono flex items-center space-x-1 ${
-            summary.alertCount > 0 ? 'text-amber-600' : 'text-emerald-600'
-          }`}>
-            <AlertTriangle className="w-4 h-4" />
-            <span>{summary.alertCount}件</span>
-          </div>
-          <div className="text-[10px] text-slate-400 mt-1">不整合・交通費差額</div>
-        </div>
       </div>
 
-      {/* 1.5 名目指標 (請求＠・支払＠・名目粗利率) - 大阪人材の集計シートと同一定義の参考指標。
-          契約・給与行ごとの単価を単純合計(SUM)しているだけで、稼働時間・契約規模による重み付けは
-          行っていない「名目」値。実額ベースで正確な「全体粗利率」(上のKPIカード)とは別の指標。 */}
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
-        <div className="flex items-center space-x-2 mb-3">
-          <Award className="w-4 h-4 text-amber-500" />
-          <div>
-            <h3 className="text-sm font-bold text-slate-800">名目指標 (大阪人材集計シート方式)</h3>
-            <p className="text-[11px] text-slate-400">
-              契約・給与行ごとの単価を単純合計した参考値。稼働時間・契約規模による重み付けはしていません
-              (実額ベースの正確な粗利率は上の「全体粗利率」を参照してください)。
-            </p>
-          </div>
-        </div>
-
-        {!summary.billingUnitPriceDataAvailable && !summary.payUnitPriceDataAvailable ? (
-          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg py-3 px-4 leading-relaxed">
-            請求書印刷CSV(時間内−単価列)・給与CSV(時間内時間列)がいずれも未読込のため、名目指標は算出できません。
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-              <span className="text-[11px] text-slate-500 font-semibold block mb-1">請求＠ (契約単価合計)</span>
-              {summary.billingUnitPriceDataAvailable ? (
-                <div className="text-base font-bold font-mono text-slate-900">
-                  ¥{Math.round(summary.totalBillingUnitPrice).toLocaleString()}
-                </div>
-              ) : (
-                <div className="text-xs text-slate-400">データなし (請求書印刷CSV未読込)</div>
-              )}
-            </div>
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-              <span className="text-[11px] text-slate-500 font-semibold block mb-1">支払＠ (支払単価合計)</span>
-              {summary.payUnitPriceDataAvailable ? (
-                <div className="text-base font-bold font-mono text-slate-900">
-                  ¥{Math.round(summary.totalPayUnitPrice).toLocaleString()}
-                  <span className="text-[10px] text-slate-400 font-sans font-normal ml-1">(円未満四捨五入)</span>
-                </div>
-              ) : (
-                <div className="text-xs text-slate-400">データなし (給与CSVに時間内時間列なし)</div>
-              )}
-            </div>
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-              <span className="text-[11px] text-slate-500 font-semibold block mb-1">名目粗利率</span>
-              {summary.billingUnitPriceDataAvailable && summary.payUnitPriceDataAvailable ? (
-                <div className="text-base font-bold font-mono text-indigo-700">
-                  {summary.nominalGrossMarginRate}%
-                </div>
-              ) : (
-                <div className="text-xs text-slate-400">算出不可</div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      {/* ★2026-09-02: 旧「1.5 名目指標 (大阪人材集計シート方式)」ブロックを削除。
+          請求＠・支払＠・名目粗利率(契約/給与行ごとの単価を単純合計するだけの近似指標)は、
+          大阪人材固有の簡易集計方式であり、他社・他支店とロジックを揃えるため撤廃。
+          全体の粗利益・粗利率は引き続き上のKPIカード(実額ベース)で確認できる。
+          なお「得意先別 名目粗利率ランキング」セクションのみ、有給・休業手当等の月次変動で
+          クライアント単位の実額粗利がブレる問題を避けるため、意図的に名目方式を維持している
+          (2026-09-02ユーザー確認済み)。 */}
 
       {/* 2. 月次推移 Recharts チャート */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
