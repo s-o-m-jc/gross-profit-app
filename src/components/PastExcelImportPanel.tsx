@@ -100,6 +100,8 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
   const companyLabel = company === 'matsuyama' ? '松山人材' : '四国人材';
   const sheetLabel =
     company === 'matsuyama' ? '「未払計上表」「請求支払一覧」シート' : '「未払計上表」「実績加工」シート';
+  const fileNameLabel =
+    company === 'matsuyama' ? '★派遣明細YYYYMM.xlsm' : '★YYMM勤怠明細票 時間計算.xlsm';
 
   return (
     <div className="bg-white rounded-xl border border-amber-200 shadow-sm mb-4 overflow-hidden">
@@ -119,8 +121,7 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
       {isOpen && (
         <div className="p-4 space-y-4 text-xs">
           <p className="text-slate-600 leading-relaxed">
-            {companyLabel}の拠点担当者が独自にまとめてきたExcelファイル(★派遣明細YYYYMM.xlsm /
-            ★YYMM勤怠明細票 時間計算.xlsm)を選択してください。ファイル内の{sheetLabel}
+            {companyLabel}の拠点担当者が独自にまとめてきたExcelファイル({fileNameLabel})を選択してください。ファイル内の{sheetLabel}
             を自動的に読み取り、通常のCSV取り込みと同じ計算エンジンで粗利益・粗利率を算出します。
           </p>
 
@@ -215,6 +216,8 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
               {result.payrollRows.length === 0 && result.billingRows.length === 0 ? (
                 <p className="text-rose-600 font-semibold">
                   データが1件も抽出できませんでした。シート構成が想定と異なる可能性があります。
+                  会社の選択(四国人材/松山人材)とファイルの組み合わせが合っているかもご確認ください
+                  ({companyLabel}は「{fileNameLabel}」を想定しています)。
                 </p>
               ) : applied ? (
                 <div className="flex items-center space-x-1.5 text-emerald-700 font-semibold">

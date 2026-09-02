@@ -318,7 +318,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
         </div>
       ) : (
         <div className="overflow-x-auto table-scroll">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="min-w-full text-left text-xs border-collapse">
             {/* ★2026-08-27追加(22-22/22-23章修正13): 縦スクロールしても列見出し・合計行が
                 画面上部に固定表示され続けるようsticky指定。top-16はHeader.tsx(h-16・sticky
                 top-0)の高さ分のオフセット。thead内の2行(見出し行・合計行)はまとめてsticky化

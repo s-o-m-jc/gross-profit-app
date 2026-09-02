@@ -248,7 +248,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
 
       {/* メインテーブル (table-scroll: 常時視認できる横スクロールバーをマウス操作用に表示) */}
       <div className="overflow-x-auto table-scroll">
-        <table className="w-full text-left text-xs border-collapse">
+        <table className="min-w-full text-left text-xs border-collapse">
           <thead>
             <tr className="bg-slate-100/80 text-slate-700 font-bold border-b border-slate-200">
               <th className="py-3 px-3 cursor-pointer hover:bg-slate-200" onClick={() => handleSort('targetMonth')}>
