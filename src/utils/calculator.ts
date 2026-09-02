@@ -784,13 +784,17 @@ export function calculateFiscalYearSummary(
   });
 
   // 有給金額・有給(日) (決算期合計) = 対象期間の全給与行の単純合計(上記コメント参照)
+  // ★2026-09-02修正(スタッフ給与明細バグ報告): 前月集計漏れの手入力等で「有休手当」列
+  // (paidLeaveAllowance2)に金額が計上されているケースが「有給手当」(paidLeaveAllowance)
+  // だけを見ていると集計から漏れてしまっていたため、両方を合算するようにした。
   periodPayrolls.forEach((p) => {
-    totalPaidLeaveAmount += p.paidLeaveAllowance || 0;
+    const paidLeaveAmount = (p.paidLeaveAllowance || 0) + (p.paidLeaveAllowance2 || 0);
+    totalPaidLeaveAmount += paidLeaveAmount;
     totalPaidLeaveDays += p.paidLeaveDays || 0;
 
     const mTrend = monthlyMap.get(p.targetMonth);
     if (mTrend) {
-      mTrend.paidLeaveAmount += p.paidLeaveAllowance || 0;
+      mTrend.paidLeaveAmount += paidLeaveAmount;
       mTrend.paidLeaveDays += p.paidLeaveDays || 0;
     }
   });

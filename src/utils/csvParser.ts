@@ -45,9 +45,19 @@ function normalizeHeader(key: string): string {
  * 見つからなければ部分一致にフォールバックして列キーを探す。
  * (旧実装の「最初にマッチした列を拾う」方式は「交通費」が複数列にマッチする等の
  *  誤爆があったため、完全一致を優先することで実データの列名ゆらぎに対応する)
+ *
+ * ★2026-09-02修正(スタッフ給与明細バグ報告): 部分一致フォールバックには「取り違えて
+ * 別の列を誤って拾ってしまう」リスクがある。実際に「時間内」(金額列)を探す際、CSVに
+ * その完全一致列が無いファイル(松山の過去実績Excel取り込み等)では、部分一致で
+ * 「時間内時間」(時間数列)を誤って拾ってしまい、時間数がそのまま金額として表示される
+ * 不具合が発生していた。「時間外/深夜内/深夜外/休日出」の金額列にも同型の「◯◯時間」
+ * という時間数列が存在し、同じ事故が起こり得る。安全策として、既に判明している時間数列の
+ * 実列名は exclude で明示的に除外できるようにし、金額系の列取得では必ず渡すようにする。
  */
-function findColumnKey(row: Record<string, any>, candidates: string[]): string {
-  const entries = Object.keys(row).map((orig) => ({ orig, norm: normalizeHeader(orig) }));
+function findColumnKey(row: Record<string, any>, candidates: string[], exclude: string[] = []): string {
+  const entries = Object.keys(row)
+    .map((orig) => ({ orig, norm: normalizeHeader(orig) }))
+    .filter((e) => !exclude.includes(e.norm));
 
   for (const candidate of candidates) {
     const hit = entries.find((e) => e.norm === candidate);
@@ -59,6 +69,19 @@ function findColumnKey(row: Record<string, any>, candidates: string[]): string {
   }
   return '';
 }
+
+// ★2026-09-02追加: 「◯◯時間」という時間数列の実名一覧。金額列(時間内/時間外/深夜内/深夜外/
+// 休日出)を探す際、部分一致フォールバックがこれらの時間数列を誤って拾わないよう除外に使う。
+const HOUR_COLUMN_NAMES = [
+  '時間内時間',
+  '時間外時間',
+  '深夜内時間',
+  '深夜外時間',
+  '休日出時間',
+  'その他時間外',
+  '有給時間',
+  '有給残時間',
+];
 
 /**
  * 年月フォーマット正規化 ('2026/04' -> '2026-04', '202604' -> '2026-04')
@@ -176,10 +199,11 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const paidLeaveHoursKey = findColumnKey(row, ['有給時間']);
       const lateEarlyHoursKey = findColumnKey(row, ['遅早']);
       const paidLeaveRemainingHoursKey = findColumnKey(row, ['有給残時間']);
-      const overtimeAmountKey = findColumnKey(row, ['時間外']);
-      const nightAmountKey = findColumnKey(row, ['深夜内']);
-      const nightOvertimeAmountKey = findColumnKey(row, ['深夜外']);
-      const holidayWorkAmountKey = findColumnKey(row, ['休日出']);
+      // ★2026-09-02修正: 時間数列(◯◯時間)を誤って拾わないようexcludeを渡す(上記コメント参照)
+      const overtimeAmountKey = findColumnKey(row, ['時間外'], HOUR_COLUMN_NAMES);
+      const nightAmountKey = findColumnKey(row, ['深夜内'], HOUR_COLUMN_NAMES);
+      const nightOvertimeAmountKey = findColumnKey(row, ['深夜外'], HOUR_COLUMN_NAMES);
+      const holidayWorkAmountKey = findColumnKey(row, ['休日出'], HOUR_COLUMN_NAMES);
       const otherOvertimeAllowanceKey = findColumnKey(row, ['その他時間外手当']);
       const leaveAllowanceKey = findColumnKey(row, ['休暇手当']);
       const absenceLeaveAllowanceKey = findColumnKey(row, ['欠勤休業手当']);
@@ -213,12 +237,18 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const advancePaymentSettlementKey = findColumnKey(row, ['仮払精算']);
       const totalDeductionKey = findColumnKey(row, ['総控除額']);
       const netPaymentKey = findColumnKey(row, ['差引支給額']);
-      // 支払＠(支払単価)算出用。運用者確認・実データ検算済み(2026-08-21): 賃金台帳CSVは
-      // 給与計算CSVと列構成が完全に同一のため、このCSVから直接取得できる。
-      // ★2026-08-21確定: 金額列は「時間内」で確定(候補'基本'は削除済み)。以前「基本」列名の
-      // 実データがあるように見えたのは、検証用サンプルファイル生成時の誤りだったと判明した
-      // (本物のスタッフナビCSVエクスポートでは一貫して「時間内」)。
-      const regularAmountKey = findColumnKey(row, ['時間内']);
+      // 支払＠(支払単価)算出用・基本給。
+      // ★2026-09-02修正 → 同日再訂正: 当初「実列名は『基本』一本で、『時間内』は誤りだった」と
+      // 記載したが、これは不正確だった。運用者提供のスクリーンショットは★派遣明細*.xlsm(松山の
+      // 過去実績Excel取込・16章)の「未払計上表」シートのものであり、そちらは独自に「基本」という
+      // 見出しを使っている。一方、通常の月次給与計算CSV(スタッフナビエクスポート)は実データ再検証
+      // (給与計算202410.csv)により「時間内」列が実在することを確認済み(13-0章で警告されていた
+      // 「Excelの見出し行と実CSVエクスポートの列名は別物」の罠に、修正時に自分で引っかかっていた)。
+      // つまり両方とも実在する正しい列名であり、ファイル形式によって異なる。候補を両方とも入れ、
+      // 完全一致を優先して探すことで、どちらの形式でも正しく拾えるようにしている
+      // (「時間内」の完全一致列が無い場合のみ、部分一致フォールバックが「時間内時間」等の時間数列を
+      // 誤って拾わないようHOUR_COLUMN_NAMESで除外している)。
+      const regularAmountKey = findColumnKey(row, ['基本', '基本給', '時間内'], HOUR_COLUMN_NAMES);
       const regularHoursKey = findColumnKey(row, ['時間内時間']);
 
       const payDate = parseSafeString(row[payDateKey]);

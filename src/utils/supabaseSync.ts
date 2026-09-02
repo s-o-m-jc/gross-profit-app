@@ -39,6 +39,7 @@ function normalizeState(state: Partial<MonthlyDataState> | null | undefined): Mo
     leaveCompensationRows: state.leaveCompensationRows || [],
     leaveAllowanceRows: state.leaveAllowanceRows || [],
     nextMonthAdjustmentRows: state.nextMonthAdjustmentRows || [],
+    paidLeaveOverrideRows: state.paidLeaveOverrideRows || [],
   };
 }
 

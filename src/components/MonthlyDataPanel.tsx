@@ -25,7 +25,8 @@ const CATEGORY_COLUMNS: {
     | 'retirementRows'
     | 'leaveCompensationRows'
     | 'leaveAllowanceRows'
-    | 'nextMonthAdjustmentRows';
+    | 'nextMonthAdjustmentRows'
+    | 'paidLeaveOverrideRows';
   label: string;
 }[] = [
   { key: 'payrollRows', label: '給与' },
@@ -35,6 +36,9 @@ const CATEGORY_COLUMNS: {
   { key: 'leaveCompensationRows', label: '休業分補償' },
   { key: 'leaveAllowanceRows', label: '休業手当' },
   { key: 'nextMonthAdjustmentRows', label: '次月調整' },
+  // ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)。他の手入力カテゴリと同じく
+  // ここでも月ごとの件数を確認できるようにする。
+  { key: 'paidLeaveOverrideRows', label: '有給(手入力)' },
 ];
 
 const CountBadge: React.FC<{ count: number }> = ({ count }) =>

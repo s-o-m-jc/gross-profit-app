@@ -25,6 +25,7 @@ import {
   LeaveCompensationRow,
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
+  PaidLeaveOverrideRow,
 } from '../types';
 import { CompanyId, COMPANIES } from '../config/companies';
 import {
@@ -45,6 +46,9 @@ export interface MonthlyDataState {
   leaveCompensationRows: LeaveCompensationRow[];
   leaveAllowanceRows: LeaveAllowanceRow[];
   nextMonthAdjustmentRows: NextMonthAdjustmentRow[];
+  // ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/補正行。他の手入力
+  // カテゴリと同じく1件ずつ追加/削除する(CSVカテゴリのような丸ごと置き換えはしない)。
+  paidLeaveOverrideRows: PaidLeaveOverrideRow[];
 }
 
 export type MonthlyCategory = keyof MonthlyDataState;
@@ -57,7 +61,8 @@ export type ManualEntryCategory =
   | 'leaveCompensationRows'
   | 'leaveAllowanceRows'
   | 'nextMonthAdjustmentRows'
-  | 'retirementRows';
+  | 'retirementRows'
+  | 'paidLeaveOverrideRows';
 
 /** 対象月が空/判定不能だった行の格納先 (実際のYYYY-MM形式とは衝突しない固定文字列) */
 export const UNKNOWN_MONTH_KEY = '対象月不明';
@@ -80,6 +85,7 @@ export function emptyMonthlyDataState(): MonthlyDataState {
     leaveCompensationRows: [],
     leaveAllowanceRows: [],
     nextMonthAdjustmentRows: [],
+    paidLeaveOverrideRows: [],
   };
 }
 
@@ -164,6 +170,7 @@ export function flattenCompanyMonths(companyMonths: CompanyMonthlyData): Monthly
     result.leaveCompensationRows.push(...(m.leaveCompensationRows || []));
     result.leaveAllowanceRows.push(...(m.leaveAllowanceRows || []));
     result.nextMonthAdjustmentRows.push(...(m.nextMonthAdjustmentRows || []));
+    result.paidLeaveOverrideRows.push(...(m.paidLeaveOverrideRows || []));
   });
   return result;
 }
@@ -184,7 +191,8 @@ export function hasAnyData(app: AppMonthlyData): boolean {
         m.retirementRows.length > 0 ||
         (m.leaveCompensationRows && m.leaveCompensationRows.length > 0) ||
         (m.leaveAllowanceRows && m.leaveAllowanceRows.length > 0) ||
-        (m.nextMonthAdjustmentRows && m.nextMonthAdjustmentRows.length > 0)
+        (m.nextMonthAdjustmentRows && m.nextMonthAdjustmentRows.length > 0) ||
+        (m.paidLeaveOverrideRows && m.paidLeaveOverrideRows.length > 0)
     )
   );
 }

@@ -39,6 +39,7 @@ import {
   LeaveCompensationRow,
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
+  PaidLeaveOverrideRow,
 } from './types';
 import { calculateGrossProfit, calculateFiscalYearSummary, getFiscalYearMonths } from './utils/calculator';
 import { COMPANIES, DEFAULT_COMPANY_ID, getCompanyConfig, CompanyId } from './config/companies';
@@ -203,6 +204,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     leaveCompensationRows,
     leaveAllowanceRows,
     nextMonthAdjustmentRows,
+    paidLeaveOverrideRows,
   } = flattened;
 
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
@@ -406,6 +408,11 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     handleAddManualEntry('nextMonthAdjustmentRows', row);
   const handleRemoveNextMonthAdjustment = (row: NextMonthAdjustmentRow) =>
     handleRemoveManualEntry('nextMonthAdjustmentRows', row.targetMonth, row.id);
+  // ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/削除ハンドラ
+  const handleAddPaidLeaveOverride = (row: PaidLeaveOverrideRow) =>
+    handleAddManualEntry('paidLeaveOverrideRows', row);
+  const handleRemovePaidLeaveOverride = (row: PaidLeaveOverrideRow) =>
+    handleRemoveManualEntry('paidLeaveOverrideRows', row.targetMonth, row.id);
   // 退職金配賦(★2026-08-26: CSV取込から手入力方式に変更。休業分補償等と同じく1件ずつ追加/削除する)
   const handleAddRetirement = (row: RetirementRow) => handleAddManualEntry('retirementRows', row);
   const handleRemoveRetirement = (row: RetirementRow) =>
@@ -678,6 +685,10 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             payrollRows={payrollRows}
             selectedMonth={selectedTargetMonth}
             onSelectedMonthChange={setSelectedTargetMonth}
+            paidLeaveOverrideRows={paidLeaveOverrideRows}
+            onAddPaidLeaveOverride={handleAddPaidLeaveOverride}
+            onRemovePaidLeaveOverride={handleRemovePaidLeaveOverride}
+            canEdit={canEdit}
           />
         )}
 

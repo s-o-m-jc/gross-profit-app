@@ -17,7 +17,7 @@ export interface PayrollRow {
   paidLeaveDays: number;       // 有給日数
   // 支払＠(支払単価)算出用。運用者確認・実データ検算済み: 賃金台帳CSVは給与計算CSVと
   // 列構成が完全に同一のため、このCSVから直接取得できる(新規CSV取り込み不要)。
-  regularAmount: number;       // 時間内(金額) - 通常時間帯の支給額
+  regularAmount: number;       // 基本給 (実列名は「基本」(過去実績Excel取込)または「時間内」(通常の月次CSV)。ファイル形式により異なる。2026-09-02確認)
   regularHours: number;        // 時間内時間 - 通常時間帯の稼働時間(10進数に変換済み。"164:30"→164.5)
   payDate?: string;            // 支給日 (対象年月算出のソース)
   remarks?: string;            // 備考
@@ -163,6 +163,21 @@ export interface LeaveAllowanceRow {
   staffNo: string;             // スタッフNo
   amount: number;               // 休業手当額 (対象月の給与総額(原価)に加算)
   memo?: string;                 // 備考
+}
+
+// ★2026-09-02追加(スタッフ給与明細バグ報告)。有給(手入力)データレコード。
+// 給与CSV由来の有給日数・有給手当が、前月分の集計漏れ等の理由で実態とズレている場合に、
+// スタッフ給与明細の詳細画面から1件ずつ追加できる手動補正。CSVの値を書き換えるのではなく、
+// 「追加分」としてCSV由来の値に加算する(取込データの再現性・追跡可能性を保つため)。
+// マイナス値を入れれば減算(取り過ぎの補正)にも使える。
+export interface PaidLeaveOverrideRow {
+  id: string;                  // ユニーク識別子 (手入力行の一覧表示・削除用)
+  targetMonth: string;         // 対象年月
+  staffNo: string;             // スタッフNo
+  staffName?: string;          // スタッフ氏名 (入力時点の表示用参考情報)
+  days?: number;                // 追加する有給日数 (マイナス可)
+  amount?: number;               // 追加する有給金額 (円。マイナス可)
+  memo?: string;                 // 備考 (例: 「前月10月分の集計漏れ」)
 }
 
 // 次月調整データレコード (手入力・汎用の符号付き調整項目。区分に応じて売上側/原価側どちらかに加算する)
