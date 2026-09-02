@@ -317,14 +317,15 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
           該当する給与データが見つかりません。給与計算CSVを読み込んでください。
         </div>
       ) : (
-        <div className="overflow-auto table-scroll max-h-[65vh] rounded-lg border border-slate-200">
+        <div className="overflow-auto table-scroll max-h-[calc(100vh-260px)] rounded-lg border border-slate-200">
           <table className="min-w-full text-left text-xs border-collapse">
             {/* ★2026-08-27追加(22-22/22-23章修正13、2026-09-02再修正): 列見出し・合計行を
                 sticky指定で常に見える状態にする。以前はページ全体の縦スクロールを基準に
                 top-16(Header.tsx分オフセット)で固定していたが、195件超などテーブルの行数が
                 多いと横スクロールバーがテーブル最下部(全行の下)に付いてしまい、そこまで
                 スクロールしないと使えないという問題があった。そのため、テーブルの縦横スクロール
-                自体をこの枠(overflow-auto + max-h-[65vh])の内側に閉じ込め、横スクロールバーが
+                自体をこの枠(overflow-auto + max-h-[calc(100vh-260px)]、2026-09-02同日65vhから
+                再調整)の内側に閉じ込め、横スクロールバーが
                 常に画面内(枠の下端)に表示され続けるようにした。それに伴い、theadのstickyは
                 ページ基準のtop-16から、この枠を基準としたtop-0に変更した。thead内の2行
                 (見出し行・合計行)はまとめてsticky化される(スタック順はDOM順のまま)。背景を
