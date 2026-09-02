@@ -251,46 +251,46 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
         <table className="min-w-full text-left text-xs border-collapse">
           <thead>
             <tr className="bg-slate-100/80 text-slate-700 font-bold border-b border-slate-200">
-              <th className="py-3 px-3 cursor-pointer hover:bg-slate-200" onClick={() => handleSort('targetMonth')}>
+              <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('targetMonth')}>
                 年月 <ArrowUpDown className="inline w-3 h-3 text-slate-400 ml-0.5" />
               </th>
-              <th className="py-3 px-3 cursor-pointer hover:bg-slate-200" onClick={() => handleSort('billingNo')}>
+              <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('billingNo')}>
                 請求No
               </th>
-              <th className="py-3 px-3 cursor-pointer hover:bg-slate-200" onClick={() => handleSort('staffName')}>
+              <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('staffName')}>
                 スタッフ
               </th>
-              <th className="py-3 px-3 cursor-pointer hover:bg-slate-200" onClick={() => handleSort('clientName')}>
+              <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('clientName')}>
                 派遣先企業
               </th>
-              <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('billingAmountExTax')}>
+              <th className="py-3 px-3 whitespace-nowrap text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('billingAmountExTax')}>
                 {billingAmountLabel}
               </th>
-              <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('paymentAmount')}>
+              <th className="py-3 px-3 whitespace-nowrap text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('paymentAmount')}>
                 給与支給額
               </th>
-              <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('socialInsurance')}>
+              <th className="py-3 px-3 whitespace-nowrap text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('socialInsurance')}>
                 社保等原価
               </th>
-              <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('retirementAmount')}>
+              <th className="py-3 px-3 whitespace-nowrap text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('retirementAmount')}>
                 退職金配賦
               </th>
-              <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('paidLeaveAllowance')} title="給与CSV由来の参考値。粗利計算には影響しません">
+              <th className="py-3 px-3 whitespace-nowrap text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('paidLeaveAllowance')} title="給与CSV由来の参考値。粗利計算には影響しません">
                 有給 (手当/日数)
               </th>
-              <th className="py-3 px-3 text-right bg-amber-50/50" title="粗利非算入・売上算入。消費税計算の対象外(既存仕様のまま)">
+              <th className="py-3 px-3 whitespace-nowrap text-right bg-amber-50/50" title="粗利非算入・売上算入。消費税計算の対象外(既存仕様のまま)">
                 紹介料 <span className="text-amber-600">ⓘ</span>
               </th>
-              <th className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200 bg-indigo-50/50" onClick={() => handleSort('grossProfitExTax')}>
+              <th className="py-3 px-3 whitespace-nowrap text-right cursor-pointer hover:bg-slate-200 bg-indigo-50/50" onClick={() => handleSort('grossProfitExTax')}>
                 {grossProfitLabel}
               </th>
-              <th className="py-3 px-3 text-center cursor-pointer hover:bg-slate-200 bg-indigo-50/50" onClick={() => handleSort('grossProfitRate')}>
+              <th className="py-3 px-3 whitespace-nowrap text-center cursor-pointer hover:bg-slate-200 bg-indigo-50/50" onClick={() => handleSort('grossProfitRate')}>
                 粗利率
               </th>
-              <th className="py-3 px-3 text-center cursor-pointer hover:bg-slate-200" onClick={() => handleSort('transportDiff')}>
+              <th className="py-3 px-3 whitespace-nowrap text-center cursor-pointer hover:bg-slate-200" onClick={() => handleSort('transportDiff')}>
                 交通費突合
               </th>
-              <th className="py-3 px-3 text-center">監査ステータス</th>
+              <th className="py-3 px-3 whitespace-nowrap text-center">監査ステータス</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 font-medium text-slate-800">

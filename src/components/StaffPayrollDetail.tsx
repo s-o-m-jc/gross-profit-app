@@ -326,22 +326,22 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                 中の本文が透けるため、この変更にあわせて不透明色に統一した。 */}
             <thead className="sticky top-16 z-20 shadow-sm">
               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                <th className="py-3 px-3 w-6"></th>
-                <th className="py-3 px-3">スタッフ</th>
-                <th className="py-3 px-3">対象月</th>
-                <th className="py-3 px-3 text-right">出勤日数</th>
-                <th className="py-3 px-3 text-right">有給日数</th>
-                <th className="py-3 px-3 text-right">労働時間(合計)</th>
-                <th className="py-3 px-3 text-right">時間内時間</th>
-                <th className="py-3 px-3 text-right">時間外時間</th>
-                <th className="py-3 px-3 text-right">休出時間</th>
-                <th className="py-3 px-3 text-right">交通費</th>
-                <th className="py-3 px-3 text-right">立替金</th>
-                <th className="py-3 px-3 text-right">研修手当</th>
-                <th className="py-3 px-3 text-right">総支給額</th>
-                <th className="py-3 px-3 text-right">社保合計額</th>
-                <th className="py-3 px-3 text-right">控除額計</th>
-                <th className="py-3 px-3 text-right bg-indigo-100/70">差引支給額</th>
+                <th className="py-3 px-3 whitespace-nowrap w-6"></th>
+                <th className="py-3 px-3 whitespace-nowrap">スタッフ</th>
+                <th className="py-3 px-3 whitespace-nowrap">対象月</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">出勤日数</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">有給日数</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">労働時間(合計)</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">時間内時間</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">時間外時間</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">休出時間</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">交通費</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">立替金</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">研修手当</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">総支給額</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">社保合計額</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right">控除額計</th>
+                <th className="py-3 px-3 whitespace-nowrap text-right bg-indigo-100/70">差引支給額</th>
               </tr>
               {/* 合計行 (★2026-08-27追加・22-20/22-21章修正12): 表示中(フィルタ適用後)の
                   全スタッフ分について、右側の各列と同じ並びで列ごとの合計値を表示する。
