@@ -261,10 +261,13 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                   {item.required && <span className="text-rose-500 font-bold">*</span>}
                 </span>
 
+                {/* ★2026-09-02: 毎月データが積み上がり件数が増え続けるため、総件数の表示は
+                    不要との判断で削除(スタッフ人数・データ管理タブ側の件数表示で足りるため)。
+                    読み込み済みかどうかのチェックマークのみ残す。 */}
                 {item.count > 0 ? (
                   <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
                     <CheckCircle className="w-3 h-3" />
-                    <span>{item.count}件</span>
+                    <span>読み込み済み</span>
                   </span>
                 ) : (
                   <span className="text-[10px] text-slate-400 font-medium">未読み込み</span>

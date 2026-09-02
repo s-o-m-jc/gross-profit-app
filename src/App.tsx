@@ -573,7 +573,9 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               }`}
             >
               <Table className="w-4 h-4" />
-              <span>月次粗利明細一覧 ({calculatedResults.length}件)</span>
+              {/* ★2026-09-02: 毎月データが積み上がり件数が増え続けるため、タブラベルの総件数
+                  表示は不要との判断で削除(スタッフ人数・データ管理タブ側の件数表示で足りるため) */}
+              <span>月次粗利明細一覧</span>
             </button>
 
             <button
