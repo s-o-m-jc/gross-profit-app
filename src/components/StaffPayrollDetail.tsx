@@ -317,14 +317,19 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
           該当する給与データが見つかりません。給与計算CSVを読み込んでください。
         </div>
       ) : (
-        <div className="overflow-x-auto table-scroll">
+        <div className="overflow-auto table-scroll max-h-[65vh] rounded-lg border border-slate-200">
           <table className="min-w-full text-left text-xs border-collapse">
-            {/* ★2026-08-27追加(22-22/22-23章修正13): 縦スクロールしても列見出し・合計行が
-                画面上部に固定表示され続けるようsticky指定。top-16はHeader.tsx(h-16・sticky
-                top-0)の高さ分のオフセット。thead内の2行(見出し行・合計行)はまとめてsticky化
-                される(スタック順はDOM順のまま)。背景を半透明のままにすると固定時にスクロール
-                中の本文が透けるため、この変更にあわせて不透明色に統一した。 */}
-            <thead className="sticky top-16 z-20 shadow-sm">
+            {/* ★2026-08-27追加(22-22/22-23章修正13、2026-09-02再修正): 列見出し・合計行を
+                sticky指定で常に見える状態にする。以前はページ全体の縦スクロールを基準に
+                top-16(Header.tsx分オフセット)で固定していたが、195件超などテーブルの行数が
+                多いと横スクロールバーがテーブル最下部(全行の下)に付いてしまい、そこまで
+                スクロールしないと使えないという問題があった。そのため、テーブルの縦横スクロール
+                自体をこの枠(overflow-auto + max-h-[65vh])の内側に閉じ込め、横スクロールバーが
+                常に画面内(枠の下端)に表示され続けるようにした。それに伴い、theadのstickyは
+                ページ基準のtop-16から、この枠を基準としたtop-0に変更した。thead内の2行
+                (見出し行・合計行)はまとめてsticky化される(スタック順はDOM順のまま)。背景を
+                半透明のままにすると固定時にスクロール中の本文が透けるため、不透明色にしている。 */}
+            <thead className="sticky top-0 z-20 shadow-sm">
               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                 <th className="py-3 px-3 whitespace-nowrap w-6"></th>
                 <th className="py-3 px-3 whitespace-nowrap">スタッフ</th>

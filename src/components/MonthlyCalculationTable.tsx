@@ -246,11 +246,15 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
         </div>
       </div>
 
-      {/* メインテーブル (table-scroll: 常時視認できる横スクロールバーをマウス操作用に表示) */}
-      <div className="overflow-x-auto table-scroll">
+      {/* メインテーブル (table-scroll: 常時視認できる横スクロールバーをマウス操作用に表示)
+          ★2026-09-02追加: テーブルの縦横スクロールをこの枠(overflow-auto + max-h-[65vh])の
+          内側に閉じ込め、横スクロールバーが行数によらず常に画面内(枠の下端)に表示され続ける
+          ようにした(スタッフ給与明細と同様の対応)。それに伴いtheadをsticky top-0で固定し、
+          背景も半透明(bg-slate-100/80)のままだと固定時に本文が透けるため不透明にした。 */}
+      <div className="overflow-auto table-scroll max-h-[65vh] rounded-lg border border-slate-200">
         <table className="min-w-full text-left text-xs border-collapse">
-          <thead>
-            <tr className="bg-slate-100/80 text-slate-700 font-bold border-b border-slate-200">
+          <thead className="sticky top-0 z-20 shadow-sm">
+            <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
               <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('targetMonth')}>
                 年月 <ArrowUpDown className="inline w-3 h-3 text-slate-400 ml-0.5" />
               </th>
