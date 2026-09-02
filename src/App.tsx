@@ -556,30 +556,10 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
           />
         )}
 
-        {/* 過去実績Excel取り込み(フェーズ2、四国・松山のみ対象。閲覧専用ユーザーには表示しない) */}
-        {canEdit && (
-          <PastExcelImportPanel
-            selectedCompanyId={selectedCompanyId}
-            onPayrollLoaded={handlePayrollLoaded}
-            onBillingLoaded={handleBillingLoaded}
-          />
-        )}
-
-        {/* CSVアップローダー (閲覧専用ユーザーには表示しない) */}
-        {canEdit && (
-          <CsvUploader
-            payrollRows={payrollRows}
-            billingRows={billingRows}
-            invoiceRows={invoiceRows}
-            onPayrollLoaded={handlePayrollLoaded}
-            onBillingLoaded={handleBillingLoaded}
-            onInvoiceLoaded={handleInvoiceLoaded}
-            onClearAll={handleClearAll}
-            canUndo={!!undoSnapshot && undoSnapshot.companyId === selectedCompanyId}
-            undoLabel={undoSnapshot?.label}
-            onUndo={handleUndoLastCsvUpload}
-          />
-        )}
+        {/* ★2026-09-02移動: 過去実績Excel取り込み・CSVアップローダーは、以前はここ(全タブ共通の
+            エリア)に常時表示していたが、月次粗利明細一覧・スタッフ給与明細タブで縦幅を圧迫し
+            画面を有効活用できない要因になっていたため、「データ管理」タブの中に移動した
+            (データの取り込み・管理という役割としても、そちらの方が自然なため)。 */}
 
         {/* ナビゲーションタブ */}
         <div className="flex items-center justify-between mb-6 border-b border-slate-200 pb-2">
@@ -714,6 +694,33 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             「データ管理」(月別データ一覧・ファイル保存/読込)と「変更履歴」(自動バックアップ)を1つのタブにまとめる) */}
         {activeTab === 'dataManagement' && (
           <>
+            {/* 過去実績Excel取り込み(フェーズ2、四国・松山のみ対象。閲覧専用ユーザーには表示しない)
+                ★2026-09-02: 全タブ共通エリアから、このデータ管理タブへ移動(理由は上記コメント参照) */}
+            {canEdit && (
+              <PastExcelImportPanel
+                selectedCompanyId={selectedCompanyId}
+                onPayrollLoaded={handlePayrollLoaded}
+                onBillingLoaded={handleBillingLoaded}
+              />
+            )}
+
+            {/* CSVアップローダー (閲覧専用ユーザーには表示しない)
+                ★2026-09-02: 全タブ共通エリアから、このデータ管理タブへ移動(理由は上記コメント参照) */}
+            {canEdit && (
+              <CsvUploader
+                payrollRows={payrollRows}
+                billingRows={billingRows}
+                invoiceRows={invoiceRows}
+                onPayrollLoaded={handlePayrollLoaded}
+                onBillingLoaded={handleBillingLoaded}
+                onInvoiceLoaded={handleInvoiceLoaded}
+                onClearAll={handleClearAll}
+                canUndo={!!undoSnapshot && undoSnapshot.companyId === selectedCompanyId}
+                undoLabel={undoSnapshot?.label}
+                onUndo={handleUndoLastCsvUpload}
+              />
+            )}
+
             <MonthlyDataPanel
               companyName={selectedCompany.name}
               companyMonths={selectedCompanyMonths}
