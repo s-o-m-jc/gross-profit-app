@@ -57,6 +57,11 @@ const yen = (v: number | undefined) => `¥${(v ?? 0).toLocaleString()}`;
 interface FieldSpec {
   label: string;
   value: string;
+  /** ★2026-09-03追加(運用者要望「詳細内容が横に広がりすぎている」対応): 従来はラベル自体に
+   * 長い補足説明を括弧書きで含めていたため、カードの横幅が大きくなり、詳細内訳が画面横に
+   * はみ出す原因のひとつになっていた。補足説明はここに移し、ラベルにカーソルを乗せた際の
+   * ツールチップ(title属性)として表示することで、ラベル自体は短く保つ。 */
+  hint?: string;
 }
 
 interface CategorySpec {
@@ -84,7 +89,7 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
         { label: '休出日数', value: `${p.holidayWorkDays ?? 0}日` },
         { label: '遅早日数', value: `${p.lateEarlyDays ?? 0}日` },
         { label: '特別休暇日数', value: `${p.specialLeaveDays ?? 0}日` },
-        { label: 'その他休暇日数 (休暇２〜４)', value: `${p.otherLeaveDays ?? 0}日` },
+        { label: 'その他休暇日数', hint: '休暇２〜４', value: `${p.otherLeaveDays ?? 0}日` },
       ],
     },
     {
@@ -120,8 +125,8 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
         { label: '特休手当', value: yen(p.specialLeaveAllowance) },
         { label: '研修手当', value: yen(p.trainingAllowance) },
         { label: '福祉手当', value: yen(p.welfareAllowance) },
-        { label: '有休手当 (上の「有給」欄の有給手当に合算表示)', value: yen(p.paidLeaveAllowance2) },
-        { label: '課税他 (課税他８〜１０合計)', value: yen(p.taxableOtherAllowances) },
+        { label: '有休手当', hint: '上の「有給」欄の有給手当に合算表示', value: yen(p.paidLeaveAllowance2) },
+        { label: '課税他', hint: '課税他８〜１０合計', value: yen(p.taxableOtherAllowances) },
       ],
     },
     {
@@ -132,14 +137,15 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
       // 一覧の「交通費」列は交通費1+2・交通費課税のみ、通信費・非課税他は「通信費・非課税他」列に
       // 分離した(computeSummary参照)。ここでの内訳表示自体は変更していない。
       fields: [
-        { label: '交通費 (交通費1+2合算、一覧の「交通費」列に集計)', value: yen(p.salaryTransport) },
-        { label: '交通費課税 (一覧の「交通費」列に集計)', value: yen(p.transportTaxable) },
-        { label: '通信費 (一覧の「通信費・非課税他」列に集計)', value: yen(p.commsAllowance) },
+        { label: '交通費', hint: '交通費1+2合算、一覧の「交通費」列に集計', value: yen(p.salaryTransport) },
+        { label: '交通費課税', hint: '一覧の「交通費」列に集計', value: yen(p.transportTaxable) },
+        { label: '通信費', hint: '一覧の「通信費・非課税他」列に集計', value: yen(p.commsAllowance) },
         {
-          label: '非課税他 (非課税他３〜４合計、一覧の「通信費・非課税他」列に集計)',
+          label: '非課税他',
+          hint: '非課税他３〜４合計、一覧の「通信費・非課税他」列に集計',
           value: yen(p.nonTaxableOtherAllowances),
         },
-        { label: '立替金 (粗利計算には影響しません)', value: yen(p.reimbursement) },
+        { label: '立替金', hint: '粗利計算には影響しません', value: yen(p.reimbursement) },
       ],
     },
     {
@@ -147,7 +153,8 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
       accent: 'border-amber-200',
       fields: [
         {
-          label: override.days !== 0 ? `有給日数 (CSV${p.paidLeaveDays}日 + 手入力${override.days > 0 ? '+' : ''}${override.days}日)` : '有給日数',
+          label: '有給日数',
+          hint: override.days !== 0 ? `CSV${p.paidLeaveDays}日 + 手入力${override.days > 0 ? '+' : ''}${override.days}日` : undefined,
           value: `${(p.paidLeaveDays ?? 0) + override.days}日`,
         },
         // ★2026-09-02修正(スタッフ給与明細バグ報告): 前月集計漏れの手入力等で「有休手当」列に
@@ -155,10 +162,11 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
         // 見えてしまう不具合があった。「有休」表記も有給として扱い、両方を合算して表示する。
         // さらに下の「有給(手入力)」で追加した補正分もここに合算する。
         {
-          label:
+          label: '有給手当',
+          hint:
             override.amount !== 0
-              ? `有給手当 (「有休手当」+手入力${override.amount > 0 ? '+' : ''}¥${override.amount.toLocaleString()}含む、総支給額に内包済み)`
-              : '有給手当 (「有休手当」含む、金額・総支給額に内包済み)',
+              ? `「有休手当」+手入力${override.amount > 0 ? '+' : ''}¥${override.amount.toLocaleString()}含む、総支給額に内包済み`
+              : '「有休手当」含む、金額・総支給額に内包済み',
           value: yen((p.paidLeaveAllowance ?? 0) + (p.paidLeaveAllowance2 ?? 0) + override.amount),
         },
         { label: '有給残日数', value: `${p.paidLeaveRemainingDays ?? 0}日` },
@@ -193,10 +201,11 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
         // 従来は有給(手入力)の金額が「有給」カードの表示にしか反映されず、総支給額・差引支給額
         // (実際の振込額)には一切影響しない不具合があった。手入力の金額分をここでも加算する。
         {
-          label:
+          label: '総支給額',
+          hint:
             override.amount !== 0
-              ? `総支給額 (CSV¥${(p.paymentAmount ?? 0).toLocaleString()} + 有給手入力${override.amount > 0 ? '+' : ''}¥${override.amount.toLocaleString()})`
-              : '総支給額',
+              ? `CSV¥${(p.paymentAmount ?? 0).toLocaleString()} + 有給手入力${override.amount > 0 ? '+' : ''}¥${override.amount.toLocaleString()}`
+              : undefined,
           value: yen((p.paymentAmount ?? 0) + override.amount),
         },
         { label: '総控除額', value: yen(p.totalDeduction) },
@@ -205,7 +214,8 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
         // 計算し直して表示するようにした(内訳の整合性を優先)。あわせて有給(手入力)の金額分も
         // 総支給額側に反映されるため、自動的にここにも反映される。
         {
-          label: '差引支給額 (実際の振込額 = 総支給額−総控除額)',
+          label: '差引支給額',
+          hint: '実際の振込額 = 総支給額−総控除額',
           value: yen((p.paymentAmount ?? 0) + override.amount - (p.totalDeduction ?? 0)),
         },
       ],
@@ -780,38 +790,6 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                         {yen(s.netPayment)}
                       </td>
                     </tr>
-                    {expanded && (
-                      <tr>
-                        <td colSpan={18} className="bg-slate-50/60 px-4 py-4">
-                          {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
-                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                            {buildCategories(p, getOverrideTotal(p.targetMonth, p.staffNo)).map((cat) => (
-                              <div key={cat.title} className={`rounded-lg border ${cat.accent} bg-white p-3`}>
-                                <h4 className="text-xs font-bold text-slate-700 mb-2">{cat.title}</h4>
-                                <dl className="space-y-1">
-                                  {cat.fields.map((f) => (
-                                    <div key={f.label} className="flex items-center justify-between text-[11px]">
-                                      <dt className="text-slate-500">{f.label}</dt>
-                                      <dd className="font-mono font-semibold text-slate-800">{f.value}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
-                              </div>
-                            ))}
-                            {/* ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI */}
-                            <PaidLeaveOverrideEditor
-                              targetMonth={p.targetMonth}
-                              staffNo={p.staffNo}
-                              staffName={p.staffName}
-                              overrides={overridesByKey.get(`${p.targetMonth}_${p.staffNo}`) || []}
-                              canEdit={canEdit}
-                              onAdd={onAddPaidLeaveOverride}
-                              onRemove={onRemovePaidLeaveOverride}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    )}
                   </React.Fragment>
                 );
               })}
@@ -819,6 +797,69 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
           </table>
         </div>
       )}
+
+      {/* ★2026-09-03変更(運用者要望「詳細内容が横に広がりすぎている。サイドバー(下段のばー)を
+          使わなくても見れるようにしてほしい」対応): 以前は展開した詳細内訳を、上のテーブルの
+          <tbody>内に<tr><td colSpan={18}>として描画していた。テーブルはauto-layoutのため、
+          18列ぶんに渡ってセル内容の幅が要求されると、その分だけテーブル全体(≒サマリー表の
+          横スクロール幅)が広がってしまい、詳細を見るためだけにサマリー表と同じ横スクロール
+          バーを操作しなければならなかった。詳細内訳は、テーブルの横スクロール用コンテナ
+          (overflow-auto、上のdiv)の「外側」に、展開中の行だけをこの領域自身の幅(=このカード
+          全体の幅、横スクロール不要)で並べて表示するように変更した。 */}
+      {sortedRows
+        .filter(({ p }) => expandedIds.has(`${p.targetMonth}_${p.staffNo}`))
+        .map(({ p }) => {
+          const id = `${p.targetMonth}_${p.staffNo}`;
+          return (
+            <div key={id} className="mx-4 mt-3 mb-4 rounded-lg border border-indigo-200 bg-slate-50/60 px-4 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
+                  <User className="w-3.5 h-3.5 text-slate-400" />
+                  <span>
+                    {p.staffName} <span className="text-slate-400 font-mono font-normal">({p.staffNo})</span> — {p.targetMonth} 詳細内訳
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(id)}
+                  className="text-[11px] font-semibold text-slate-500 hover:text-slate-700 flex items-center space-x-1"
+                >
+                  <ChevronUp className="w-3.5 h-3.5" />
+                  <span>閉じる</span>
+                </button>
+              </div>
+              {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {buildCategories(p, getOverrideTotal(p.targetMonth, p.staffNo)).map((cat) => (
+                  <div key={cat.title} className={`rounded-lg border ${cat.accent} bg-white p-3`}>
+                    <h4 className="text-xs font-bold text-slate-700 mb-2">{cat.title}</h4>
+                    <dl className="space-y-1">
+                      {cat.fields.map((f) => (
+                        <div key={f.label} className="flex items-center justify-between text-[11px]">
+                          <dt className="text-slate-500" title={f.hint}>
+                            {f.label}
+                            {f.hint && <span className="ml-0.5 text-slate-300">ⓘ</span>}
+                          </dt>
+                          <dd className="font-mono font-semibold text-slate-800">{f.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                ))}
+                {/* ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI */}
+                <PaidLeaveOverrideEditor
+                  targetMonth={p.targetMonth}
+                  staffNo={p.staffNo}
+                  staffName={p.staffName}
+                  overrides={overridesByKey.get(`${p.targetMonth}_${p.staffNo}`) || []}
+                  canEdit={canEdit}
+                  onAdd={onAddPaidLeaveOverride}
+                  onRemove={onRemovePaidLeaveOverride}
+                />
+              </div>
+            </div>
+          );
+        })}
     </div>
   );
 };
