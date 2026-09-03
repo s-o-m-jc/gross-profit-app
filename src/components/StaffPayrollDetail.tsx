@@ -174,14 +174,24 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
       title: '支給額',
       accent: 'border-slate-900',
       fields: [
-        { label: '総支給額', value: yen(p.paymentAmount) },
+        // ★2026-09-02修正(スタッフ給与明細バグ報告「有給が増えれば支給額が上がるはずです」):
+        // 従来は有給(手入力)の金額が「有給」カードの表示にしか反映されず、総支給額・差引支給額
+        // (実際の振込額)には一切影響しない不具合があった。手入力の金額分をここでも加算する。
+        {
+          label:
+            override.amount !== 0
+              ? `総支給額 (CSV¥${(p.paymentAmount ?? 0).toLocaleString()} + 有給手入力${override.amount > 0 ? '+' : ''}¥${override.amount.toLocaleString()})`
+              : '総支給額',
+          value: yen((p.paymentAmount ?? 0) + override.amount),
+        },
         { label: '総控除額', value: yen(p.totalDeduction) },
         // ★2026-09-02修正(スタッフ給与明細バグ報告): CSVの「差引支給額」列をそのまま表示すると
         // 「総支給額−総控除額」と一致しないケースが報告されたため、常にこの2項目の差として
-        // 計算し直して表示するようにした(内訳の整合性を優先)。
+        // 計算し直して表示するようにした(内訳の整合性を優先)。あわせて有給(手入力)の金額分も
+        // 総支給額側に反映されるため、自動的にここにも反映される。
         {
           label: '差引支給額 (実際の振込額 = 総支給額−総控除額)',
-          value: yen((p.paymentAmount ?? 0) - (p.totalDeduction ?? 0)),
+          value: yen((p.paymentAmount ?? 0) + override.amount - (p.totalDeduction ?? 0)),
         },
       ],
     },
@@ -202,8 +212,14 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
  * 大きく見える(実データ調査: 非課税他だけで100万円超のケースを確認)状態になっていた。
  * 「交通費」は交通費1+2・交通費課税のみに変更し、通信費・非課税他は別列「通信費・非課税他」に
  * 分離して、それぞれの内訳が正しく見えるようにした。
+ * ★2026-09-02修正(スタッフ給与明細バグ報告「有給が増えれば支給額が上がるはずです」): 有給
+ * (手入力)は当初、日数のみをpaidLeaveDays列に合算し、金額側はbuildCategories側の「有給」
+ * カード表示にしか反映しておらず、一覧の総支給額・差引支給額列や合計行には一切影響しない
+ * (見た目上は補正されたように見えても、実際の振込額の計算には入っていない)という設計の
+ * 抜けがあった。overrideDays(数値)だけでなくoverride全体(日数+金額)を受け取り、金額分は
+ * paymentAmount・netPaymentの計算にも加算するようにした。
  */
-function computeSummary(p: PayrollRow, overrideDays: number = 0) {
+function computeSummary(p: PayrollRow, override: PaidLeaveOverrideTotal = { days: 0, amount: 0, count: 0 }) {
   // 交通費 (交通費1+2・交通費課税のみ。通信費・非課税他は下記の別項目に分離)
   const transportSummary = (p.salaryTransport ?? 0) + (p.transportTaxable ?? 0);
   // 通信費・非課税他 (交通費とは別カテゴリの非課税手当。以前は「交通費」に混入していた)
@@ -216,11 +232,14 @@ function computeSummary(p: PayrollRow, overrideDays: number = 0) {
     (p.nightOvertimeHours ?? 0) +
     (p.holidayWorkHours ?? 0) +
     (p.otherOvertimeHours ?? 0);
+  // ★2026-09-02追加(スタッフ給与明細バグ報告「有給が増えれば支給額が上がるはずです」):
+  // 有給(手入力)の金額分を総支給額に加算した値。差引支給額もこれを基準に計算し直す。
+  const paymentAmountWithOverride = (p.paymentAmount ?? 0) + override.amount;
   return {
     workDays: p.workDays ?? 0,
     // ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加日数分をCSV由来の値に合算。
     // 一覧テーブルの「有給日数」列・合計行の両方に自動的に反映される。
-    paidLeaveDays: (p.paidLeaveDays ?? 0) + overrideDays,
+    paidLeaveDays: (p.paidLeaveDays ?? 0) + override.days,
     totalWorkHours,
     regularHours: p.regularHours ?? 0,
     // ★2026-09-02追加: 基本給(実列名「基本」)。従来一覧テーブルに金額が出ていなかった項目。
@@ -231,14 +250,15 @@ function computeSummary(p: PayrollRow, overrideDays: number = 0) {
     otherNonTaxable,
     reimbursement: p.reimbursement ?? 0,
     trainingAllowance: p.trainingAllowance ?? 0,
-    paymentAmount: p.paymentAmount ?? 0,
+    paymentAmount: paymentAmountWithOverride,
     socialInsurance: p.socialInsurance ?? 0,
     totalDeduction: p.totalDeduction ?? 0,
     // ★2026-09-02修正(スタッフ給与明細バグ報告): 以前はCSVの「差引支給額」列(p.netPayment)を
     // そのまま使い、0円等で欠けている場合のみ総支給額にフォールバックしていたが、
     // 「総支給額−総控除額」と一致しないケースが報告されたため、常にこの2項目の差として
     // 計算し直すようにした(詳細内訳の「支給額」カテゴリと同じロジックに統一)。
-    netPayment: (p.paymentAmount ?? 0) - (p.totalDeduction ?? 0),
+    // ★2026-09-02追加修正: 有給(手入力)の金額分(paymentAmountWithOverride)も反映する。
+    netPayment: paymentAmountWithOverride - (p.totalDeduction ?? 0),
   };
 }
 
@@ -493,13 +513,13 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
   }, [payrollRows, searchQuery, selectedMonth]);
 
   // 表示行 + 一覧列の値をあらかじめまとめて計算しておき、ソート・描画の両方で使い回す。
-  // ★2026-09-02修正: 有給(手入力)の追加日数を、一覧の「有給日数」列・合計行にも反映させるため
-  // computeSummaryに渡す。
+  // ★2026-09-02修正: 有給(手入力)の追加日数・金額を、一覧の「有給日数」「総支給額」
+  // 「差引支給額」列・合計行にも反映させるため、override全体をcomputeSummaryに渡す。
   const displayRows = useMemo(
     () =>
       filteredRows.map((p) => ({
         p,
-        s: computeSummary(p, getOverrideTotal(p.targetMonth, p.staffNo).days),
+        s: computeSummary(p, getOverrideTotal(p.targetMonth, p.staffNo)),
       })),
     [filteredRows, overridesByKey]
   );

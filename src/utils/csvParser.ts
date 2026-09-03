@@ -31,6 +31,30 @@ function parseSafeString(val: any): string {
 }
 
 /**
+ * findColumnKeyが返したキーで安全に行の値を取得するためのラッパー群。
+ *
+ * ★2026-09-02追加(スタッフ給与明細バグ報告・実データ解析で確定): findColumnKeyは候補列が
+ * 1つも見つからない場合、空文字列''を返す仕様になっている。従来はこれを疑わず
+ * そのまま row[key] のように参照していたため、該当キーが''の場合に row[''] という
+ * 「ヘッダーが空文字だった列」の値を誤って読んでしまっていた。
+ * 実データ(★派遣明細202310.xlsm)で検証したところ、この未払計上表シートには「総支給額」列の
+ * 直後にヘッダーが空文字の列が実在し(元Excel側の集計チェック用と見られる、総支給額と
+ * 同一の値を持つ列)、findColumnKeyがマッチ先を見つけられなかった複数のフィールド
+ * (厚生年金基金・年調過不足額・仮払精算・差引支給額 等、実列名が候補名と食い違っていた
+ * もの)が、揃ってこの「総支給額の複製列」の値を表示してしまう不具合として現れていた
+ * (「複数の控除項目が同一の金額を示す」というバグ報告の直接の原因)。
+ * key===''(=該当列なし)の場合は必ず未取得値(0 / 空文字)を返すことで、たとえ将来また
+ * 候補名の不一致が起きても「別の列の値を誤って表示する」のではなく「取得できない
+ * (0/空欄)」という安全な形で失敗するようにする。
+ */
+function getNum(row: Record<string, any>, key: string): number {
+  return key ? parseSafeNumber(row[key]) : 0;
+}
+function getStr(row: Record<string, any>, key: string): string {
+  return key ? parseSafeString(row[key]) : '';
+}
+
+/**
  * ヘッダー名の正規化。
  * 実データのスタッフナビ出力は列名が半角カナ(例: "ｽﾀｯﾌ番号")のことがあり、
  * 全角前提の候補名と一致しない問題があった。
@@ -67,7 +91,24 @@ function findColumnKey(row: Record<string, any>, candidates: string[], exclude: 
     const hit = entries.find((e) => e.norm.includes(candidate));
     if (hit) return hit.orig;
   }
+  warnMissingColumn(candidates);
   return '';
+}
+
+// ★2026-09-02追加(スタッフ給与明細バグ報告対応の一環): 候補名がどれも見つからなかった場合に
+// コンソールへ警告を出す。findColumnKeyは行ごとに(=CSVの全行分)呼ばれるため、同じ候補リストに
+// ついて毎回警告すると数百行分のログで埋め尽くされてしまう。候補リスト単位(=項目単位)で
+// 1回だけ警告するよう重複排除する(該当ファイルの読み込み中に同じ項目が繰り返し見つからない
+// ことは分かっているため、2回目以降は情報として不要)。
+const warnedMissingColumnKeys = new Set<string>();
+
+function warnMissingColumn(candidates: string[]): void {
+  const key = candidates.join('|');
+  if (warnedMissingColumnKeys.has(key)) return;
+  warnedMissingColumnKeys.add(key);
+  console.warn(
+    `[csvParser] 列が見つかりませんでした(候補: ${candidates.join(' / ')})。この項目は取り込みファイルにこの候補名の列が無いため、0または空欄として扱われます。`
+  );
 }
 
 // ★2026-09-02追加: 「◯◯時間」という時間数列の実名一覧。金額列(時間内/時間外/深夜内/深夜外/
@@ -145,6 +186,11 @@ function parseHoursMinutesToDecimal(val: any): number {
   return parseSafeNumber(s);
 }
 
+/** getNum/getStrと同様、該当列なし(key==='')の場合にrow['']を誤って読まないためのラッパー */
+function getHours(row: Record<string, any>, key: string): number {
+  return key ? parseHoursMinutesToDecimal(row[key]) : 0;
+}
+
 /**
  * 給与CSVのパース (未払計上表 / 給与計算書印刷CSV)
  * @param fileName 対象年月がCSV内から取得できない場合のフォールバック用
@@ -166,7 +212,18 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       // 確定リスト)だが、旧候補リストには額を含まない「社保合計」しかなく、フォールバック
       // 候補の「健康保険」が誤って一致していた(健康保険は社保合計額の内訳の一部にすぎない)。
       const socialKey = findColumnKey(row, ['社保合計額', '社保合計', '社会保険']);
-      const empInsKey = findColumnKey(row, ['雇用保険']);
+      // ★2026-09-02修正(実データ解析★2310勤怠明細票時間計算.xlsm=四国分で確定): 四国の
+      // 過去実績Excel(未払計上表シート)では、健康保険/介護保険/厚生年金/厚生年金基金/雇用保険の
+      // 5列がすべて同じ「保険」という見出しになっている(松山はこの5列それぞれに個別の見出しが
+      // 付いており、「保険」という汎用見出しは厚生年金基金の1列だけ)。CSV変換時にPapa Parseが
+      // 重複ヘッダーを「保険」「保険_1」「保険_2」「保険_3」「保険_4」と列の並び順にリネームする
+      // ため、個別列名(雇用保険 等)が見つからない場合のフォールバックとして、実データで確認した
+      // 並び順どおりの添字候補を追加する(健康保険→保険、介護保険→保険_1、厚生年金→保険_2、
+      // 厚生年金基金→保険_3、雇用保険→保険_4。実データ検証: 4件の合計が「社保合計」列の値と
+      // 完全一致することを確認済み)。松山側は個別列名で先に一致するため、この追加候補は
+      // 四国のみで使われる(松山の「保険」列は重複が無いためPapa Parseにリネームされず、
+      // 厚生年金基金側の候補にのみ影響する)。
+      const empInsKey = findColumnKey(row, ['雇用保険', '保険_4']);
       const parkingKey = findColumnKey(row, ['駐車場手当', '駐車場代', '駐車場']);
       const transport1Key = findColumnKey(row, ['交通費1']);
       const transport2Key = findColumnKey(row, ['交通費2']);
@@ -223,20 +280,38 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const absenceDeductionKey = findColumnKey(row, ['欠勤控除']);
       const leaveDeductionKey = findColumnKey(row, ['休暇控除']);
       const employmentInsuranceBaseKey = findColumnKey(row, ['雇用保険対象額']);
-      const healthInsuranceKey = findColumnKey(row, ['健康保険']);
-      const nursingInsuranceKey = findColumnKey(row, ['介護保険']);
-      const pensionInsuranceKey = findColumnKey(row, ['厚生年金']);
-      const pensionFundKey = findColumnKey(row, ['厚生年金基金']);
+      // ★2026-09-02修正: 四国分では個別列名が無く「保険」の重複列(添字リネーム後)になるため、
+      // 上のempInsKeyのコメント参照の並び順に従いフォールバック候補を追加。
+      const healthInsuranceKey = findColumnKey(row, ['健康保険', '保険']);
+      const nursingInsuranceKey = findColumnKey(row, ['介護保険', '保険_1']);
+      const pensionInsuranceKey = findColumnKey(row, ['厚生年金', '保険_2']);
+      // ★2026-09-02修正(実データ解析★派遣明細202310.xlsmで確定): 松山の過去実績Excel
+      // (未払計上表シート)では「厚生年金基金」列は存在せず、代わりに「保険」という
+      // 汎用的な見出しの列がその位置(厚生年金の隣)にある。四国分は上記コメントの並び順のとおり
+      // 「保険_3」に対応するため、候補に両方追加する。
+      const pensionFundKey = findColumnKey(row, ['厚生年金基金', '保険_3', '保険']);
       const taxableIncomeBaseKey = findColumnKey(row, ['課税対象額']);
       const incomeTaxKey = findColumnKey(row, ['所得税']);
-      const yearEndAdjustmentKey = findColumnKey(row, ['年調過不足額']);
+      // ★2026-09-02修正: 同ファイルでは「年調過不足額」ではなく「年調」列。候補に追加。
+      const yearEndAdjustmentKey = findColumnKey(row, ['年調過不足額', '年調']);
       const residentTaxKey = findColumnKey(row, ['住民税']);
+      // ★2026-09-02判明: 同ファイルには「昼食代」「健康診断料」「クリーニング代」に該当する
+      // 列が存在せず(代わりに「その他控除1」〜「その他控除9」という汎用列が9個あるのみで、
+      // どれがどの項目に対応するか列名からは判別不能)、findColumnKeyは意図的に空(''=該当列
+      // なし)を返す。これによりgetNum/getStrがrow['']を誤参照することはなくなったが、
+      // このファイル形式ではこの3項目自体が0/未取得として表示される(実害はなく、その他控除
+      // 1〜9の金額は「総控除額」(総支給額側で完成済みの列)に既に反映されているため、
+      // 差引支給額の計算自体には影響しない)。
       const lunchFeeKey = findColumnKey(row, ['昼食代']);
       const healthCheckFeeKey = findColumnKey(row, ['健康診断料']);
       const cleaningFeeKey = findColumnKey(row, ['ｸﾘｰﾆﾝｸﾞ代', 'クリーニング代']);
-      const advancePaymentSettlementKey = findColumnKey(row, ['仮払精算']);
+      // ★2026-09-02修正: 同ファイルの実列名は「仮払い精算」(「い」が入る)で、候補の
+      // 「仮払精算」とは完全一致はもちろん部分一致もしない(文字が挿入されているため)。
+      // 候補に実列名を追加する。
+      const advancePaymentSettlementKey = findColumnKey(row, ['仮払精算', '仮払い精算']);
       const totalDeductionKey = findColumnKey(row, ['総控除額']);
-      const netPaymentKey = findColumnKey(row, ['差引支給額']);
+      // ★2026-09-02修正: 同ファイルの実列名は「差引支給」(「額」が付かない)。候補に追加。
+      const netPaymentKey = findColumnKey(row, ['差引支給額', '差引支給']);
       // 支払＠(支払単価)算出用・基本給。
       // ★2026-09-02修正 → 同日再訂正: 当初「実列名は『基本』一本で、『時間内』は誤りだった」と
       // 記載したが、これは不正確だった。運用者提供のスクリーンショットは★派遣明細*.xlsm(松山の
@@ -251,7 +326,7 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const regularAmountKey = findColumnKey(row, ['基本', '基本給', '時間内'], HOUR_COLUMN_NAMES);
       const regularHoursKey = findColumnKey(row, ['時間内時間']);
 
-      const payDate = parseSafeString(row[payDateKey]);
+      const payDate = getStr(row, payDateKey);
 
       // 対象年月: (1)支給日から算出 → (2)列があれば列 → (3)ファイル名 の優先順
       let targetMonth = deriveTargetMonthFromPayDate(payDate);
@@ -270,87 +345,86 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       // 別パターンも確認。この場合も同じ「2列を合算」ルールを適用する。
       const salaryTransport =
         transport1Key || transport2Key
-          ? parseSafeNumber(row[transport1Key]) + parseSafeNumber(row[transport2Key])
+          ? getNum(row, transport1Key) + getNum(row, transport2Key)
           : transportDupKey
-          ? parseSafeNumber(row[transportFallbackKey]) + parseSafeNumber(row[transportDupKey])
-          : parseSafeNumber(row[transportFallbackKey]);
+          ? getNum(row, transportFallbackKey) + getNum(row, transportDupKey)
+          : getNum(row, transportFallbackKey);
 
       return {
         targetMonth,
-        staffNo: parseSafeString(row[staffNoKey]),
-        staffName: parseSafeString(row[nameKey]),
-        paymentAmount: parseSafeNumber(row[payKey]),
-        socialInsurance: parseSafeNumber(row[socialKey]),
-        employmentInsurance: parseSafeNumber(row[empInsKey]),
-        parkingFee: parseSafeNumber(row[parkingKey]),
+        staffNo: getStr(row, staffNoKey),
+        staffName: getStr(row, nameKey),
+        paymentAmount: getNum(row, payKey),
+        socialInsurance: getNum(row, socialKey),
+        employmentInsurance: getNum(row, empInsKey),
+        parkingFee: getNum(row, parkingKey),
         salaryTransport,
-        paidLeaveAllowance: parseSafeNumber(row[paidLeaveAllowanceKey]),
-        paidLeaveDays: parseSafeNumber(row[paidLeaveDaysKey]),
-        regularAmount: parseSafeNumber(row[regularAmountKey]),
-        regularHours: parseHoursMinutesToDecimal(row[regularHoursKey]),
+        paidLeaveAllowance: getNum(row, paidLeaveAllowanceKey),
+        paidLeaveDays: getNum(row, paidLeaveDaysKey),
+        regularAmount: getNum(row, regularAmountKey),
+        regularHours: getHours(row, regularHoursKey),
         payDate: payDate || undefined,
         remarks: row['備考'] || row['Remarks'] || '',
 
         // ★2026-08-27追加(22章タスク1)。詳細はtypes.tsのコメント・上記キー抽出部分を参照。
-        staffNameKana: parseSafeString(row[staffNameKanaKey]) || undefined,
-        staffCategory: parseSafeString(row[staffCategoryKey]) || undefined,
+        staffNameKana: getStr(row, staffNameKanaKey) || undefined,
+        staffCategory: getStr(row, staffCategoryKey) || undefined,
 
-        workDays: parseSafeNumber(row[workDaysKey]),
-        absenceDays: parseSafeNumber(row[absenceDaysKey]),
-        holidayWorkDays: parseSafeNumber(row[holidayWorkDaysKey]),
-        lateEarlyDays: parseSafeNumber(row[lateEarlyDaysKey]),
-        specialLeaveDays: parseSafeNumber(row[specialLeaveDaysKey]),
-        otherLeaveDays:
-          parseSafeNumber(row[leave2DaysKey]) + parseSafeNumber(row[leave3DaysKey]) + parseSafeNumber(row[leave4DaysKey]),
-        paidLeaveRemainingDays: parseSafeNumber(row[paidLeaveRemainingDaysKey]),
+        workDays: getNum(row, workDaysKey),
+        absenceDays: getNum(row, absenceDaysKey),
+        holidayWorkDays: getNum(row, holidayWorkDaysKey),
+        lateEarlyDays: getNum(row, lateEarlyDaysKey),
+        specialLeaveDays: getNum(row, specialLeaveDaysKey),
+        otherLeaveDays: getNum(row, leave2DaysKey) + getNum(row, leave3DaysKey) + getNum(row, leave4DaysKey),
+        paidLeaveRemainingDays: getNum(row, paidLeaveRemainingDaysKey),
 
-        overtimeHours: parseHoursMinutesToDecimal(row[overtimeHoursKey]),
-        nightHours: parseHoursMinutesToDecimal(row[nightHoursKey]),
-        nightOvertimeHours: parseHoursMinutesToDecimal(row[nightOvertimeHoursKey]),
-        holidayWorkHours: parseHoursMinutesToDecimal(row[holidayWorkHoursKey]),
-        otherOvertimeHours: parseHoursMinutesToDecimal(row[otherOvertimeHoursKey]),
-        paidLeaveHours: parseHoursMinutesToDecimal(row[paidLeaveHoursKey]),
-        lateEarlyHours: parseHoursMinutesToDecimal(row[lateEarlyHoursKey]),
-        paidLeaveRemainingHours: parseHoursMinutesToDecimal(row[paidLeaveRemainingHoursKey]),
+        overtimeHours: getHours(row, overtimeHoursKey),
+        nightHours: getHours(row, nightHoursKey),
+        nightOvertimeHours: getHours(row, nightOvertimeHoursKey),
+        holidayWorkHours: getHours(row, holidayWorkHoursKey),
+        otherOvertimeHours: getHours(row, otherOvertimeHoursKey),
+        paidLeaveHours: getHours(row, paidLeaveHoursKey),
+        lateEarlyHours: getHours(row, lateEarlyHoursKey),
+        paidLeaveRemainingHours: getHours(row, paidLeaveRemainingHoursKey),
 
-        overtimeAmount: parseSafeNumber(row[overtimeAmountKey]),
-        nightAmount: parseSafeNumber(row[nightAmountKey]),
-        nightOvertimeAmount: parseSafeNumber(row[nightOvertimeAmountKey]),
-        holidayWorkAmount: parseSafeNumber(row[holidayWorkAmountKey]),
-        otherOvertimeAllowance: parseSafeNumber(row[otherOvertimeAllowanceKey]),
-        leaveAllowance: parseSafeNumber(row[leaveAllowanceKey]),
-        absenceLeaveAllowance: parseSafeNumber(row[absenceLeaveAllowanceKey]),
-        specialLeaveAllowance: parseSafeNumber(row[specialLeaveAllowanceKey]),
-        trainingAllowance: parseSafeNumber(row[trainingAllowanceKey]),
-        welfareAllowance: parseSafeNumber(row[welfareAllowanceKey]),
-        paidLeaveAllowance2: parseSafeNumber(row[paidLeaveAllowance2Key]),
+        overtimeAmount: getNum(row, overtimeAmountKey),
+        nightAmount: getNum(row, nightAmountKey),
+        nightOvertimeAmount: getNum(row, nightOvertimeAmountKey),
+        holidayWorkAmount: getNum(row, holidayWorkAmountKey),
+        otherOvertimeAllowance: getNum(row, otherOvertimeAllowanceKey),
+        leaveAllowance: getNum(row, leaveAllowanceKey),
+        absenceLeaveAllowance: getNum(row, absenceLeaveAllowanceKey),
+        specialLeaveAllowance: getNum(row, specialLeaveAllowanceKey),
+        trainingAllowance: getNum(row, trainingAllowanceKey),
+        welfareAllowance: getNum(row, welfareAllowanceKey),
+        paidLeaveAllowance2: getNum(row, paidLeaveAllowance2Key),
         taxableOtherAllowances:
-          parseSafeNumber(row[taxableOther8Key]) + parseSafeNumber(row[taxableOther9Key]) + parseSafeNumber(row[taxableOther10Key]),
+          getNum(row, taxableOther8Key) + getNum(row, taxableOther9Key) + getNum(row, taxableOther10Key),
 
-        transportTaxable: parseSafeNumber(row[transportTaxableKey]),
-        commsAllowance: parseSafeNumber(row[commsAllowanceKey]),
-        nonTaxableOtherAllowances: parseSafeNumber(row[nonTaxableOther3Key]) + parseSafeNumber(row[nonTaxableOther4Key]),
-        reimbursement: parseSafeNumber(row[reimbursementKey]),
+        transportTaxable: getNum(row, transportTaxableKey),
+        commsAllowance: getNum(row, commsAllowanceKey),
+        nonTaxableOtherAllowances: getNum(row, nonTaxableOther3Key) + getNum(row, nonTaxableOther4Key),
+        reimbursement: getNum(row, reimbursementKey),
 
-        lateEarlyDeduction: parseSafeNumber(row[lateEarlyDeductionKey]),
-        absenceDeduction: parseSafeNumber(row[absenceDeductionKey]),
-        leaveDeduction: parseSafeNumber(row[leaveDeductionKey]),
-        employmentInsuranceBase: parseSafeNumber(row[employmentInsuranceBaseKey]),
-        healthInsurance: parseSafeNumber(row[healthInsuranceKey]),
-        nursingInsurance: parseSafeNumber(row[nursingInsuranceKey]),
-        pensionInsurance: parseSafeNumber(row[pensionInsuranceKey]),
-        pensionFund: parseSafeNumber(row[pensionFundKey]),
-        taxableIncomeBase: parseSafeNumber(row[taxableIncomeBaseKey]),
-        incomeTax: parseSafeNumber(row[incomeTaxKey]),
-        yearEndAdjustment: parseSafeNumber(row[yearEndAdjustmentKey]),
-        residentTax: parseSafeNumber(row[residentTaxKey]),
-        lunchFee: parseSafeNumber(row[lunchFeeKey]),
-        healthCheckFee: parseSafeNumber(row[healthCheckFeeKey]),
-        cleaningFee: parseSafeNumber(row[cleaningFeeKey]),
-        advancePaymentSettlement: parseSafeNumber(row[advancePaymentSettlementKey]),
-        totalDeduction: parseSafeNumber(row[totalDeductionKey]),
+        lateEarlyDeduction: getNum(row, lateEarlyDeductionKey),
+        absenceDeduction: getNum(row, absenceDeductionKey),
+        leaveDeduction: getNum(row, leaveDeductionKey),
+        employmentInsuranceBase: getNum(row, employmentInsuranceBaseKey),
+        healthInsurance: getNum(row, healthInsuranceKey),
+        nursingInsurance: getNum(row, nursingInsuranceKey),
+        pensionInsurance: getNum(row, pensionInsuranceKey),
+        pensionFund: getNum(row, pensionFundKey),
+        taxableIncomeBase: getNum(row, taxableIncomeBaseKey),
+        incomeTax: getNum(row, incomeTaxKey),
+        yearEndAdjustment: getNum(row, yearEndAdjustmentKey),
+        residentTax: getNum(row, residentTaxKey),
+        lunchFee: getNum(row, lunchFeeKey),
+        healthCheckFee: getNum(row, healthCheckFeeKey),
+        cleaningFee: getNum(row, cleaningFeeKey),
+        advancePaymentSettlement: getNum(row, advancePaymentSettlementKey),
+        totalDeduction: getNum(row, totalDeductionKey),
 
-        netPayment: parseSafeNumber(row[netPaymentKey]),
+        netPayment: getNum(row, netPaymentKey),
       };
     })
     .filter((r) => r.staffNo);
@@ -391,22 +465,22 @@ export function parseBillingCsv(csvText: string, fileName?: string): BillingRow[
       const targetMonth = monthKey ? normalizeMonth(row[monthKey]) : monthFromFileName;
 
       return {
-        billingNo: parseSafeString(row[billingNoKey]),
+        billingNo: getStr(row, billingNoKey),
         targetMonth,
-        staffNo: parseSafeString(row[staffNoKey]),
-        staffName: parseSafeString(row[nameKey]),
-        clientCode: parseSafeString(row[clientCodeKey]) || 'CLIENT_DEF',
-        clientName: parseSafeString(row[clientNameKey]) || '派遣先企業',
-        orderNo: parseSafeString(row[orderNoKey]),
-        orderName: parseSafeString(row[orderNameKey]),
-        billingAmountExTax: parseSafeNumber(row[billAmountKey]),
-        paymentAmount: parseSafeNumber(row[paymentAmountKey]),
-        socialInsuranceBilling: parseSafeNumber(row[socialInsuranceKey]),
-        paidLeaveDaysUsed: parseSafeNumber(row[paidLeaveDaysUsedKey]),
-        billingTransport: parseSafeNumber(row[transportKey]),
-        referralFee: parseSafeNumber(row[referralKey]),
-        workHours: parseSafeNumber(row[hoursKey]),
-        unitPrice: parseSafeNumber(row[priceKey]),
+        staffNo: getStr(row, staffNoKey),
+        staffName: getStr(row, nameKey),
+        clientCode: getStr(row, clientCodeKey) || 'CLIENT_DEF',
+        clientName: getStr(row, clientNameKey) || '派遣先企業',
+        orderNo: getStr(row, orderNoKey),
+        orderName: getStr(row, orderNameKey),
+        billingAmountExTax: getNum(row, billAmountKey),
+        paymentAmount: getNum(row, paymentAmountKey),
+        socialInsuranceBilling: getNum(row, socialInsuranceKey),
+        paidLeaveDaysUsed: getNum(row, paidLeaveDaysUsedKey),
+        billingTransport: getNum(row, transportKey),
+        referralFee: getNum(row, referralKey),
+        workHours: getNum(row, hoursKey),
+        unitPrice: getNum(row, priceKey),
       };
     })
     .filter((r) => r.billingNo || r.staffNo);
@@ -444,24 +518,24 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
       const sentKey = findColumnKey(row, ['送付ステータス', '送付']);
       const unitPriceKey = findColumnKey(row, ['時間内−単価', '請求単価']);
 
-      const printVal = parseSafeString(row[printKey]);
+      const printVal = getStr(row, printKey);
       let printStatus: InvoicePrintRow['printStatus'] = '印刷済';
       if (printVal.includes('未')) printStatus = '未印刷';
       else if (printVal.includes('再')) printStatus = '再発行';
 
-      const sentStatus: '送付済' | '未送付' = parseSafeString(row[sentKey]).includes('未') ? '未送付' : '送付済';
+      const sentStatus: '送付済' | '未送付' = getStr(row, sentKey).includes('未') ? '未送付' : '送付済';
 
       // 対象年月: (1)列があれば列 → (2)ファイル名 の優先順(請求支払一覧CSVと同じ優先順位)
       const targetMonth = monthKey ? normalizeMonth(row[monthKey]) : monthFromFileName;
 
       return {
-        billingNo: parseSafeString(row[billingNoKey]),
+        billingNo: getStr(row, billingNoKey),
         targetMonth,
-        invoiceIssueDate: parseSafeString(row[issueDateKey]),
-        paymentDueDate: parseSafeString(row[dueDateKey]),
+        invoiceIssueDate: getStr(row, issueDateKey),
+        paymentDueDate: getStr(row, dueDateKey),
         printStatus,
         sentStatus,
-        unitPrice: parseSafeNumber(row[unitPriceKey]),
+        unitPrice: getNum(row, unitPriceKey),
       };
     })
     .filter((r) => r.billingNo);
