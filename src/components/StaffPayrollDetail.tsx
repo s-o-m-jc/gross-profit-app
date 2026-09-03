@@ -88,6 +88,21 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
       ],
     },
     {
+      title: '労働時間 (内訳)',
+      accent: 'border-sky-200',
+      fields: [
+        { label: '時間内時間', value: hours(p.regularHours ?? 0) },
+        { label: '時間外時間', value: hours(p.overtimeHours ?? 0) },
+        { label: '深夜内時間', value: hours(p.nightHours ?? 0) },
+        { label: '深夜外時間', value: hours(p.nightOvertimeHours ?? 0) },
+        { label: '休日出時間', value: hours(p.holidayWorkHours ?? 0) },
+        { label: 'その他時間外 (時間)', value: hours(p.otherOvertimeHours ?? 0) },
+        { label: '遅早 (時間)', value: hours(p.lateEarlyHours ?? 0) },
+        { label: '有給時間', value: hours(p.paidLeaveHours ?? 0) },
+        { label: '有給残時間', value: hours(p.paidLeaveRemainingHours ?? 0) },
+      ],
+    },
+    {
       title: '給与 (課税)',
       accent: 'border-indigo-200',
       fields: [
