@@ -9,10 +9,13 @@ Claude Code(ローカル・クラウド問わず)は、このファイルを毎�
 
 - **`s-o-m-jc`**: このリポジトリ(`gross-profit-app`)の所有者。**はまさんご本人の別アカウント**(2026-08-25作成、「お客さんのアプリ」用として新規作成)。
   - リポジトリ: https://github.com/s-o-m-jc/gross-profit-app
-  - **push/pullは常にこのアカウントで行う**(`gh auth switch` でアクティブアカウントを `s-o-m-jc` に切り替えてから実行する)。
-- **`hamayannn`**: 別プロジェクト用のアカウントで、**このアプリとは無関係**。誤ってこちらがアクティブなまま push すると 403 Permission denied になる。
+- **`hamayannn`**: 別プロジェクト用のアカウントで、**このアプリとは無関係**。
 
-`git push` が 403 で失敗した場合は、まずアカウント名の勘違いやセキュリティ上の懸念ではなく、単に `gh auth switch` でアクティブアカウントが `s-o-m-jc` になっていないだけの可能性を先に疑うこと。
+このリポジトリは **SSH鍵(`~/.ssh/id_ed25519_s-o-m-jc`)経由で`s-o-m-jc`としてpushするよう設定済み**(2026-09-03設定)。`origin`は
+`git@github-s-o-m-jc:s-o-m-jc/gross-profit-app.git`(`~/.ssh/config`の`Host github-s-o-m-jc`エイリアス経由)になっており、
+**ghのアクティブアカウントに関わらず(`hamayannn`のままでも)そのまま `git push` / `git pull` でよい**。もう`gh auth switch`は不要。
+
+`git push`が失敗した場合は、まず`git remote -v`で`origin`が上記SSH URLのままになっているか(HTTPS URLに戻っていないか)を確認すること。
 
 ## 関連ドキュメント
 
