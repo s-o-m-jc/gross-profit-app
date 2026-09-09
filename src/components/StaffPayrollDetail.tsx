@@ -93,18 +93,27 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
       ],
     },
     {
+      // ★2026-09-03追加(運用者要望「詳細項目に時間内時間、時間外時間の項目がほしい」):
+      // 一覧テーブルの「労働時間(合計)」列は各時間数の合算値のみで、詳細内訳には時間の
+      // 内訳が一切表示されていなかった。給与(課税)カテゴリの各手当(時間外/深夜内/深夜外/
+      // 休日出)に対応する時間数を、ここでまとめて表示する。
+      // ★2026-09-09修正(運用者フィードバック「115.3hだと元Excelの115:18(時間:分)表記と
+      // 見比べづらい、分表記(コロン区切り)のほうがよい」): このカードの時間表示のみ、
+      // hours()(小数点表記、例115.3h)から hoursColon()(時間:分表記、例115:18)に変更した。
+      // 一覧テーブル側の時間列(労働時間(合計)・時間内時間・時間外時間・休出時間)は、
+      // 表の列幅への影響を避けるため、従来通り小数点表記のままにしている。
+      // ★2026-09-09修正(運用者フィードバック「有給時間・有給残時間は不要」): 下の「有給」
+      // カードで日数として既に表示されているため、このカードからは削除した。
       title: '労働時間 (内訳)',
       accent: 'border-sky-200',
       fields: [
-        { label: '時間内時間', value: hours(p.regularHours ?? 0) },
-        { label: '時間外時間', value: hours(p.overtimeHours ?? 0) },
-        { label: '深夜内時間', value: hours(p.nightHours ?? 0) },
-        { label: '深夜外時間', value: hours(p.nightOvertimeHours ?? 0) },
-        { label: '休日出時間', value: hours(p.holidayWorkHours ?? 0) },
-        { label: 'その他時間外 (時間)', value: hours(p.otherOvertimeHours ?? 0) },
-        { label: '遅早 (時間)', value: hours(p.lateEarlyHours ?? 0) },
-        { label: '有給時間', value: hours(p.paidLeaveHours ?? 0) },
-        { label: '有給残時間', value: hours(p.paidLeaveRemainingHours ?? 0) },
+        { label: '時間内時間', value: hoursColon(p.regularHours ?? 0) },
+        { label: '時間外時間', value: hoursColon(p.overtimeHours ?? 0) },
+        { label: '深夜内時間', value: hoursColon(p.nightHours ?? 0) },
+        { label: '深夜外時間', value: hoursColon(p.nightOvertimeHours ?? 0) },
+        { label: '休日出時間', value: hoursColon(p.holidayWorkHours ?? 0) },
+        { label: 'その他時間外(時間)', value: hoursColon(p.otherOvertimeHours ?? 0) },
+        { label: '遅早(時間)', value: hoursColon(p.lateEarlyHours ?? 0) },
       ],
     },
     {
@@ -145,6 +154,16 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
           hint: '非課税他３〜４合計、一覧の「通信費・非課税他」列に集計',
           value: yen(p.nonTaxableOtherAllowances),
         },
+        // ★2026-09-09追加(運用者バグ報告「駐車場代が正しく取り込まれているのに画面に一切
+        // 表示されない」): p.parkingFee(実列名「駐車場手当」/「駐車場代」/「駐車場」、
+        // csvParser.ts参照)は総支給額・差引支給額の計算には既に正しく反映されていたが、
+        // buildCategories()のどのカテゴリにも表示項目が無く、確認できない状態だった。
+        // 交通費と同じく通勤に伴う実費補填的な性質の手当であり、粗利計算側(calculator.ts)でも
+        // 社保負担額と並ぶ「会社負担コスト」として交通費と同様に扱われているため、交通費と
+        // 同じ「給与(非課税)」カテゴリに追加した。一覧テーブル側の列追加は見送った(月次の
+        // 会社コストとしての駐車場代は既に「月次粗利明細一覧」タブで確認できるため、本タブは
+        // 詳細内訳での確認で足りると判断)。
+        { label: '駐車場代', hint: '交通費と同様、通勤に伴う会社負担分。総支給額に内包済み', value: yen(p.parkingFee) },
         { label: '立替金', hint: '粗利計算には影響しません', value: yen(p.reimbursement) },
       ],
     },
@@ -169,7 +188,19 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
               : '「有休手当」含む、金額・総支給額に内包済み',
           value: yen((p.paidLeaveAllowance ?? 0) + (p.paidLeaveAllowance2 ?? 0) + override.amount),
         },
-        { label: '有給残日数', value: `${p.paidLeaveRemainingDays ?? 0}日` },
+        // ★2026-09-09修正(運用者バグ報告「有給を手入力で追加消化しても有給残日数が変わらない」):
+        // 「有給日数」「有給手当」は手入力補正(override)を合算していたが、「有給残日数」だけ
+        // CSV由来の値をそのまま表示しており、追加消化した分が残日数に反映されていなかった。
+        // 有給(手入力)は「前月集計漏れ等でCSV由来の有給日数が実態とズレている場合の追加消化分」
+        // として記録する機能(PaidLeaveOverrideEditorの説明文参照)であり、追加で消化した日数
+        // (override.days)ぶんだけ、本来消化可能な残日数からも差し引かれるのが自然なため、
+        // CSV由来のpaidLeaveRemainingDaysからoverride.daysを減算して表示するようにした
+        // (マイナス値の補正=残日数を戻す方向にも自然に対応する)。
+        {
+          label: '有給残日数',
+          hint: override.days !== 0 ? `CSV${p.paidLeaveRemainingDays ?? 0}日 − 手入力${override.days > 0 ? '+' : ''}${override.days}日` : undefined,
+          value: `${(p.paidLeaveRemainingDays ?? 0) - override.days}日`,
+        },
       ],
     },
     {
@@ -287,7 +318,23 @@ function computeSummary(p: PayrollRow, override: PaidLeaveOverrideTotal = { days
   };
 }
 
-const hours = (v: number) => `${v.toFixed(1)}h`;
+/**
+ * ★2026-09-09追加(運用者フィードバック「115.3hだと元Excelの115:18(時間:分)表記と見比べ
+ * づらい」対応): 10進数の時間数(例: 115.3)を、元Excelの[h]:mm表記と同じ「時間:分」形式
+ * (例: 115:18)の文字列に変換する。小数の丸め誤差(0.3*60が17.999...になる等)を避けるため、
+ * 分単位に丸めてから時間・分に分解する。
+ * ★同日追加修正(「時間:分」形式にそろえてほしい、との追加フィードバック): 詳細内訳
+ * (buildCategories)だけでなく、一覧テーブル(概要行・合計行)の労働時間(合計)/時間内時間/
+ * 時間外時間/休出時間の各列も、旧来の小数表記(hours()、例115.3h)からこちらに統一した。
+ * これにより decimal(hours()) 表記はアプリ内から完全に廃止され、時間系の表示はすべて
+ * 「時間:分」形式(hoursColon())で統一される。
+ */
+const hoursColon = (v: number) => {
+  const totalMinutes = Math.round((v ?? 0) * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h}:${m.toString().padStart(2, '0')}`;
+};
 
 /**
  * ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI。
@@ -683,7 +730,36 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
         </div>
       ) : (
         <div className="overflow-auto table-scroll max-h-[calc(100vh-80px)] rounded-lg border border-slate-200">
-          <table className="min-w-full text-left text-xs border-collapse">
+          {/* ★2026-09-09変更(運用者フィードバック「詳細内容を、名前の行のすぐ下に表示してほしい
+              (以前はテーブルの上に固定表示していたため、矢印のある行と詳細が離れて見えた)」対応):
+              展開した詳細内訳を、再びテーブル内(<tbody>、クリックした行の直後の<tr><td colSpan>)
+              に戻した。ただし2026-09-03時点の課題(colSpanセルの内容幅ぶん、auto-layoutで
+              テーブル全体の列幅が押し広げられ、詳細を見るためだけに余計な横スクロールが必要に
+              なっていた件)を再発させないため、テーブルに table-fixed(table-layout:fixed)を適用し、
+              直下の<colgroup>で全18列の幅を固定値で明示した。table-fixedでは各列の幅はcolgroupの
+              指定のみで決まり、colSpanセルの内容がどれだけ幅を必要としても列幅には一切影響しない
+              ため、詳細内訳の幅がどれだけあっても、テーブル自体の横スクロール幅が広がることはない。 */}
+          <table className="text-left text-xs border-collapse table-fixed">
+            <colgroup>
+              <col style={{ width: 40 }} />
+              <col style={{ width: 190 }} />
+              <col style={{ width: 84 }} />
+              <col style={{ width: 84 }} />
+              <col style={{ width: 84 }} />
+              <col style={{ width: 104 }} />
+              <col style={{ width: 92 }} />
+              <col style={{ width: 100 }} />
+              <col style={{ width: 92 }} />
+              <col style={{ width: 88 }} />
+              <col style={{ width: 96 }} />
+              <col style={{ width: 136 }} />
+              <col style={{ width: 84 }} />
+              <col style={{ width: 92 }} />
+              <col style={{ width: 104 }} />
+              <col style={{ width: 104 }} />
+              <col style={{ width: 100 }} />
+              <col style={{ width: 112 }} />
+            </colgroup>
             {/* ★2026-08-27追加(22-22/22-23章修正13、2026-09-02再修正): 列見出し・合計行を
                 sticky指定で常に見える状態にする。以前はページ全体の縦スクロールを基準に
                 top-16(Header.tsx分オフセット)で固定していたが、195件超などテーブルの行数が
@@ -730,11 +806,11 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                 <td className="py-2.5 px-3"></td>
                 <td className="py-2.5 px-3 text-right font-mono">{totals.workDays}日</td>
                 <td className="py-2.5 px-3 text-right font-mono">{totals.paidLeaveDays}日</td>
-                <td className="py-2.5 px-3 text-right font-mono">{hours(totals.totalWorkHours)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{hours(totals.regularHours)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{hoursColon(totals.totalWorkHours)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{hoursColon(totals.regularHours)}</td>
                 <td className="py-2.5 px-3 text-right font-mono">{yen(totals.regularAmount)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{hours(totals.overtimeHours)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{hours(totals.holidayWorkHours)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{hoursColon(totals.overtimeHours)}</td>
+                <td className="py-2.5 px-3 text-right font-mono">{hoursColon(totals.holidayWorkHours)}</td>
                 <td className="py-2.5 px-3 text-right font-mono">{yen(totals.transportSummary)}</td>
                 <td className="py-2.5 px-3 text-right font-mono">{yen(totals.otherNonTaxable)}</td>
                 <td className="py-2.5 px-3 text-right font-mono">{yen(totals.reimbursement)}</td>
@@ -774,11 +850,11 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                       <td className="py-2.5 px-3 font-semibold text-slate-600 whitespace-nowrap">{p.targetMonth}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{s.workDays}日</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{s.paidLeaveDays}日</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{hours(s.totalWorkHours)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.regularHours)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{hoursColon(s.totalWorkHours)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.regularHours)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.regularAmount)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.overtimeHours)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hours(s.holidayWorkHours)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.overtimeHours)}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.holidayWorkHours)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.transportSummary)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.otherNonTaxable)}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.reimbursement)}</td>
@@ -790,6 +866,51 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                         {yen(s.netPayment)}
                       </td>
                     </tr>
+                    {/* ★2026-09-09変更(運用者フィードバック「詳細内容を、名前の行のすぐ下に表示して
+                        ほしい」): 展開した詳細内訳を、クリックした行の直後にこの<tr><td colSpan={18}>
+                        として表示する。table-fixed + colgroup(上部)により、この中身がどれだけ幅を
+                        必要としても列幅・テーブル全体の横スクロール幅には影響しない。 */}
+                    {expanded && (
+                      <tr>
+                        <td colSpan={18} className="bg-slate-50/60 px-4 py-4 border-b border-slate-200">
+                          <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700 mb-3">
+                            <User className="w-3.5 h-3.5 text-slate-400" />
+                            <span>
+                              {p.staffName} <span className="text-slate-400 font-mono font-normal">({p.staffNo})</span> — {p.targetMonth} 詳細内訳
+                            </span>
+                          </div>
+                          {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
+                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                            {buildCategories(p, getOverrideTotal(p.targetMonth, p.staffNo)).map((cat) => (
+                              <div key={cat.title} className={`rounded-lg border ${cat.accent} bg-white p-3`}>
+                                <h4 className="text-xs font-bold text-slate-700 mb-2">{cat.title}</h4>
+                                <dl className="space-y-1">
+                                  {cat.fields.map((f) => (
+                                    <div key={f.label} className="flex items-center justify-between text-[11px]">
+                                      <dt className="text-slate-500" title={f.hint}>
+                                        {f.label}
+                                        {f.hint && <span className="ml-0.5 text-slate-300">ⓘ</span>}
+                                      </dt>
+                                      <dd className="font-mono font-semibold text-slate-800">{f.value}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                              </div>
+                            ))}
+                            {/* ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI */}
+                            <PaidLeaveOverrideEditor
+                              targetMonth={p.targetMonth}
+                              staffNo={p.staffNo}
+                              staffName={p.staffName}
+                              overrides={overridesByKey.get(`${p.targetMonth}_${p.staffNo}`) || []}
+                              canEdit={canEdit}
+                              onAdd={onAddPaidLeaveOverride}
+                              onRemove={onRemovePaidLeaveOverride}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                   </React.Fragment>
                 );
               })}
@@ -797,69 +918,6 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
           </table>
         </div>
       )}
-
-      {/* ★2026-09-03変更(運用者要望「詳細内容が横に広がりすぎている。サイドバー(下段のばー)を
-          使わなくても見れるようにしてほしい」対応): 以前は展開した詳細内訳を、上のテーブルの
-          <tbody>内に<tr><td colSpan={18}>として描画していた。テーブルはauto-layoutのため、
-          18列ぶんに渡ってセル内容の幅が要求されると、その分だけテーブル全体(≒サマリー表の
-          横スクロール幅)が広がってしまい、詳細を見るためだけにサマリー表と同じ横スクロール
-          バーを操作しなければならなかった。詳細内訳は、テーブルの横スクロール用コンテナ
-          (overflow-auto、上のdiv)の「外側」に、展開中の行だけをこの領域自身の幅(=このカード
-          全体の幅、横スクロール不要)で並べて表示するように変更した。 */}
-      {sortedRows
-        .filter(({ p }) => expandedIds.has(`${p.targetMonth}_${p.staffNo}`))
-        .map(({ p }) => {
-          const id = `${p.targetMonth}_${p.staffNo}`;
-          return (
-            <div key={id} className="mx-4 mt-3 mb-4 rounded-lg border border-indigo-200 bg-slate-50/60 px-4 py-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
-                  <User className="w-3.5 h-3.5 text-slate-400" />
-                  <span>
-                    {p.staffName} <span className="text-slate-400 font-mono font-normal">({p.staffNo})</span> — {p.targetMonth} 詳細内訳
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => toggleExpand(id)}
-                  className="text-[11px] font-semibold text-slate-500 hover:text-slate-700 flex items-center space-x-1"
-                >
-                  <ChevronUp className="w-3.5 h-3.5" />
-                  <span>閉じる</span>
-                </button>
-              </div>
-              {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {buildCategories(p, getOverrideTotal(p.targetMonth, p.staffNo)).map((cat) => (
-                  <div key={cat.title} className={`rounded-lg border ${cat.accent} bg-white p-3`}>
-                    <h4 className="text-xs font-bold text-slate-700 mb-2">{cat.title}</h4>
-                    <dl className="space-y-1">
-                      {cat.fields.map((f) => (
-                        <div key={f.label} className="flex items-center justify-between text-[11px]">
-                          <dt className="text-slate-500" title={f.hint}>
-                            {f.label}
-                            {f.hint && <span className="ml-0.5 text-slate-300">ⓘ</span>}
-                          </dt>
-                          <dd className="font-mono font-semibold text-slate-800">{f.value}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </div>
-                ))}
-                {/* ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI */}
-                <PaidLeaveOverrideEditor
-                  targetMonth={p.targetMonth}
-                  staffNo={p.staffNo}
-                  staffName={p.staffName}
-                  overrides={overridesByKey.get(`${p.targetMonth}_${p.staffNo}`) || []}
-                  canEdit={canEdit}
-                  onAdd={onAddPaidLeaveOverride}
-                  onRemove={onRemovePaidLeaveOverride}
-                />
-              </div>
-            </div>
-          );
-        })}
     </div>
   );
 };
