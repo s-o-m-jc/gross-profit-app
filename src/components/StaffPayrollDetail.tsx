@@ -873,40 +873,63 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                     {expanded && (
                       <tr>
                         <td colSpan={18} className="bg-slate-50/60 px-4 py-4 border-b border-slate-200">
-                          <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700 mb-3">
-                            <User className="w-3.5 h-3.5 text-slate-400" />
-                            <span>
-                              {p.staffName} <span className="text-slate-400 font-mono font-normal">({p.staffNo})</span> — {p.targetMonth} 詳細内訳
-                            </span>
-                          </div>
-                          {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
-                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                            {buildCategories(p, getOverrideTotal(p.targetMonth, p.staffNo)).map((cat) => (
-                              <div key={cat.title} className={`rounded-lg border ${cat.accent} bg-white p-3`}>
-                                <h4 className="text-xs font-bold text-slate-700 mb-2">{cat.title}</h4>
-                                <dl className="space-y-1">
-                                  {cat.fields.map((f) => (
-                                    <div key={f.label} className="flex items-center justify-between text-[11px]">
-                                      <dt className="text-slate-500" title={f.hint}>
-                                        {f.label}
-                                        {f.hint && <span className="ml-0.5 text-slate-300">ⓘ</span>}
-                                      </dt>
-                                      <dd className="font-mono font-semibold text-slate-800">{f.value}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
+                          {/* ★2026-09-09追加(運用者フィードバック「下の方までスクロールしていると、
+                              名前のところまで戻らないと詳細を閉じられない」「詳細内容自体が横に
+                              広がって見えて、見るのに横スクロールが要る」対応):
+                              - このdiv自体に sticky left-4 を指定し、テーブルを横スクロールしても
+                                詳細内容が常にスクロール枠の左端付近に固定表示されるようにした。
+                                table全体は18列固定幅で約1786pxあるが、詳細の中身自体はそこまでの
+                                幅を必要としないため、テーブルの横スクロール位置に関わらず詳細が
+                                画面内に収まって見えるようにする(テーブル自体の横スクロールは
+                                従来通り可能)。
+                              - max-w-[1300px]で詳細内容の最大幅を実用的な値に制限。通常のブラウザ
+                                幅であれば横スクロールなしで全体が見える想定(画面幅によっては要調整)。
+                              - ヘッダー行(スタッフ名+開閉矢印)は sticky top-[84px](theadの見出し行+
+                                合計行、2行分の高さの目安)でさらに縦方向にも固定した。矢印は概要行の
+                                ものと同じ開閉トグル(toggleExpand)を共有しているので、詳細を下まで
+                                スクロールしていてもここをクリックするだけで閉じられる。 */}
+                          <div className="sticky left-4 max-w-[1300px]">
+                            <div
+                              onClick={() => toggleExpand(id)}
+                              className="sticky top-[84px] z-10 flex items-center justify-between space-x-2 bg-slate-100 rounded-md border border-slate-200 px-3 py-2 mb-3 cursor-pointer hover:bg-slate-200/70 transition-colors"
+                            >
+                              <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
+                                <User className="w-3.5 h-3.5 text-slate-400" />
+                                <span>
+                                  {p.staffName} <span className="text-slate-400 font-mono font-normal">({p.staffNo})</span> — {p.targetMonth} 詳細内訳
+                                </span>
                               </div>
-                            ))}
-                            {/* ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI */}
-                            <PaidLeaveOverrideEditor
-                              targetMonth={p.targetMonth}
-                              staffNo={p.staffNo}
-                              staffName={p.staffName}
-                              overrides={overridesByKey.get(`${p.targetMonth}_${p.staffNo}`) || []}
-                              canEdit={canEdit}
-                              onAdd={onAddPaidLeaveOverride}
-                              onRemove={onRemovePaidLeaveOverride}
-                            />
+                              <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            </div>
+                            {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                              {buildCategories(p, getOverrideTotal(p.targetMonth, p.staffNo)).map((cat) => (
+                                <div key={cat.title} className={`rounded-lg border ${cat.accent} bg-white p-3`}>
+                                  <h4 className="text-xs font-bold text-slate-700 mb-2">{cat.title}</h4>
+                                  <dl className="space-y-1">
+                                    {cat.fields.map((f) => (
+                                      <div key={f.label} className="flex items-center justify-between text-[11px]">
+                                        <dt className="text-slate-500" title={f.hint}>
+                                          {f.label}
+                                          {f.hint && <span className="ml-0.5 text-slate-300">ⓘ</span>}
+                                        </dt>
+                                        <dd className="font-mono font-semibold text-slate-800">{f.value}</dd>
+                                      </div>
+                                    ))}
+                                  </dl>
+                                </div>
+                              ))}
+                              {/* ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI */}
+                              <PaidLeaveOverrideEditor
+                                targetMonth={p.targetMonth}
+                                staffNo={p.staffNo}
+                                staffName={p.staffName}
+                                overrides={overridesByKey.get(`${p.targetMonth}_${p.staffNo}`) || []}
+                                canEdit={canEdit}
+                                onAdd={onAddPaidLeaveOverride}
+                                onRemove={onRemovePaidLeaveOverride}
+                              />
+                            </div>
                           </div>
                         </td>
                       </tr>
