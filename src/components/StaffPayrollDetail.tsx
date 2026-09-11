@@ -34,7 +34,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Search, User, Users, ChevronDown, ChevronUp, AlertTriangle, Plus, Trash2, PenLine } from 'lucide-react';
+import { Search, User, Users, ChevronDown, ChevronUp, AlertTriangle, Plus, Trash2, PenLine, X } from 'lucide-react';
 import { PayrollRow, PaidLeaveOverrideRow } from '../types';
 import { hasLegacyPayrollRows } from '../utils/monthlyData';
 
@@ -730,36 +730,20 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
         </div>
       ) : (
         <div className="overflow-auto table-scroll max-h-[calc(100vh-80px)] rounded-lg border border-slate-200">
-          {/* ★2026-09-09変更(運用者フィードバック「詳細内容を、名前の行のすぐ下に表示してほしい
-              (以前はテーブルの上に固定表示していたため、矢印のある行と詳細が離れて見えた)」対応):
-              展開した詳細内訳を、再びテーブル内(<tbody>、クリックした行の直後の<tr><td colSpan>)
-              に戻した。ただし2026-09-03時点の課題(colSpanセルの内容幅ぶん、auto-layoutで
-              テーブル全体の列幅が押し広げられ、詳細を見るためだけに余計な横スクロールが必要に
-              なっていた件)を再発させないため、テーブルに table-fixed(table-layout:fixed)を適用し、
-              直下の<colgroup>で全18列の幅を固定値で明示した。table-fixedでは各列の幅はcolgroupの
-              指定のみで決まり、colSpanセルの内容がどれだけ幅を必要としても列幅には一切影響しない
-              ため、詳細内訳の幅がどれだけあっても、テーブル自体の横スクロール幅が広がることはない。 */}
-          <table className="text-left text-xs border-collapse table-fixed">
-            <colgroup>
-              <col style={{ width: 40 }} />
-              <col style={{ width: 190 }} />
-              <col style={{ width: 84 }} />
-              <col style={{ width: 84 }} />
-              <col style={{ width: 84 }} />
-              <col style={{ width: 104 }} />
-              <col style={{ width: 92 }} />
-              <col style={{ width: 100 }} />
-              <col style={{ width: 92 }} />
-              <col style={{ width: 88 }} />
-              <col style={{ width: 96 }} />
-              <col style={{ width: 136 }} />
-              <col style={{ width: 84 }} />
-              <col style={{ width: 92 }} />
-              <col style={{ width: 104 }} />
-              <col style={{ width: 104 }} />
-              <col style={{ width: 100 }} />
-              <col style={{ width: 112 }} />
-            </colgroup>
+          {/* ★2026-09-11変更(運用者フィードバック「詳細内容の横スクロールだけうまくいかない。
+              最悪別画面表示で、×で閉じて戻る形でもいい」対応):
+              詳細内訳の表示方式を、テーブル内の行(<tr><td colSpan>)から、独立したモーダル
+              オーバーレイ(position: fixed、コンポーネント末尾でレンダリング)に変更した。
+              経緯: 詳細をテーブル内(colSpanセル)に置く限り、詳細の実際の幅がどれだけ小さくても
+              テーブルの横スクロール位置・スクロール幅と無関係ではいられない
+              (2026-09-09、position:sticky + leftでの左固定を試みたが、colSpanセル内での
+              sticky+leftの挙動はブラウザ実装上不安定で、意図通り追従しなかった)。モーダル化
+              することで、詳細内容をテーブルの構造・横スクロールと完全に独立させ、常に画面幅に
+              収まる形で表示されるようにした。これに伴い、詳細用のcolSpanセル対策として入れて
+              いた table-fixed + <colgroup> の固定幅指定(2026-09-09追加)も不要になったため撤去
+              した(colSpanの巨大セルがなくなったため、通常のtable-layout:autoに戻しても
+              テーブル自体の横幅が意図せず広がる問題は起きない)。 */}
+          <table className="min-w-full text-left text-xs border-collapse">
             {/* ★2026-08-27追加(22-22/22-23章修正13、2026-09-02再修正): 列見出し・合計行を
                 sticky指定で常に見える状態にする。以前はページ全体の縦スクロールを基準に
                 top-16(Header.tsx分オフセット)で固定していたが、195件超などテーブルの行数が
@@ -826,8 +810,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                 const id = `${p.targetMonth}_${p.staffNo}`;
                 const expanded = expandedIds.has(id);
                 return (
-                  <React.Fragment key={id}>
-                    <tr onClick={() => toggleExpand(id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                    <tr key={id} onClick={() => toggleExpand(id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
                       <td className="py-2.5 px-3 text-slate-400">
                         {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </td>
@@ -866,81 +849,83 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                         {yen(s.netPayment)}
                       </td>
                     </tr>
-                    {/* ★2026-09-09変更(運用者フィードバック「詳細内容を、名前の行のすぐ下に表示して
-                        ほしい」): 展開した詳細内訳を、クリックした行の直後にこの<tr><td colSpan={18}>
-                        として表示する。table-fixed + colgroup(上部)により、この中身がどれだけ幅を
-                        必要としても列幅・テーブル全体の横スクロール幅には影響しない。 */}
-                    {expanded && (
-                      <tr>
-                        <td colSpan={18} className="bg-slate-50/60 px-4 py-4 border-b border-slate-200">
-                          {/* ★2026-09-09追加(運用者フィードバック「下の方までスクロールしていると、
-                              名前のところまで戻らないと詳細を閉じられない」「詳細内容自体が横に
-                              広がって見えて、見るのに横スクロールが要る」対応):
-                              - このdiv自体に sticky left-4 を指定し、テーブルを横スクロールしても
-                                詳細内容が常にスクロール枠の左端付近に固定表示されるようにした。
-                                table全体は18列固定幅で約1786pxあるが、詳細の中身自体はそこまでの
-                                幅を必要としないため、テーブルの横スクロール位置に関わらず詳細が
-                                画面内に収まって見えるようにする(テーブル自体の横スクロールは
-                                従来通り可能)。
-                              - max-w-[1300px]で詳細内容の最大幅を実用的な値に制限。通常のブラウザ
-                                幅であれば横スクロールなしで全体が見える想定(画面幅によっては要調整)。
-                              - ヘッダー行(スタッフ名+開閉矢印)は sticky top-[84px](theadの見出し行+
-                                合計行、2行分の高さの目安)でさらに縦方向にも固定した。矢印は概要行の
-                                ものと同じ開閉トグル(toggleExpand)を共有しているので、詳細を下まで
-                                スクロールしていてもここをクリックするだけで閉じられる。 */}
-                          <div className="sticky left-4 max-w-[1300px]">
-                            <div
-                              onClick={() => toggleExpand(id)}
-                              className="sticky top-[84px] z-10 flex items-center justify-between space-x-2 bg-slate-100 rounded-md border border-slate-200 px-3 py-2 mb-3 cursor-pointer hover:bg-slate-200/70 transition-colors"
-                            >
-                              <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
-                                <User className="w-3.5 h-3.5 text-slate-400" />
-                                <span>
-                                  {p.staffName} <span className="text-slate-400 font-mono font-normal">({p.staffNo})</span> — {p.targetMonth} 詳細内訳
-                                </span>
-                              </div>
-                              <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            </div>
-                            {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                              {buildCategories(p, getOverrideTotal(p.targetMonth, p.staffNo)).map((cat) => (
-                                <div key={cat.title} className={`rounded-lg border ${cat.accent} bg-white p-3`}>
-                                  <h4 className="text-xs font-bold text-slate-700 mb-2">{cat.title}</h4>
-                                  <dl className="space-y-1">
-                                    {cat.fields.map((f) => (
-                                      <div key={f.label} className="flex items-center justify-between text-[11px]">
-                                        <dt className="text-slate-500" title={f.hint}>
-                                          {f.label}
-                                          {f.hint && <span className="ml-0.5 text-slate-300">ⓘ</span>}
-                                        </dt>
-                                        <dd className="font-mono font-semibold text-slate-800">{f.value}</dd>
-                                      </div>
-                                    ))}
-                                  </dl>
-                                </div>
-                              ))}
-                              {/* ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI */}
-                              <PaidLeaveOverrideEditor
-                                targetMonth={p.targetMonth}
-                                staffNo={p.staffNo}
-                                staffName={p.staffName}
-                                overrides={overridesByKey.get(`${p.targetMonth}_${p.staffNo}`) || []}
-                                canEdit={canEdit}
-                                onAdd={onAddPaidLeaveOverride}
-                                onRemove={onRemovePaidLeaveOverride}
-                              />
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
       )}
+
+      {/* ★2026-09-11追加(運用者フィードバック対応): 展開中の各行の詳細内訳を、テーブルの構造・
+          横スクロールとは完全に独立したモーダルオーバーレイとして表示する。背景(半透明)を
+          クリックするか、右上の×をクリックすると閉じる(概要行のクリックによる開閉トグルも
+          従来通り有効)。position: fixedのため、DOM上どこにレンダリングしても画面全体を覆う形で
+          表示される。 */}
+      {sortedRows
+        .filter(({ p }) => expandedIds.has(`${p.targetMonth}_${p.staffNo}`))
+        .map(({ p }) => {
+          const id = `${p.targetMonth}_${p.staffNo}`;
+          return (
+            <div
+              key={id}
+              className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:p-8"
+              onClick={() => toggleExpand(id)}
+            >
+              <div
+                className="my-4 w-full max-w-5xl rounded-xl bg-white shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-xl border-b border-slate-200 bg-slate-100 px-4 py-3">
+                  <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                    <span>
+                      {p.staffName} <span className="text-slate-400 font-mono font-normal">({p.staffNo})</span> — {p.targetMonth} 詳細内訳
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(id)}
+                    className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                    aria-label="閉じる"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="p-4">
+                  {p.remarks && <p className="text-[11px] text-slate-400 mb-2">{p.remarks}</p>}
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {buildCategories(p, getOverrideTotal(p.targetMonth, p.staffNo)).map((cat) => (
+                      <div key={cat.title} className={`rounded-lg border ${cat.accent} bg-white p-3`}>
+                        <h4 className="text-xs font-bold text-slate-700 mb-2">{cat.title}</h4>
+                        <dl className="space-y-1">
+                          {cat.fields.map((f) => (
+                            <div key={f.label} className="flex items-center justify-between text-[11px]">
+                              <dt className="text-slate-500" title={f.hint}>
+                                {f.label}
+                                {f.hint && <span className="ml-0.5 text-slate-300">ⓘ</span>}
+                              </dt>
+                              <dd className="font-mono font-semibold text-slate-800">{f.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    ))}
+                    {/* ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/一覧/削除UI */}
+                    <PaidLeaveOverrideEditor
+                      targetMonth={p.targetMonth}
+                      staffNo={p.staffNo}
+                      staffName={p.staffName}
+                      overrides={overridesByKey.get(`${p.targetMonth}_${p.staffNo}`) || []}
+                      canEdit={canEdit}
+                      onAdd={onAddPaidLeaveOverride}
+                      onRemove={onRemovePaidLeaveOverride}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
     </div>
   );
 };
