@@ -74,28 +74,68 @@ import { useAuth, Profile } from './lib/AuthContext';
  */
 const SHOW_MANUAL_ADJUSTMENTS_PANEL = false;
 
+// ★2026-09-17追加(はまさんの指摘): 過去データを2023年分まで遡って取り込んでいく運用のため、
+// 決算期セレクタの選択肢は最低でもこの年から選べるようにする(実データがさらに古い場合は
+// そちらを優先。下記buildFiscalYearOptions参照)。
+const MIN_FISCAL_YEAR_FLOOR = 2023;
+
+/** 対象年月("YYYY-MM")が属する決算期を、決算開始月を基準に「開始年」で返す(不正な形式はnull)。 */
+function fiscalStartYearForMonth(targetMonth: string, startMonth: number): number | null {
+  const m = targetMonth.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  return month >= startMonth ? year : year - 1;
+}
+
 /**
  * 決算開始月(会社ごとに異なる。src/config/companiesの設定テーブル参照)から、
  * 決算期セレクタの選択肢を組み立てる。
  * 3社確定値(要件整理12章): 大阪人材=07 / 四国人材=10 / 松山人材=09。
+ *
+ * ★2026-09-17修正(はまさんの指摘):
+ * 1. 従来は実行時点の年(new Date().getFullYear())を基準に直近3期分しか選択肢を作らず、
+ *    2023年を含む決算期を選べなかった。過去データを遡って取り込んでいく運用と合わないため、
+ *    実際にmonthlyDataに存在する対象年月の範囲(dataMonths)まで遡り、かつ最低でも
+ *    MIN_FISCAL_YEAR_FLOOR(2023)年開始の決算期までは選べるように選択肢を生成するよう変更した。
+ *    上限側(直近側)も同様に、実データが実行時点より先の決算期まで進んでいればそちらを使う
+ *    (通常は実行時点を含む決算期が上限になる)。
+ * 2. ラベルの表記を「開始年+開始月」(例: 2023年7月期)から「終了年+終了月」(例: 2024年6月期)に
+ *    変更した(期間の範囲表示(2023/07〜2024/06)自体は変更なし)。ただし4月始まり(年度呼称)の
+ *    会社は対象外(「◯◯年度」は日本の会計慣行上「開始年」を指すのが一般的なため、この呼び方が
+ *    現状使われている大阪・松山・四国の3社にはそもそも適用されない)。
  */
 function buildFiscalYearOptions(
   startMonthStr: string,
-  count: number = 3
+  dataMonths: string[] = []
 ): { value: string; label: string }[] {
   const startMonth = parseInt(startMonthStr, 10) || 4;
-  const currentYear = new Date().getFullYear();
+  const mm = (n: number) => String(n).padStart(2, '0');
 
-  return Array.from({ length: count }, (_, i) => {
-    const year = currentYear - i;
+  const now = new Date();
+  const currentFiscalStartYear = fiscalStartYearForMonth(
+    `${now.getFullYear()}-${mm(now.getMonth() + 1)}`,
+    startMonth
+  )!;
+
+  const dataFiscalStartYears = dataMonths
+    .map((m) => fiscalStartYearForMonth(m, startMonth))
+    .filter((y): y is number => y !== null);
+
+  const earliestYear = Math.min(MIN_FISCAL_YEAR_FLOOR, ...dataFiscalStartYears);
+  const latestYear = Math.max(currentFiscalStartYear, ...dataFiscalStartYears);
+
+  const years: number[] = [];
+  for (let year = latestYear; year >= earliestYear; year--) years.push(year);
+
+  return years.map((year) => {
     const endMonth = startMonth === 1 ? 12 : startMonth - 1;
     const endYear = startMonth === 1 ? year : year + 1;
-    const mm = (n: number) => String(n).padStart(2, '0');
     const value = `${year}-${mm(startMonth)}`;
     const label =
       startMonth === 4
         ? `${year}年度 (${year}/04〜${endYear}/03)`
-        : `${year}年${startMonth}月期 (${year}/${mm(startMonth)}〜${endYear}/${mm(endMonth)})`;
+        : `${endYear}年${endMonth}月期 (${year}/${mm(startMonth)}〜${endYear}/${mm(endMonth)})`;
     return { value, label };
   });
 }
@@ -169,11 +209,6 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   );
   const selectedCompany = useMemo(() => getCompanyConfig(selectedCompanyId), [selectedCompanyId]);
 
-  const fiscalYearOptions = useMemo(
-    () => buildFiscalYearOptions(selectedCompany.fiscalStartMonth),
-    [selectedCompany.fiscalStartMonth]
-  );
-
   // ステート
   // 会社ID → 対象月(YYYY-MM) → {payrollRows, billingRows, invoiceRows, retirementRows} の
   // 2段階キー構造。毎月新しいCSVを追加アップロードしながら決算期を通して使い続けられるよう、
@@ -195,6 +230,16 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   } | null>(null);
 
   const selectedCompanyMonths = monthlyData[selectedCompanyId];
+
+  // ★2026-09-17追加(はまさんの指摘): 決算期セレクタの選択肢を、実際にmonthlyDataに存在する
+  // 対象年月の範囲まで遡って生成できるよう、選択中の会社の月バケツのキー(既存の対象月一覧)を
+  // そのままbuildFiscalYearOptionsに渡す(UNKNOWN_MONTH_KEY等の不正な形式はフィルタ側で無視される)。
+  const companyDataMonths = useMemo(() => Object.keys(selectedCompanyMonths), [selectedCompanyMonths]);
+  const fiscalYearOptions = useMemo(
+    () => buildFiscalYearOptions(selectedCompany.fiscalStartMonth, companyDataMonths),
+    [selectedCompany.fiscalStartMonth, companyDataMonths]
+  );
+
   // 選択中の会社の全月のデータを1つのフラットな束にまとめる(粗利計算エンジンへの入力用)。
   // calculator.tsの結合ロジックはtargetMonthをキーの一部にしているため、複数月分を
   // まとめて渡しても月をまたいで誤結合することはない(20日締重複統合・複数契約検知も月単位で判定)。

@@ -275,12 +275,6 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('clientName')}>
                 派遣先企業
               </th>
-              {/* ★2026-09-11追加(23章タスクB「担当者」列復活)。クライアント×対象月単位の担当者。
-                  手入力(PersonInChargePanel)があればそちらを優先し、なければ取り込み元
-                  (現状は松山のみ)の値を表示する(calculator.ts参照)。未設定の場合は「-」表示。 */}
-              <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('personInCharge')}>
-                担当者
-              </th>
               <th className="py-3 px-3 whitespace-nowrap text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('billingAmountExTax')}>
                 {billingAmountLabel}
               </th>
@@ -319,6 +313,14 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                 交通費突合
               </th>
               <th className="py-3 px-3 whitespace-nowrap text-center">監査ステータス</th>
+              {/* ★2026-09-11追加(23章タスクB「担当者」列復活)。クライアント×対象月単位の担当者。
+                  手入力(PersonInChargePanel)があればそちらを優先し、なければ取り込み元
+                  (現状は松山のみ)の値を表示する(calculator.ts参照)。未設定の場合は「-」表示。
+                  ★2026-09-17修正(はまさんの指摘): ソートに使うだけの項目のため、先頭付近(派遣先
+                  企業の直後)から表の最後尾へ移動した。 */}
+              <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('personInCharge')}>
+                担当者
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
@@ -390,9 +392,6 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                         <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span className="font-semibold text-slate-700">{row.clientName}</span>
                       </div>
-                    </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">
-                      {row.personInCharge || <span className="text-slate-300">-</span>}
                     </td>
                     <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                       ¥{displayBillingAmount.toLocaleString()}
@@ -488,6 +487,10 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                           </span>
                         </div>
                       )}
+                    </td>
+                    {/* 担当者 (★2026-09-17修正: ソート用の項目のため表の最後尾に配置。ヘッダー参照) */}
+                    <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">
+                      {row.personInCharge || <span className="text-slate-300">-</span>}
                     </td>
                   </tr>
                 );
