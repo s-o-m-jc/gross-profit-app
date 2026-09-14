@@ -17,6 +17,7 @@ import {
   LeaveCompensationRow,
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
+  PersonInChargeRow,
   GrossProfitResult,
   AuditAlert,
   FiscalYearSummary,
@@ -158,7 +159,10 @@ export function calculateGrossProfit(
   // 手入力データ)。既存呼び出し元との後方互換のため末尾に追加し、既定値は空配列にしている。
   leaveCompensations: LeaveCompensationRow[] = [],
   leaveAllowances: LeaveAllowanceRow[] = [],
-  nextMonthAdjustments: NextMonthAdjustmentRow[] = []
+  nextMonthAdjustments: NextMonthAdjustmentRow[] = [],
+  // ★2026-09-11追加(23章タスクB「担当者」列復活): クライアント×対象月単位の担当者手入力(上書き)。
+  // 存在すれば取り込み元(BillingRow.personInCharge)より優先する。
+  personInChargeOverrides: PersonInChargeRow[] = []
 ): GrossProfitResult[] {
   // 退職金データのマップ作成 キー: `${targetMonth}_${staffNo}`
   const retirementMap = new Map<string, number>();
@@ -199,6 +203,14 @@ export function calculateGrossProfit(
     if (b.staffNo && b.staffName) staffNameLookup.set(b.staffNo, b.staffName);
   });
 
+  // 担当者(手入力上書き)のマップ作成 キー: `${targetMonth}_${clientCode}`
+  // (★2026-09-11追加、23章タスクB。PersonInChargeRowはクライアント×対象月で1件のみのため、
+  // 上書きなしにそのままMapへ入れられる)
+  const personInChargeMap = new Map<string, string>();
+  personInChargeOverrides.forEach((r) => {
+    if (r.personInCharge) personInChargeMap.set(`${r.targetMonth}_${r.clientCode}`, r.personInCharge);
+  });
+
   const results: GrossProfitResult[] = [];
 
   // 0. 20日締による重複行の統合
@@ -237,6 +249,10 @@ export function calculateGrossProfit(
     // 支払＠算出用の支払単価 = 時間内(金額) ÷ 時間内時間。時間内時間が0またはpayroll未紐付けなら0
     // (0除算回避。SUM集計では0は寄与しないため、自動的に「除外」と同じ効果になる)
     const payUnitPrice = payroll && payroll.regularHours > 0 ? payroll.regularAmount / payroll.regularHours : 0;
+
+    // 担当者: 手入力(クライアント×対象月)があれば優先、なければ取り込み元(現状は松山のみ)の値
+    // (★2026-09-11追加、23章タスクB)
+    const personInCharge = personInChargeMap.get(`${billing.targetMonth}_${billing.clientCode}`) || billing.personInCharge;
 
     // 支払額・社保負担額は請求CSV由来の値をそのまま使う(11-1参照。給与CSVとの突合は不要)
     const paymentAmount = billing.paymentAmount || 0;
@@ -400,6 +416,7 @@ export function calculateGrossProfit(
       paymentDueDate: invoicePrint?.paymentDueDate,
       billingUnitPrice,
       payUnitPrice,
+      personInCharge,
     });
   });
 
@@ -499,6 +516,9 @@ export function calculateGrossProfit(
       payUnitPrice: 0,
       manualEntryType: 'LEAVE_COMPENSATION',
       manualEntryMemo: lc.memo,
+      // 休業分補償はclientCodeを持つため、他の行と同様にクライアント×対象月の担当者手入力を適用する
+      // (★2026-09-11追加、23章タスクB)
+      personInCharge: personInChargeMap.get(`${lc.targetMonth}_${lc.clientCode || 'MANUAL'}`),
     });
   });
 
@@ -666,8 +686,27 @@ export function calculateFiscalYearSummary(
       socialInsurance: 0,
       employmentInsurance: 0,
       transportSalary: 0,
+      // ★2026-09-11追加(23章タスクA「月次サマリ」復活)。詳細な算出方法はtypes.ts参照。
+      // 集計ループ内で積み上げるもの(staffCountを除く)は0で初期化し、ループ後にまとめて
+      // 派生値(dispatch・salary・socialInsuranceOther・nominalGrossMarginRate)を計算する。
+      // staffCountはmonthlyStaffSets(下記)から算出する。
+      staffCount: 0,
+      totalSalary: 0,
+      transportBilling: 0,
+      leaveCompensation: 0,
+      leaveAllowance: 0,
+      dispatch: 0,
+      salary: 0,
+      socialInsuranceOther: 0,
+      nominalGrossMarginRate: 0,
+      nominalGrossMarginRateDataAvailable: false,
     });
   });
+
+  // 月次スタッフ人数(staffCount)算出用。FiscalYearSummary.activeStaffCount(全期間・重複排除)と
+  // 同じ考え方で、月ごとに重複排除したスタッフNoの集合を作る(★2026-09-11追加)。
+  const monthlyStaffSets = new Map<string, Set<string>>();
+  targetMonths.forEach((m) => monthlyStaffSets.set(m, new Set<string>()));
 
   periodResults.forEach((r) => {
     totalSalesExTax += r.billingAmountExTax;
@@ -699,6 +738,8 @@ export function calculateFiscalYearSummary(
 
     if (r.staffNo && r.staffNo !== 'N/A') {
       staffSet.add(r.staffNo);
+      // ★2026-09-11追加(23章タスクA): 月次スタッフ人数(staffCount)集計用
+      monthlyStaffSets.get(r.targetMonth)?.add(r.staffNo);
     }
 
     // クライアント集計
@@ -757,7 +798,62 @@ export function calculateFiscalYearSummary(
         mTrend.dispatchSales > 0
           ? Number(((mTrend.grossProfit / mTrend.dispatchSales) * 100).toFixed(2))
           : 0;
+      // ★2026-09-11追加(23章タスクA「月次サマリ」復活): 大阪人材の集計シートと同じ項目の月次内訳。
+      // dispatch・salary・socialInsuranceOther・nominalGrossMarginRateは、ここでは積み上げず
+      // 全月分の素材が揃ってからまとめて後段で算出する(下記参照)。
+      mTrend.totalSalary += r.paymentAmount;
+      mTrend.transportBilling += r.billingTransport;
+      if (r.manualEntryType === 'LEAVE_COMPENSATION') mTrend.leaveCompensation += r.billingAmountExTax;
+      if (r.manualEntryType === 'LEAVE_ALLOWANCE') mTrend.leaveAllowance += r.paymentAmount;
+      // ★2026-09-14追加(はまさんの指摘・大阪の実データ「契約別売上実績表（2023.9)」で最終確認):
+      // 駐車場代・退職金配賦は「集計」シート(大阪方式)には存在しない列だが、既存grossProfitの
+      // 原価には含まれている。月次サマリ表の内訳合計を必ずgrossProfitと一致させるため、
+      // socialInsuranceOther(社保他)にそのまま畳み込んで集計する(下記の派生値算出コメント参照)。
+      mTrend.socialInsuranceOther += r.parkingFee + r.retirementAmount;
     }
+  });
+
+  // 月次サマリの派生値をまとめて確定する(★2026-09-11追加、23章タスクA。詳細な定義はtypes.ts参照)。
+  //
+  // ★2026-09-14修正(はまさんの指摘・実データ再検証): 初回実装時は「集計」シートの列見出し
+  // (雇保・社保・交通費が横に並ぶ)をそのまま鵜呑みにして、grossProfitとは別の
+  // summaryGrossProfitという並行フィールドを設け、独自に(派遣売上−(給与総額+社保他))を
+  // 計算していた。しかし大阪の実データ(契約別売上実績表（2023.9)、オリエントサービス・
+  // 松原有希さんの契約)で最終検証した結果、以下が判明したため、この方式は撤回し
+  // grossProfitに一本化した(詳細な検算過程はtypes.tsのコメント参照):
+  // 1. r.paymentAmount(総支給額)には給与側交通費支給額(salaryTransport)が既に内包されている
+  //    (実データ検算済み: 総支給額236650 = 契約内202350+有給手当10650+交通費17050+交通費6600)。
+  // 2. r.socialInsurance(社保負担額、請求CSV由来)には雇用保険が既に内包されている想定であり、
+  //    給与CSV側の社保合計額でも実データで裏付けが取れている(社保合計額32829 =
+  //    健康保険11319+介護保険0+厚生年金20130+厚生年金基金0+雇用保険1380)。
+  // 3. 大阪には駐車場代・退職金配賦に該当する列が構造的に存在しない(常に0)。
+  // 1・2の結果、給与総額から交通費をあらかじめ除き(給与総額=ΣpaymentAmount−ΣsalaryTransport)、
+  // 社保他に雇用保険を加算しない(社保他=socialInsurance+transportSalary+parkingFee+
+  // retirementAmount。3.を踏まえ、松山・四国向けに駐車場代・退職金配賦も畳み込んで一致を保証する)
+  // ようにすると、「派遣売上−(給与総額+社保他)」は代数的に整理すると
+  // 「dispatchSales−ΣpaymentAmount−ΣsocialInsurance−Σ駐車場代−Σ退職金配賦」に一致し、
+  // これは既存のgrossProfit(dispatchSales−ΣpaymentAmount−ΣsocialInsurance−駐車場代−退職金配賦)
+  // と完全に同じ式になる。実データ(287084−238616−38713=9755 と 287084−244596−32733=9755)でも
+  // 完全一致を確認済みのため、独立した並行フィールド(summaryGrossProfit)は廃止し、月次サマリ表の
+  // 「実質粗利益」列には既存のgrossProfit(mTrend.grossProfit)をそのまま表示する。以下の内訳は
+  // grossProfitの計算結果を表示用に分解しただけであり、新しい計算ロジックではない。
+  monthlyMap.forEach((mTrend, month) => {
+    mTrend.staffCount = monthlyStaffSets.get(month)?.size || 0;
+    // 派遣 = 派遣売上 − 交通費(相手企業負担) − 休業分補償 (「集計」シートの実際の数式の逆算)
+    mTrend.dispatch = mTrend.dispatchSales - mTrend.transportBilling - mTrend.leaveCompensation;
+    // 給与総額(Excel方式) = ΣpaymentAmount − ΣsalaryTransport (上記1.、交通費を除く)
+    mTrend.totalSalary = mTrend.totalSalary - mTrend.transportSalary;
+    // 給与 = 給与総額 − 休業手当 (「集計」シートの実際の数式の逆算)
+    mTrend.salary = mTrend.totalSalary - mTrend.leaveAllowance;
+    // 社保他 = 社保(雇用保険込み、請求CSV由来) + 交通費(自社負担) + 駐車場代 + 退職金配賦
+    // (上記2.・3.。雇用保険は既に社保に含まれているため別途加算しない。駐車場代・退職金配賦は
+    // 上のforEachループ内で既にmTrend.socialInsuranceOtherへ加算済み)
+    mTrend.socialInsuranceOther += mTrend.socialInsurance + mTrend.transportSalary;
+    // 名目粗利率(当月) = 1 − 支払＠/請求＠ (FiscalYearSummary.nominalGrossMarginRateの月次分解)
+    mTrend.nominalGrossMarginRateDataAvailable = mTrend.billingUnitPriceSum > 0;
+    mTrend.nominalGrossMarginRate = mTrend.billingUnitPriceSum > 0
+      ? Number(((1 - mTrend.payUnitPriceSum / mTrend.billingUnitPriceSum) * 100).toFixed(2))
+      : 0;
   });
 
   // クライアントごとの名目粗利率(全期間)・月次推移を確定する

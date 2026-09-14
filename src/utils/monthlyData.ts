@@ -26,6 +26,7 @@ import {
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
   PaidLeaveOverrideRow,
+  PersonInChargeRow,
 } from '../types';
 import { CompanyId, COMPANIES } from '../config/companies';
 import {
@@ -49,6 +50,10 @@ export interface MonthlyDataState {
   // ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)の追加/補正行。他の手入力
   // カテゴリと同じく1件ずつ追加/削除する(CSVカテゴリのような丸ごと置き換えはしない)。
   paidLeaveOverrideRows: PaidLeaveOverrideRow[];
+  // ★2026-09-11追加(23章タスクB「担当者」列復活): クライアント×対象月単位の担当者手入力(上書き)。
+  // 他の手入力カテゴリと異なり、履歴として複数追加するのではなく、クライアント×対象月の組み合わせ
+  // ごとに常に1件だけを保つ(upsertPersonInChargeRow参照)。
+  personInChargeRows: PersonInChargeRow[];
 }
 
 export type MonthlyCategory = keyof MonthlyDataState;
@@ -62,7 +67,8 @@ export type ManualEntryCategory =
   | 'leaveAllowanceRows'
   | 'nextMonthAdjustmentRows'
   | 'retirementRows'
-  | 'paidLeaveOverrideRows';
+  | 'paidLeaveOverrideRows'
+  | 'personInChargeRows';
 
 /** 対象月が空/判定不能だった行の格納先 (実際のYYYY-MM形式とは衝突しない固定文字列) */
 export const UNKNOWN_MONTH_KEY = '対象月不明';
@@ -86,6 +92,7 @@ export function emptyMonthlyDataState(): MonthlyDataState {
     leaveAllowanceRows: [],
     nextMonthAdjustmentRows: [],
     paidLeaveOverrideRows: [],
+    personInChargeRows: [],
   };
 }
 
@@ -157,6 +164,23 @@ export function removeManualEntryRow(
   return { ...companyMonths, [month]: { ...existing, [category]: nextRows } };
 }
 
+/**
+ * 担当者(手入力)を1件、対象月のバケツにupsertする(★2026-09-11追加、23章タスクB)。
+ * 他の手入力カテゴリ(addManualEntryRow、履歴として複数件を積み上げる)と異なり、
+ * クライアント×対象月の組み合わせは常に1件だけを保つ(同じ組み合わせへの再保存は上書き)。
+ * rowのidは呼び出し側で`${targetMonth}_${clientCode}`の形式に統一しているため、
+ * 同一idの既存行を取り除いてから追加するだけで上書きを実現できる。
+ */
+export function upsertPersonInChargeRow(
+  companyMonths: CompanyMonthlyData,
+  month: string,
+  row: PersonInChargeRow
+): CompanyMonthlyData {
+  const existing = companyMonths[month] || emptyMonthlyDataState();
+  const others = (existing.personInChargeRows || []).filter((r) => r.id !== row.id);
+  return { ...companyMonths, [month]: { ...existing, personInChargeRows: [...others, row] } };
+}
+
 /** 会社の全月のデータを1つのフラットなデータ束にまとめる(粗利計算エンジンへの入力用) */
 export function flattenCompanyMonths(companyMonths: CompanyMonthlyData): MonthlyDataState {
   const result = emptyMonthlyDataState();
@@ -171,6 +195,7 @@ export function flattenCompanyMonths(companyMonths: CompanyMonthlyData): Monthly
     result.leaveAllowanceRows.push(...(m.leaveAllowanceRows || []));
     result.nextMonthAdjustmentRows.push(...(m.nextMonthAdjustmentRows || []));
     result.paidLeaveOverrideRows.push(...(m.paidLeaveOverrideRows || []));
+    result.personInChargeRows.push(...(m.personInChargeRows || []));
   });
   return result;
 }
@@ -192,7 +217,8 @@ export function hasAnyData(app: AppMonthlyData): boolean {
         (m.leaveCompensationRows && m.leaveCompensationRows.length > 0) ||
         (m.leaveAllowanceRows && m.leaveAllowanceRows.length > 0) ||
         (m.nextMonthAdjustmentRows && m.nextMonthAdjustmentRows.length > 0) ||
-        (m.paidLeaveOverrideRows && m.paidLeaveOverrideRows.length > 0)
+        (m.paidLeaveOverrideRows && m.paidLeaveOverrideRows.length > 0) ||
+        (m.personInChargeRows && m.personInChargeRows.length > 0)
     )
   );
 }

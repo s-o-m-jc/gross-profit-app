@@ -22,6 +22,7 @@ import { PastExcelImportPanel } from './components/PastExcelImportPanel';
 import { MonthlyDataPanel } from './components/MonthlyDataPanel';
 import { ChangeHistoryPanel } from './components/ChangeHistoryPanel';
 import { ManualAdjustmentsPanel } from './components/ManualAdjustmentsPanel';
+import { PersonInChargePanel } from './components/PersonInChargePanel';
 import { RetirementPanel } from './components/RetirementPanel';
 import { MonthlyCalculationTable } from './components/MonthlyCalculationTable';
 import { StaffPayrollDetail } from './components/StaffPayrollDetail';
@@ -40,6 +41,7 @@ import {
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
   PaidLeaveOverrideRow,
+  PersonInChargeRow,
 } from './types';
 import { calculateGrossProfit, calculateFiscalYearSummary, getFiscalYearMonths } from './utils/calculator';
 import { COMPANIES, DEFAULT_COMPANY_ID, getCompanyConfig, CompanyId } from './config/companies';
@@ -57,6 +59,7 @@ import {
   hasAnyData,
   addManualEntryRow,
   removeManualEntryRow,
+  upsertPersonInChargeRow,
 } from './utils/monthlyData';
 import { loadAppState, saveAppState } from './utils/persistence';
 import { fetchMonthlyDataForCompanies, replaceCompanyMonthlyData } from './utils/supabaseSync';
@@ -205,6 +208,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     leaveAllowanceRows,
     nextMonthAdjustmentRows,
     paidLeaveOverrideRows,
+    personInChargeRows,
   } = flattened;
 
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
@@ -417,6 +421,17 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   const handleAddRetirement = (row: RetirementRow) => handleAddManualEntry('retirementRows', row);
   const handleRemoveRetirement = (row: RetirementRow) =>
     handleRemoveManualEntry('retirementRows', row.targetMonth, row.id);
+  // ★2026-09-11追加(23章タスクB「担当者」列復活): 担当者(手入力)。他の手入力カテゴリと異なり、
+  // クライアント×対象月の組み合わせは常に1件だけを保つため、追加専用のupsertPersonInChargeRowを使う
+  // (削除は他のカテゴリと同じくremoveManualEntryRowを流用できる)。
+  const handleUpsertPersonInCharge = (row: PersonInChargeRow) => {
+    setMonthlyData((prev) => ({
+      ...prev,
+      [selectedCompanyId]: upsertPersonInChargeRow(prev[selectedCompanyId], row.targetMonth, row),
+    }));
+  };
+  const handleRemovePersonInCharge = (row: PersonInChargeRow) =>
+    handleRemoveManualEntry('personInChargeRows', row.targetMonth, row.id);
 
   const handleLoadSampleData = () => {
     setMonthlyData((prev) => ({
@@ -479,7 +494,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       taxRate,
       leaveCompensationRows,
       leaveAllowanceRows,
-      nextMonthAdjustmentRows
+      nextMonthAdjustmentRows,
+      personInChargeRows
     );
   }, [
     payrollRows,
@@ -490,6 +506,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     leaveCompensationRows,
     leaveAllowanceRows,
     nextMonthAdjustmentRows,
+    personInChargeRows,
   ]);
 
   // 決算期サマリー計算 (calculateFiscalYearSummary自身が、渡された全月のデータの中から
@@ -666,17 +683,27 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
         {/* タブ 1: 月次粗利明細一覧 */}
         {activeTab === 'monthly' && (
-          <MonthlyCalculationTable
-            results={calculatedResults}
-            taxRate={taxRate}
-            lowMarginThreshold={defaultLowMarginThreshold}
-            canExportCsv={canEdit}
-            onExportCsv={() => setIsExportModalOpen(true)}
-            fiscalYearMonths={fiscalYearMonths}
-            fiscalYearLabel={fiscalYearLabel}
-            selectedMonth={selectedTargetMonth}
-            onSelectedMonthChange={setSelectedTargetMonth}
-          />
+          <>
+            {/* 担当者(手入力)パネル (★2026-09-11新設、23章タスクB「担当者」列復活) */}
+            <PersonInChargePanel
+              companyName={selectedCompany.name}
+              companyMonths={selectedCompanyMonths}
+              onUpsert={handleUpsertPersonInCharge}
+              onRemove={handleRemovePersonInCharge}
+              canEdit={canEdit}
+            />
+            <MonthlyCalculationTable
+              results={calculatedResults}
+              taxRate={taxRate}
+              lowMarginThreshold={defaultLowMarginThreshold}
+              canExportCsv={canEdit}
+              onExportCsv={() => setIsExportModalOpen(true)}
+              fiscalYearMonths={fiscalYearMonths}
+              fiscalYearLabel={fiscalYearLabel}
+              selectedMonth={selectedTargetMonth}
+              onSelectedMonthChange={setSelectedTargetMonth}
+            />
+          </>
         )}
 
         {/* タブ: スタッフ給与明細 (★2026-08-27新設、22章タスク1) */}

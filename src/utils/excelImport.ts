@@ -41,6 +41,12 @@ import { parsePayrollCsv, parseBillingCsv } from './csvParser';
 const PAYROLL_HOUR_COLUMNS = new Set([
   '時間内時間',
   '時間外時間',
+  // ★2026-09-14追加(23章タスク2「大阪の月次データ全月インポート」): 大阪の「給与一覧（スタナビ）」
+  // シートでは「時間内時間」「時間外時間」がそれぞれ「契約内時間」「契約外時間」表記になっている
+  // (実データ確認済み)。セル自体は他の時間列と同じ[h]:mm書式(経過日数の実数)のため、同じ
+  // ×24変換が必要。
+  '契約内時間',
+  '契約外時間',
   '深夜内時間',
   '深夜外時間',
   '休日出時間',
@@ -80,7 +86,7 @@ function excelSerialDateToIsoString(serial: number): string {
   return date.toISOString().substring(0, 10);
 }
 
-export type PastImportCompany = 'matsuyama' | 'shikoku';
+export type PastImportCompany = 'matsuyama' | 'shikoku' | 'osaka';
 
 export interface PastImportResult {
   payrollRows: PayrollRow[];
@@ -285,13 +291,70 @@ export function extractShikokuPastData(
   return { payrollRows, billingRows, targetMonth, warnings };
 }
 
+// ---------------------------------------------------------------------------
+// 大阪人材
+// ---------------------------------------------------------------------------
+
+/**
+ * ★2026-09-14追加(23章タスク2「大阪の月次データ全月インポート」)。
+ * 大阪の拠点担当者が独自にまとめてきたExcelファイル(契約別売上実績表（YYYY.M).xlsx)を取り込む。
+ * 実データ(2026-09-14、契約別売上実績表（2023.9).xlsxで直接検証済み)での確認結果:
+ * - 「請求支払（スタナビ）」シート(1行目がヘッダー)。列構成が松山の「請求支払一覧」シートと
+ *   完全に同一(請求No, クライアント番号, クライアント名称, ..., 担当者、まで全項目一致)のため、
+ *   extractMatsuyamaPastDataと同じくparseBillingCsvをそのまま再利用できる。担当者列にも
+ *   実データが入っている(例:「池内 奨太」)。
+ * - 「給与一覧（スタナビ）」シート(1行目がヘッダー)。標準的な給与CSV(未払計上表)の列構成と
+ *   ほぼ完全に一致するが、「契約内時間」「契約外時間」(松山・四国では「時間内時間」「時間外時間」)
+ *   という表記ゆれがある(csvParser.ts側に候補名を追加済み)。時間列は他社同様[h]:mm形式の
+ *   Excelセル(経過日数の実数)のため、PAYROLL_HOUR_COLUMNS(上記)で同じ変換処理を行う。
+ * - 大阪の給与一覧シートには駐車場代・退職金配賦に該当する列が存在しない(実データ確認済み。
+ *   parsePayrollCsvのparkingKey候補が見つからずparkingFeeは常に0になるが、これは大阪の実態
+ *   (該当項目自体が無い)を正しく反映した結果であり、取込漏れではない)。
+ */
+const OSAKA_PAYROLL_SHEET = '給与一覧（スタナビ）';
+const OSAKA_PAYROLL_HEADER_ROW = 1;
+const OSAKA_BILLING_SHEET = '請求支払（スタナビ）';
+const OSAKA_BILLING_HEADER_ROW = 1;
+
+export function extractOsakaPastData(
+  wb: XLSX.WorkBook,
+  targetMonth: string,
+  fileName: string
+): PastImportResult {
+  const warnings: string[] = [];
+
+  const payrollSheet = wb.Sheets[OSAKA_PAYROLL_SHEET];
+  let payrollRows: PayrollRow[] = [];
+  if (!payrollSheet) {
+    warnings.push(`「${OSAKA_PAYROLL_SHEET}」シートが見つかりませんでした。給与データは取り込まれません。`);
+  } else {
+    const csv = payrollSheetToCsv(payrollSheet, OSAKA_PAYROLL_HEADER_ROW);
+    payrollRows = parsePayrollCsv(csv, fileName)
+      .filter((r) => r.staffNo)
+      .map((r) => ({ ...r, targetMonth }));
+  }
+
+  const billingSheet = wb.Sheets[OSAKA_BILLING_SHEET];
+  let billingRows: BillingRow[] = [];
+  if (!billingSheet) {
+    warnings.push(`「${OSAKA_BILLING_SHEET}」シートが見つかりませんでした。請求データは取り込まれません。`);
+  } else {
+    const csv = plainSheetToCsv(billingSheet, OSAKA_BILLING_HEADER_ROW);
+    billingRows = parseBillingCsv(csv, fileName)
+      .filter((r) => r.staffNo)
+      .map((r) => ({ ...r, targetMonth }));
+  }
+
+  return { payrollRows, billingRows, targetMonth, warnings };
+}
+
 export function extractPastData(
   company: PastImportCompany,
   wb: XLSX.WorkBook,
   targetMonth: string,
   fileName: string
 ): PastImportResult {
-  return company === 'matsuyama'
-    ? extractMatsuyamaPastData(wb, targetMonth, fileName)
-    : extractShikokuPastData(wb, targetMonth, fileName);
+  if (company === 'matsuyama') return extractMatsuyamaPastData(wb, targetMonth, fileName);
+  if (company === 'osaka') return extractOsakaPastData(wb, targetMonth, fileName);
+  return extractShikokuPastData(wb, targetMonth, fileName);
 }

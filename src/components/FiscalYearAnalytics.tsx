@@ -17,6 +17,7 @@ import {
   ChevronUp,
   UserMinus,
   CalendarClock,
+  Table2,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -185,13 +186,93 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
         </div>
       </div>
 
-      {/* ★2026-09-02: 旧「1.5 名目指標 (大阪人材集計シート方式)」ブロックを削除。
-          請求＠・支払＠・名目粗利率(契約/給与行ごとの単価を単純合計するだけの近似指標)は、
-          大阪人材固有の簡易集計方式であり、他社・他支店とロジックを揃えるため撤廃。
-          全体の粗利益・粗利率は引き続き上のKPIカード(実額ベース)で確認できる。
-          なお「得意先別 名目粗利率ランキング」セクションのみ、有給・休業手当等の月次変動で
-          クライアント単位の実額粗利がブレる問題を避けるため、意図的に名目方式を維持している
-          (2026-09-02ユーザー確認済み)。 */}
+      {/* 1.5 月次サマリ (★2026-09-11復活・23章タスクA)
+          ★2026-09-02にはこの位置に「大阪人材集計シート方式」の名目指標ブロックがあったが、
+          「大阪人材固有の簡易集計方式で他支店とロジックが揃わない」という理由で一度削除した。
+          今回、松山・四国からも同様の指標(大阪人材の月別総合計シート「集計」タブと同じ項目)が
+          要望されたため、大阪固有ではなく全社共通の指標として復活させた(運用者確認済み)。
+          選択中の1社・選択中の決算期の各月について、集計シートと同じ項目を1行ずつ表示する。
+          「交通費(税抜)」列は、数式からは他のどの列からも参照されておらず正確な定義を特定できな
+          かったため保留(実データファイル到着後に別途対応)。「チェック」「差額」「○×」列は
+          Excel側の内部整合性チェック用の列で、このアプリは終始一貫した1つの計算エンジンで
+          計算するためズレのリスク自体が無く、対応する概念が無いため表示していない。
+          ★2026-09-14修正(はまさんの指摘・大阪の実データで最終確認): 「実質粗利益」列は、当初
+          このシート方式専用の別計算(summaryGrossProfit)を用意していたが、実データ検算の結果
+          既存のgrossProfit(実額の粗利益計算)と完全に一致することが確認できたため撤回し、
+          既存のgrossProfitをそのまま表示するようにした。派遣・交通費(自社負担)・給与・社保等の
+          内訳列は、このgrossProfitを表示用に分解したものであり(内訳の合計は必ずgrossProfitと
+          一致する、calculator.ts参照)、新しい計算ロジックではない。 */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <div className="mb-4">
+          <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
+            <Table2 className="w-4 h-4 text-indigo-600" />
+            <span>月次サマリ ({summary.startMonth} 〜 {summary.endMonth})</span>
+          </h3>
+          <p className="text-xs text-slate-500">
+            大阪人材の月別総合計シート「集計」タブと同じ項目の、選択中の決算期・月別内訳
+          </p>
+        </div>
+        <div className="overflow-x-auto table-scroll">
+          <table className="min-w-full text-left text-xs border-collapse whitespace-nowrap">
+            <thead>
+              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                <th className="py-2 px-3">月</th>
+                <th className="py-2 px-3 text-right">スタッフ人数</th>
+                <th className="py-2 px-3 text-right">派遣売上</th>
+                <th className="py-2 px-3 text-right">紹介手数料</th>
+                <th className="py-2 px-3 text-right">総売上</th>
+                <th className="py-2 px-3 text-right">給与総額</th>
+                <th className="py-2 px-3 text-right">請求＠</th>
+                <th className="py-2 px-3 text-right">支払＠</th>
+                <th className="py-2 px-3 text-right">名目粗利率</th>
+                <th className="py-2 px-3 text-right">派遣</th>
+                <th className="py-2 px-3 text-right">交通費(相手企業負担)</th>
+                <th className="py-2 px-3 text-right">休業分補償</th>
+                <th className="py-2 px-3 text-right">交通費(自社負担)</th>
+                <th className="py-2 px-3 text-right">給与</th>
+                <th className="py-2 px-3 text-right">休業手当</th>
+                <th className="py-2 px-3 text-right" title="参考値(給与CSV由来)。右の「社保」列に既に含まれているため、「社保他」の合計には加算していません">
+                  雇用保険 <span className="text-slate-400">ⓘ</span>
+                </th>
+                <th className="py-2 px-3 text-right" title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">社保</th>
+                <th className="py-2 px-3 text-right" title="社保(雇用保険込み) + 交通費(自社負担)">社保他</th>
+                <th className="py-2 px-3 text-right">有給金額</th>
+                <th className="py-2 px-3 text-right bg-indigo-50/50">実質粗利益</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+              {summary.monthlyTrends.map((m) => (
+                <tr key={m.month} className="hover:bg-slate-50 transition-colors">
+                  <td className="py-2 px-3 font-semibold text-slate-600">{m.month}</td>
+                  <td className="py-2 px-3 text-right font-mono">{m.staffCount}名</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.dispatchSales.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.referralSales.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono font-bold">¥{m.totalSales.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.totalSalary.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.billingUnitPriceSum.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.payUnitPriceSum.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">
+                    {m.nominalGrossMarginRateDataAvailable ? `${m.nominalGrossMarginRate}%` : 'データなし'}
+                  </td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.dispatch.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.transportBilling.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.leaveCompensation.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.transportSalary.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.salary.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.leaveAllowance.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.employmentInsurance.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.socialInsurance.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.socialInsuranceOther.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.paidLeaveAmount.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono font-extrabold text-emerald-700 bg-indigo-50/30">
+                    ¥{m.grossProfit.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* 2. 月次推移 Recharts チャート */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">

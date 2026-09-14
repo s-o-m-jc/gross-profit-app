@@ -113,9 +113,15 @@ function warnMissingColumn(candidates: string[]): void {
 
 // ★2026-09-02追加: 「◯◯時間」という時間数列の実名一覧。金額列(時間内/時間外/深夜内/深夜外/
 // 休日出)を探す際、部分一致フォールバックがこれらの時間数列を誤って拾わないよう除外に使う。
+// ★2026-09-14追加(23章タスク2「大阪の月次データ全月インポート」): 大阪の過去実績Excel
+// (契約別売上実績表「給与一覧（スタナビ）」シート)では、松山・四国の「時間内時間」「時間外時間」に
+// 相当する列がそれぞれ「契約内時間」「契約外時間」という表記になっている(実データ確認済み)。
+// 金額列(契約内/契約外)を探す際にこれらの時間数列を誤って拾わないよう、ここにも追加する。
 const HOUR_COLUMN_NAMES = [
   '時間内時間',
   '時間外時間',
+  '契約内時間',
+  '契約外時間',
   '深夜内時間',
   '深夜外時間',
   '休日出時間',
@@ -248,7 +254,8 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const leave3DaysKey = findColumnKey(row, ['休暇３日数', '休暇3日数']);
       const leave4DaysKey = findColumnKey(row, ['休暇４日数', '休暇4日数']);
       const paidLeaveRemainingDaysKey = findColumnKey(row, ['有給残日数']);
-      const overtimeHoursKey = findColumnKey(row, ['時間外時間']);
+      // ★2026-09-14追加(23章タスク2): 大阪の過去実績Excelでは「契約外時間」表記(上記コメント参照)
+      const overtimeHoursKey = findColumnKey(row, ['時間外時間', '契約外時間']);
       const nightHoursKey = findColumnKey(row, ['深夜内時間']);
       const nightOvertimeHoursKey = findColumnKey(row, ['深夜外時間']);
       const holidayWorkHoursKey = findColumnKey(row, ['休日出時間']);
@@ -257,7 +264,8 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const lateEarlyHoursKey = findColumnKey(row, ['遅早']);
       const paidLeaveRemainingHoursKey = findColumnKey(row, ['有給残時間']);
       // ★2026-09-02修正: 時間数列(◯◯時間)を誤って拾わないようexcludeを渡す(上記コメント参照)
-      const overtimeAmountKey = findColumnKey(row, ['時間外'], HOUR_COLUMN_NAMES);
+      // ★2026-09-14追加(23章タスク2): 大阪の過去実績Excelでは「契約外」表記(上記コメント参照)
+      const overtimeAmountKey = findColumnKey(row, ['時間外', '契約外'], HOUR_COLUMN_NAMES);
       const nightAmountKey = findColumnKey(row, ['深夜内'], HOUR_COLUMN_NAMES);
       const nightOvertimeAmountKey = findColumnKey(row, ['深夜外'], HOUR_COLUMN_NAMES);
       const holidayWorkAmountKey = findColumnKey(row, ['休日出'], HOUR_COLUMN_NAMES);
@@ -323,8 +331,10 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       // 完全一致を優先して探すことで、どちらの形式でも正しく拾えるようにしている
       // (「時間内」の完全一致列が無い場合のみ、部分一致フォールバックが「時間内時間」等の時間数列を
       // 誤って拾わないようHOUR_COLUMN_NAMESで除外している)。
-      const regularAmountKey = findColumnKey(row, ['基本', '基本給', '時間内'], HOUR_COLUMN_NAMES);
-      const regularHoursKey = findColumnKey(row, ['時間内時間']);
+      // ★2026-09-14追加(23章タスク2): 大阪の過去実績Excelでは「契約内」「契約内時間」表記
+      // (「時間外」系と同じ命名規則の食い違い。上記HOUR_COLUMN_NAMESコメント参照)
+      const regularAmountKey = findColumnKey(row, ['基本', '基本給', '時間内', '契約内'], HOUR_COLUMN_NAMES);
+      const regularHoursKey = findColumnKey(row, ['時間内時間', '契約内時間']);
 
       const payDate = getStr(row, payDateKey);
 
@@ -460,6 +470,11 @@ export function parseBillingCsv(csvText: string, fileName?: string): BillingRow[
       const referralKey = findColumnKey(row, ['紹介手数料', '紹介料']);
       const hoursKey = findColumnKey(row, ['稼働時間', '労働時間']);
       const priceKey = findColumnKey(row, ['請求単価', '契約単価', '単価']);
+      // ★2026-09-11追加(23章タスクB「担当者」列復活): 実データ確認済み、松山の「請求支払一覧」
+      // シート(excelImport.ts/extractMatsuyamaPastDataがこのparseBillingCsvを経由して読む)の
+      // Q列に実在する。四国・大阪の取り込み元にはこの列が無く、該当列なしとして常にundefinedになる
+      // (getStrが空文字を返し、下記で||undefinedにフォールバックする)。
+      const personInChargeKey = findColumnKey(row, ['担当者']);
 
       // 対象年月: (1)列があれば列 → (2)ファイル名 の優先順
       const targetMonth = monthKey ? normalizeMonth(row[monthKey]) : monthFromFileName;
@@ -481,6 +496,7 @@ export function parseBillingCsv(csvText: string, fileName?: string): BillingRow[
         referralFee: getNum(row, referralKey),
         workHours: getNum(row, hoursKey),
         unitPrice: getNum(row, priceKey),
+        personInCharge: getStr(row, personInChargeKey) || undefined,
       };
     })
     .filter((r) => r.billingNo || r.staffNo);

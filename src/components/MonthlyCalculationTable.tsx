@@ -105,6 +105,13 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
       let valA = a[sortField];
       let valB = b[sortField];
 
+      // ★2026-09-11追加(23章タスクB「担当者」列復活): personInCharge等のオプショナルな
+      // string項目はundefinedになりうるが、以下のtypeof分岐はundefinedをどちらにも該当させず
+      // 常に0(順序維持)を返してしまい、未設定行がソート結果内でばらばらの位置に残ってしまう。
+      // 空文字として扱うことで、未設定行を「空欄」として一貫した位置にまとめる。
+      if (valA === undefined) valA = '' as typeof valA;
+      if (valB === undefined) valB = '' as typeof valB;
+
       if (typeof valA === 'string') {
         const res = (valA as string).localeCompare((valB as string) || '');
         return sortDirection === 'asc' ? res : -res;
@@ -268,6 +275,12 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('clientName')}>
                 派遣先企業
               </th>
+              {/* ★2026-09-11追加(23章タスクB「担当者」列復活)。クライアント×対象月単位の担当者。
+                  手入力(PersonInChargePanel)があればそちらを優先し、なければ取り込み元
+                  (現状は松山のみ)の値を表示する(calculator.ts参照)。未設定の場合は「-」表示。 */}
+              <th className="py-3 px-3 whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={() => handleSort('personInCharge')}>
+                担当者
+              </th>
               <th className="py-3 px-3 whitespace-nowrap text-right cursor-pointer hover:bg-slate-200" onClick={() => handleSort('billingAmountExTax')}>
                 {billingAmountLabel}
               </th>
@@ -301,7 +314,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
           <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
             {filteredResults.length === 0 ? (
               <tr>
-                <td colSpan={14} className="py-12 text-center text-slate-400">
+                <td colSpan={15} className="py-12 text-center text-slate-400">
                   該当する計算結果データが見つかりません。CSVデータを読み込んでください。
                 </td>
               </tr>
@@ -367,6 +380,9 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                         <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span className="font-semibold text-slate-700">{row.clientName}</span>
                       </div>
+                    </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">
+                      {row.personInCharge || <span className="text-slate-300">-</span>}
                     </td>
                     <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                       ¥{displayBillingAmount.toLocaleString()}

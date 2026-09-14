@@ -114,6 +114,13 @@ export interface BillingRow {
   referralFee: number;         // 紹介手数料 (粗利非算入・売上算入)
   workHours: number;           // 請求稼働時間 (このCSVには存在しないことが多く0になりうる)
   unitPrice: number;           // 契約時間単価 (同上、0になりうる)
+
+  // ★2026-09-11追加(23章タスクB「担当者」列復活): クライアント(企業)×対象月単位の営業担当者名。
+  // 現状、実データに自動取得元の列が存在するのは松山の「請求支払一覧」シート(Q列)のみ
+  // (excelImport.ts/parseBillingCsv参照)。四国・大阪は自動取得元が無いため、このCSV由来の
+  // 値は常にundefinedになり、GrossProfitResult側で手入力(PersonInChargeRow)による上書きのみが
+  // 使われる。
+  personInCharge?: string;
 }
 
 // 請求書印刷CSVレコード
@@ -188,6 +195,21 @@ export interface NextMonthAdjustmentRow {
   side: 'SALES' | 'COST';      // 区分: SALES=売上側(派遣売上に加算) / COST=原価側(給与総額に加算)
   amount: number;                // 調整額 (符号付き。マイナス値を入力するとその分減算される)
   memo?: string;                 // 備考
+}
+
+// 担当者(手入力・上書き)データレコード (★2026-09-11追加、23章タスクB)。
+// クライアント(企業)×対象月単位で1件のみ存在する(休業分補償等の手入力調整項目と異なり、
+// 履歴として複数件を積み上げるのではなく、同じクライアント×対象月への再保存は上書きする)。
+// idは常に`${targetMonth}_${clientCode}`の形式にし、monthlyData.tsのupsertPersonInChargeRowが
+// この組み合わせの既存行を置き換える形でupsertする。
+// 優先順位: この手入力値があればそれを使い、なければ取り込み元(現状は松山のみ、
+// BillingRow.personInCharge)の値を使う(calculator.ts参照)。
+export interface PersonInChargeRow {
+  id: string;                  // = `${targetMonth}_${clientCode}`
+  targetMonth: string;         // 対象年月
+  clientCode: string;          // 派遣先(クライアント)企業コード
+  clientName: string;          // 派遣先(クライアント)企業名 (入力時点の表示用参考情報)
+  personInCharge: string;      // 担当者名
 }
 
 // 粗利計算結果レコード (1請求/1スタッフ行単位)
@@ -266,6 +288,11 @@ export interface GrossProfitResult {
     | 'NEXT_MONTH_ADJUSTMENT_SALES'    // 次月調整・売上側
     | 'NEXT_MONTH_ADJUSTMENT_COST';    // 次月調整・原価側
   manualEntryMemo?: string;    // 手入力行の備考 (入力時に任意入力した内容)
+
+  // ★2026-09-11追加(23章タスクB「担当者」列復活): クライアント×対象月単位の営業担当者名。
+  // 手入力(PersonInChargeRow)があればそちらを優先し、なければ取り込み元(BillingRow.personInCharge、
+  // 現状は松山のみ)の値を使う(calculator.ts参照)。未設定(手入力も取り込み元も無い)の場合はundefined。
+  personInCharge?: string;
 }
 
 // アラート型
@@ -390,6 +417,60 @@ export interface MonthlyTrend {
   socialInsurance: number;     // 社保負担額 (当月合計)
   employmentInsurance: number; // 雇用保険会社負担額 (当月合計・参考値)
   transportSalary: number;     // 給与交通費支給額 (当月合計・自社負担分)
+
+  // ★2026-09-11追加(23章タスクA「月次サマリ」復活): 大阪人材の月別総合計シート「集計」タブと
+  // 同じ項目を、全社共通(選択中の1社の月次)で表示するために追加。いずれも「集計」シートの
+  // 実際の数式(calculator.ts側のコメント参照)を踏襲した、grossProfit(既存・実額の粗利益)の
+  // 表示用の内訳分解であり、新しい計算ロジックではない。
+  //
+  // ★2026-09-14修正(はまさんの指摘・実データ再検証、大阪の実データ「契約別売上実績表
+  // （2023.9)」で最終確認): 初回実装時は「集計」シートの列見出し(雇保・社保・交通費が横に並ぶ)を
+  // そのまま鵜呑みにし、grossProfitとは別の「summaryGrossProfit」という並行フィールドを設けて
+  // 独自に(派遣売上−(給与総額+社保他))を計算していたが、実データ検算の結果、以下2点が
+  // 判明したため、この方式は撤回しgrossProfitに一本化した:
+  // 1. PayrollRow.paymentAmount(総支給額)には既に給与側交通費支給額(salaryTransport)が
+  //    内包されている(実データ検算済み。例: 総支給額236650 = 契約内202350+有給手当10650+
+  //    交通費17050+交通費6600)。
+  // 2. PayrollRow.socialInsurance/請求CSV由来のsocialInsuranceには既に雇用保険
+  //    (employmentInsurance)が内包されている(実データ検算済み。例: 社保合計額32829 =
+  //    健康保険11319+介護保険0+厚生年金20130+厚生年金基金0+雇用保険1380)。
+  // 3. 大阪の給与一覧シートには駐車場代・退職金に該当する列が存在しない(構造的に常に0)。
+  // これらより、大阪の実データ(オリエントサービス・松原有希さんの契約)で
+  // 「派遣売上287084−給与総額238616−社保他38713=9755」(集計シート方式)と
+  // 「請求額287084−支払額244596−社保負担額32733=9755」(既存grossProfitと同じ式)が
+  // 完全一致することを確認した。よって集計シート方式の内訳は、既存grossProfitの計算結果を
+  // 表示用に分解しただけの別名であり、独立した並行フィールド(旧summaryGrossProfit)は不要と
+  // 判断し削除した。以下の各フィールドの合計(dispatch+transportBilling+leaveCompensation)−
+  // (salary+leaveAllowance+socialInsuranceOther) は、実装上は必ずgrossProfitと一致する
+  // (社保等原価に駐車場代・退職金配賦も含めて畳み込んでいるため。松山・四国のように駐車場代・
+  // 退職金配賦が実際に発生するデータでも一致することを確認済み)。
+  staffCount: number;          // スタッフ人数 (当月、重複排除。FiscalYearSummary.activeStaffCountの月次分解)
+  // 給与総額 (当月、「集計」シート方式の表示用) = ΣpaymentAmount − ΣsalaryTransport。
+  // 「集計」シートの「給与」列は交通費(自社負担)を含まない狭い定義のため、ΣpaymentAmountから
+  // 給与側交通費支給額をあらかじめ差し引いておく(上記1.)。全期間合計が欲しい場合は
+  // (交通費控除前の)FiscalYearSummary.totalSalaryを使うこと。
+  totalSalary: number;
+  transportBilling: number;    // 交通費(相手企業負担、当月) = 請求側交通費(billingTransport)の当月合計
+  leaveCompensation: number;   // 休業分補償 (当月、手入力・売上側の当月合計)
+  leaveAllowance: number;      // 休業手当 (当月、手入力・原価側の当月合計。totalSalaryに内包済み)
+  // 派遣 (当月、交通費・休業分補償を含まない基礎売上) = dispatchSales − transportBilling − leaveCompensation。
+  // 「集計」シートの実際の数式「派遣売上 = 派遣 + 交通費(相手企業負担) + 休業分補償」の逆算。
+  dispatch: number;
+  // 給与 (当月、休業手当を含まない基礎給与) = totalSalary − leaveAllowance。
+  // 「集計」シートの実際の数式「給与総額 = 給与 + 休業手当」の逆算。
+  salary: number;
+  // 社保他 (当月、表示用) = 社保(socialInsurance、雇用保険込み・請求CSV由来) +
+  // 交通費(自社負担、transportSalary) + 駐車場代(parkingFee) + 退職金配賦(retirementAmount)。
+  // 駐車場代・退職金配賦は「集計」シート(大阪方式)には無い列だが、既存grossProfitの原価には
+  // 含まれているため、内訳合計をgrossProfitに一致させるためここに畳み込んでいる(上記3.、
+  // および松山・四国向けの回帰確認)。雇用保険(employmentInsurance)は既にsocialInsuranceに
+  // 含まれている想定のため加算しない(上記2.。参考値としてMonthlyTrend.employmentInsuranceに
+  // 別途保持し、月次サマリ表では参考列として表示する)。
+  socialInsuranceOther: number;
+  // 名目粗利率(当月、%) = 1 − 支払＠/請求＠。FiscalYearSummary.nominalGrossMarginRateの月次分解
+  // (billingUnitPriceSum・payUnitPriceSumは既存フィールドをそのまま使用)。
+  nominalGrossMarginRate: number;
+  nominalGrossMarginRateDataAvailable: boolean; // 当月に請求＠データが1件も無い場合false
 }
 
 // 得意先別順位

@@ -32,6 +32,9 @@ interface PastExcelImportPanelProps {
 function toPastImportCompany(id: CompanyId): PastImportCompany | null {
   if (id === 'matsuyama') return 'matsuyama';
   if (id === 'shikoku') return 'shikoku';
+  // ★2026-09-14追加(23章タスク2「大阪の月次データ全月インポート」): 大阪も過去実績Excel
+  // (契約別売上実績表)経由での取り込みに対応した(excelImport.ts/extractOsakaPastData参照)。
+  if (id === 'osaka') return 'osaka';
   return null;
 }
 
@@ -50,7 +53,7 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const company = toPastImportCompany(selectedCompanyId);
-  if (!company) return null; // 大阪は対象外(現行のCSV取込・月別詳細シート方式のまま)
+  if (!company) return null;
 
   const resetForNewFile = () => {
     setResult(null);
@@ -97,11 +100,21 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
     setApplied(true);
   };
 
-  const companyLabel = company === 'matsuyama' ? '松山人材' : '四国人材';
+  // ★2026-09-14追加(23章タスク2「大阪の月次データ全月インポート」): 大阪も過去実績Excel
+  // (契約別売上実績表)経由での取り込みに対応した(excelImport.ts/extractOsakaPastData参照)。
+  const companyLabel = company === 'matsuyama' ? '松山人材' : company === 'osaka' ? '大阪人材' : '四国人材';
   const sheetLabel =
-    company === 'matsuyama' ? '「未払計上表」「請求支払一覧」シート' : '「未払計上表」「実績加工」シート';
+    company === 'matsuyama'
+      ? '「未払計上表」「請求支払一覧」シート'
+      : company === 'osaka'
+      ? '「給与一覧（スタナビ）」「請求支払（スタナビ）」シート'
+      : '「未払計上表」「実績加工」シート';
   const fileNameLabel =
-    company === 'matsuyama' ? '★派遣明細YYYYMM.xlsm' : '★YYMM勤怠明細票 時間計算.xlsm';
+    company === 'matsuyama'
+      ? '★派遣明細YYYYMM.xlsm'
+      : company === 'osaka'
+      ? '契約別売上実績表（YYYY.M).xlsx'
+      : '★YYMM勤怠明細票 時間計算.xlsm';
 
   return (
     <div className="bg-white rounded-xl border border-amber-200 shadow-sm mb-4 overflow-hidden">
@@ -216,7 +229,7 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
               {result.payrollRows.length === 0 && result.billingRows.length === 0 ? (
                 <p className="text-rose-600 font-semibold">
                   データが1件も抽出できませんでした。シート構成が想定と異なる可能性があります。
-                  会社の選択(四国人材/松山人材)とファイルの組み合わせが合っているかもご確認ください
+                  会社の選択(四国人材/松山人材/大阪人材)とファイルの組み合わせが合っているかもご確認ください
                   ({companyLabel}は「{fileNameLabel}」を想定しています)。
                 </p>
               ) : applied ? (
