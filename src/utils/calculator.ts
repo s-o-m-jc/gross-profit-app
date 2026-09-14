@@ -698,6 +698,9 @@ export function calculateFiscalYearSummary(
       dispatch: 0,
       salary: 0,
       socialInsuranceOther: 0,
+      // ★2026-09-15追加(はまさんの指摘): 退職金配賦(RetirementPanel手入力、拠点・取込元によらず
+      // 共通のretirementMapで解決される値)は社保他に畳み込まず、独立した項目として集計する。
+      retirementAmount: 0,
       nominalGrossMarginRate: 0,
       nominalGrossMarginRateDataAvailable: false,
     });
@@ -806,10 +809,19 @@ export function calculateFiscalYearSummary(
       if (r.manualEntryType === 'LEAVE_COMPENSATION') mTrend.leaveCompensation += r.billingAmountExTax;
       if (r.manualEntryType === 'LEAVE_ALLOWANCE') mTrend.leaveAllowance += r.paymentAmount;
       // ★2026-09-14追加(はまさんの指摘・大阪の実データ「契約別売上実績表（2023.9)」で最終確認):
-      // 駐車場代・退職金配賦は「集計」シート(大阪方式)には存在しない列だが、既存grossProfitの
-      // 原価には含まれている。月次サマリ表の内訳合計を必ずgrossProfitと一致させるため、
+      // 駐車場代は「集計」シート(大阪方式)には存在しない列だが、既存grossProfitの原価には
+      // 含まれているため、月次サマリ表の内訳合計を必ずgrossProfitと一致させるため
       // socialInsuranceOther(社保他)にそのまま畳み込んで集計する(下記の派生値算出コメント参照)。
-      mTrend.socialInsuranceOther += r.parkingFee + r.retirementAmount;
+      mTrend.socialInsuranceOther += r.parkingFee;
+      // ★2026-09-15修正(はまさんの指摘): 退職金配賦(retirementAmount)は、拠点・取込元
+      // (CSV/Excel/手入力)によらずRetirementPanel.tsxの手入力データを`targetMonth_staffNo`で
+      // 引き当てて得る値であり(このr.retirementAmount自体は上記のretirementMap経由で既に
+      // 全社共通ロジックで解決済み)、大阪の給与シートに列が無いことと「大阪の退職金配賦が
+      // 常に0である」ことは別問題(現時点でデータ未入力なだけで、今後入力されうる)。
+      // 社保他に無言で畳み込むと、退職金配賦が入力されても月次サマリ表からは見えなくなって
+      // しまうため、社保他とは別の独立した項目として集計する(下記socialInsuranceOtherの
+      // 派生値算出コメント、およびtypes.tsのMonthlyTrend.retirementAmount参照)。
+      mTrend.retirementAmount += r.retirementAmount;
     }
   });
 
@@ -826,11 +838,14 @@ export function calculateFiscalYearSummary(
   // 2. r.socialInsurance(社保負担額、請求CSV由来)には雇用保険が既に内包されている想定であり、
   //    給与CSV側の社保合計額でも実データで裏付けが取れている(社保合計額32829 =
   //    健康保険11319+介護保険0+厚生年金20130+厚生年金基金0+雇用保険1380)。
-  // 3. 大阪には駐車場代・退職金配賦に該当する列が構造的に存在しない(常に0)。
+  // 3. 大阪の給与一覧シートには駐車場代に該当する列が構造的に存在しない(常に0)。
+  //    ★2026-09-15修正(はまさんの指摘): 退職金配賦(retirementAmount)はCSV/Excel取込とは無関係の
+  //    RetirementPanel手入力項目であり、「大阪に列が無い」こととは無関係に、拠点を問わず今後
+  //    実際に入力されうる。社保他に畳み込まず、独立した項目として月次サマリ表に表示する。
   // 1・2の結果、給与総額から交通費をあらかじめ除き(給与総額=ΣpaymentAmount−ΣsalaryTransport)、
-  // 社保他に雇用保険を加算しない(社保他=socialInsurance+transportSalary+parkingFee+
-  // retirementAmount。3.を踏まえ、松山・四国向けに駐車場代・退職金配賦も畳み込んで一致を保証する)
-  // ようにすると、「派遣売上−(給与総額+社保他)」は代数的に整理すると
+  // 社保他に雇用保険を加算しない(社保他=socialInsurance+transportSalary+parkingFee。3.を踏まえ
+  // 松山・四国向けに駐車場代も畳み込んで一致を保証する。退職金配賦は下記のとおり別項目)
+  // ようにすると、「派遣売上−(給与総額+社保他+退職金配賦)」は代数的に整理すると
   // 「dispatchSales−ΣpaymentAmount−ΣsocialInsurance−Σ駐車場代−Σ退職金配賦」に一致し、
   // これは既存のgrossProfit(dispatchSales−ΣpaymentAmount−ΣsocialInsurance−駐車場代−退職金配賦)
   // と完全に同じ式になる。実データ(287084−238616−38713=9755 と 287084−244596−32733=9755)でも
@@ -845,9 +860,10 @@ export function calculateFiscalYearSummary(
     mTrend.totalSalary = mTrend.totalSalary - mTrend.transportSalary;
     // 給与 = 給与総額 − 休業手当 (「集計」シートの実際の数式の逆算)
     mTrend.salary = mTrend.totalSalary - mTrend.leaveAllowance;
-    // 社保他 = 社保(雇用保険込み、請求CSV由来) + 交通費(自社負担) + 駐車場代 + 退職金配賦
-    // (上記2.・3.。雇用保険は既に社保に含まれているため別途加算しない。駐車場代・退職金配賦は
-    // 上のforEachループ内で既にmTrend.socialInsuranceOtherへ加算済み)
+    // 社保他 = 社保(雇用保険込み、請求CSV由来) + 交通費(自社負担) + 駐車場代
+    // (上記2.・3.。雇用保険は既に社保に含まれているため別途加算しない。駐車場代は上の
+    // forEachループ内で既にmTrend.socialInsuranceOtherへ加算済み。退職金配賦は含めない
+    // ・別フィールドmTrend.retirementAmountとして独立集計する)
     mTrend.socialInsuranceOther += mTrend.socialInsurance + mTrend.transportSalary;
     // 名目粗利率(当月) = 1 − 支払＠/請求＠ (FiscalYearSummary.nominalGrossMarginRateの月次分解)
     mTrend.nominalGrossMarginRateDataAvailable = mTrend.billingUnitPriceSum > 0;

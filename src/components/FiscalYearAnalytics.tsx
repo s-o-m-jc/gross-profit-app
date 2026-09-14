@@ -235,7 +235,11 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   雇用保険 <span className="text-slate-400">ⓘ</span>
                 </th>
                 <th className="py-2 px-3 text-right" title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">社保</th>
-                <th className="py-2 px-3 text-right" title="社保(雇用保険込み) + 交通費(自社負担)">社保他</th>
+                <th className="py-2 px-3 text-right" title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代">社保他</th>
+                {/* ★2026-09-15追加(はまさんの指摘): 退職金配賦(RetirementPanel手入力)は、
+                    大阪の給与シートに列が無いこととは無関係に、拠点を問わず入力されうる項目のため、
+                    「社保他」に畳み込まず独立列として表示する(拠点別の入力状況が見えるように)。 */}
+                <th className="py-2 px-3 text-right" title="RetirementPanelでの手入力(拠点共通)">退職金配賦</th>
                 <th className="py-2 px-3 text-right">有給金額</th>
                 <th className="py-2 px-3 text-right bg-indigo-50/50">実質粗利益</th>
               </tr>
@@ -263,6 +267,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   <td className="py-2 px-3 text-right font-mono">¥{m.employmentInsurance.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.socialInsurance.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.socialInsuranceOther.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.retirementAmount.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.paidLeaveAmount.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono font-extrabold text-emerald-700 bg-indigo-50/30">
                     ¥{m.grossProfit.toLocaleString()}

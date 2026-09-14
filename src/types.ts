@@ -434,16 +434,23 @@ export interface MonthlyTrend {
   // 2. PayrollRow.socialInsurance/請求CSV由来のsocialInsuranceには既に雇用保険
   //    (employmentInsurance)が内包されている(実データ検算済み。例: 社保合計額32829 =
   //    健康保険11319+介護保険0+厚生年金20130+厚生年金基金0+雇用保険1380)。
-  // 3. 大阪の給与一覧シートには駐車場代・退職金に該当する列が存在しない(構造的に常に0)。
+  // 3. 大阪の給与一覧シートには駐車場代に該当する列が存在しない(構造的に常に0)。
   // これらより、大阪の実データ(オリエントサービス・松原有希さんの契約)で
   // 「派遣売上287084−給与総額238616−社保他38713=9755」(集計シート方式)と
   // 「請求額287084−支払額244596−社保負担額32733=9755」(既存grossProfitと同じ式)が
   // 完全一致することを確認した。よって集計シート方式の内訳は、既存grossProfitの計算結果を
   // 表示用に分解しただけの別名であり、独立した並行フィールド(旧summaryGrossProfit)は不要と
   // 判断し削除した。以下の各フィールドの合計(dispatch+transportBilling+leaveCompensation)−
-  // (salary+leaveAllowance+socialInsuranceOther) は、実装上は必ずgrossProfitと一致する
-  // (社保等原価に駐車場代・退職金配賦も含めて畳み込んでいるため。松山・四国のように駐車場代・
-  // 退職金配賦が実際に発生するデータでも一致することを確認済み)。
+  // (salary+leaveAllowance+socialInsuranceOther+retirementAmount) は、実装上は必ず
+  // grossProfitと一致する(社保等原価に駐車場代も含めて畳み込んでいるため。松山・四国のように
+  // 駐車場代が実際に発生するデータでも一致することを確認済み)。
+  //
+  // ★2026-09-15修正(はまさんの指摘): 退職金配賦(retirementAmount)は、駐車場代と違いCSV/Excel
+  // 取込とは無関係のRetirementPanel手入力項目(targetMonth_staffNoキーで引き当てる、拠点を
+  // 問わない共通ロジック)であり、「大阪の給与シートに列が無い」ことと「大阪の退職金配賦が
+  // 常に0である」ことは無関係(今後大阪スタッフ分も入力されうる)。初回実装では社保他に
+  // 無言で畳み込んでいたため、入力されても月次サマリ表から見えなくなってしまう不具合があり、
+  // 社保他とは独立したフィールド(下記retirementAmount)として分離した。
   staffCount: number;          // スタッフ人数 (当月、重複排除。FiscalYearSummary.activeStaffCountの月次分解)
   // 給与総額 (当月、「集計」シート方式の表示用) = ΣpaymentAmount − ΣsalaryTransport。
   // 「集計」シートの「給与」列は交通費(自社負担)を含まない狭い定義のため、ΣpaymentAmountから
@@ -460,13 +467,20 @@ export interface MonthlyTrend {
   // 「集計」シートの実際の数式「給与総額 = 給与 + 休業手当」の逆算。
   salary: number;
   // 社保他 (当月、表示用) = 社保(socialInsurance、雇用保険込み・請求CSV由来) +
-  // 交通費(自社負担、transportSalary) + 駐車場代(parkingFee) + 退職金配賦(retirementAmount)。
-  // 駐車場代・退職金配賦は「集計」シート(大阪方式)には無い列だが、既存grossProfitの原価には
+  // 交通費(自社負担、transportSalary) + 駐車場代(parkingFee)。
+  // 駐車場代は「集計」シート(大阪方式)には無い列だが、既存grossProfitの原価には
   // 含まれているため、内訳合計をgrossProfitに一致させるためここに畳み込んでいる(上記3.、
   // および松山・四国向けの回帰確認)。雇用保険(employmentInsurance)は既にsocialInsuranceに
   // 含まれている想定のため加算しない(上記2.。参考値としてMonthlyTrend.employmentInsuranceに
-  // 別途保持し、月次サマリ表では参考列として表示する)。
+  // 別途保持し、月次サマリ表では参考列として表示する)。退職金配賦は含めない
+  // (下記retirementAmount参照)。
   socialInsuranceOther: number;
+  // 退職金配賦 (当月合計、表示用) = Σ retirementAmount。RetirementPanel手入力データを
+  // targetMonth_staffNoキーで引き当てた値(拠点・取込元によらず共通のretirementMapで解決される。
+  // calculator.ts calculateGrossProfit参照)の月次合計。「集計」シート(大阪方式)には無い列だが、
+  // 既存grossProfitの原価には含まれているため、内訳合計をgrossProfitに一致させるために追加した
+  // (上記★2026-09-15修正参照。社保他には含めず、常に独立した項目として表示する)。
+  retirementAmount: number;
   // 名目粗利率(当月、%) = 1 − 支払＠/請求＠。FiscalYearSummary.nominalGrossMarginRateの月次分解
   // (billingUnitPriceSum・payUnitPriceSumは既存フィールドをそのまま使用)。
   nominalGrossMarginRate: number;
