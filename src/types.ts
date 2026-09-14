@@ -494,6 +494,15 @@ export interface MonthlyTrend {
   // (billingUnitPriceSum・payUnitPriceSumは既存フィールドをそのまま使用)。
   nominalGrossMarginRate: number;
   nominalGrossMarginRateDataAvailable: boolean; // 当月に請求＠データが1件も無い場合false
+
+  // ★2026-09-16追加(はまさんの指摘・「集計」シートヘッダー行との突合): 月次サマリ表に
+  // 不足していた3項目を追加。
+  // 実質粗利率(当月、%)は「実質粗利益(=grossProfit) ÷ 派遣売上 × 100」で、既存のgrossMarginRate
+  // (上記、22章タスク2で追加済み)と同一定義のため新規フィールドは追加せず、UI側でそのまま流用する。
+  // 有給（日）(当月)も既存のpaidLeaveDays(上記)をそのまま使う。
+  // 1人当たり有給日数(当月) = paidLeaveDays ÷ staffCount。FiscalYearSummary.avgPaidLeaveDaysPerStaff
+  // (全期間版)の月次分解。スタッフ人数が0の月は0とする。
+  avgPaidLeaveDaysPerStaff: number;
 }
 
 // 得意先別順位

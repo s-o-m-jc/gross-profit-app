@@ -201,7 +201,14 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
           既存のgrossProfit(実額の粗利益計算)と完全に一致することが確認できたため撤回し、
           既存のgrossProfitをそのまま表示するようにした。派遣・交通費(自社負担)・給与・社保等の
           内訳列は、このgrossProfitを表示用に分解したものであり(内訳の合計は必ずgrossProfitと
-          一致する、calculator.ts参照)、新しい計算ロジックではない。 */}
+          一致する、calculator.ts参照)、新しい計算ロジックではない。
+          ★2026-09-16修正(はまさんの指摘・「集計」シートヘッダー行との突合): 実質粗利率・有給(日)・
+          1人当たり有給日数の3項目が抜けていたため追加(実質粗利率は既存のgrossMarginRate、
+          有給(日)は既存のpaidLeaveDaysをそのまま使い、1人当たり有給日数のみ新規フィールドを
+          追加)。また列の並び順を「集計」シートのヘッダー行の実際の並びに合わせ、交通費(自社負担)を
+          社保の直後(社保他の直前)に移動した。退職金配賦は「集計」シートには無い列だが、
+          RetirementPanel手入力データがgrossProfitの原価に含まれる以上、独立して見えないと
+          運用上困る(はまさん指摘済み)ため、末尾に「追加項目」と明記した上で残している。 */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
         <div className="mb-4">
           <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
@@ -228,20 +235,36 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                 <th className="py-2 px-3 text-right">派遣</th>
                 <th className="py-2 px-3 text-right">交通費(相手企業負担)</th>
                 <th className="py-2 px-3 text-right">休業分補償</th>
-                <th className="py-2 px-3 text-right">交通費(自社負担)</th>
+                {/* ★2026-09-16追加(はまさんの指摘・「集計」シートヘッダー行との突合): 「交通費(税抜)」列。
+                    はまさんが元Excelのセルを直接確認した結果、数式ではなく手入力の固定値であり、
+                    このアプリが持つどのデータからも導出できない外部データと判明した(値が交通費
+                    (自社負担)と一致する月としない月がある理由もこれで説明がつく)。データの出所が
+                    判明するまでは、誤った値を計算して表示するよりも「不明」と明示する方が安全なため、
+                    列自体は「集計」シートとの項目一致のため用意しつつ、値は表示しない。 */}
+                <th className="py-2 px-3 text-right" title="元Excelでは手入力の固定値(このアプリのデータからは導出不可)。データの出所判明まで「不明」表示にしています">
+                  交通費(税抜) <span className="text-amber-500">ⓘ</span>
+                </th>
                 <th className="py-2 px-3 text-right">給与</th>
                 <th className="py-2 px-3 text-right">休業手当</th>
                 <th className="py-2 px-3 text-right" title="参考値(給与CSV由来)。右の「社保」列に既に含まれているため、「社保他」の合計には加算していません">
                   雇用保険 <span className="text-slate-400">ⓘ</span>
                 </th>
                 <th className="py-2 px-3 text-right" title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">社保</th>
+                <th className="py-2 px-3 text-right">交通費(自社負担)</th>
                 <th className="py-2 px-3 text-right" title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代">社保他</th>
-                {/* ★2026-09-15追加(はまさんの指摘): 退職金配賦(RetirementPanel手入力)は、
-                    大阪の給与シートに列が無いこととは無関係に、拠点を問わず入力されうる項目のため、
-                    「社保他」に畳み込まず独立列として表示する(拠点別の入力状況が見えるように)。 */}
-                <th className="py-2 px-3 text-right" title="RetirementPanelでの手入力(拠点共通)">退職金配賦</th>
                 <th className="py-2 px-3 text-right">有給金額</th>
                 <th className="py-2 px-3 text-right bg-indigo-50/50">実質粗利益</th>
+                <th className="py-2 px-3 text-right bg-indigo-50/50">実質粗利率</th>
+                <th className="py-2 px-3 text-right">有給(日)</th>
+                <th className="py-2 px-3 text-right">1人当たり有給日数</th>
+                {/* ★2026-09-15追加(はまさんの指摘): 退職金配賦(RetirementPanel手入力)は「集計」
+                    シートには無い列だが、大阪の給与シートに列が無いこととは無関係に拠点を問わず
+                    入力されうる項目のため、grossProfitの原価に含まれる以上は「社保他」に畳み込まず
+                    独立列として表示する(拠点別の入力状況が見えるように)。★2026-09-16: 「集計」
+                    シートの項目一覧には無いため、末尾に追加項目として配置する。 */}
+                <th className="py-2 px-3 text-right bg-slate-50" title="「集計」シートには無い列。RetirementPanelでの手入力(拠点共通)を独立表示">
+                  退職金配賦 <span className="text-slate-400">(追加項目)</span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -261,17 +284,23 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   <td className="py-2 px-3 text-right font-mono">¥{m.dispatch.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.transportBilling.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.leaveCompensation.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.transportSalary.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono text-slate-300">不明</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.salary.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.leaveAllowance.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.employmentInsurance.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.socialInsurance.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono">¥{m.transportSalary.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.socialInsuranceOther.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.retirementAmount.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.paidLeaveAmount.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono font-extrabold text-emerald-700 bg-indigo-50/30">
                     ¥{m.grossProfit.toLocaleString()}
                   </td>
+                  <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700 bg-indigo-50/30">
+                    {m.grossMarginRate}%
+                  </td>
+                  <td className="py-2 px-3 text-right font-mono">{m.paidLeaveDays}日</td>
+                  <td className="py-2 px-3 text-right font-mono">{m.avgPaidLeaveDaysPerStaff}日</td>
+                  <td className="py-2 px-3 text-right font-mono bg-slate-50">¥{m.retirementAmount.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
