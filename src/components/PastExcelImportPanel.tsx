@@ -12,7 +12,7 @@
 
 import React, { useRef, useState } from 'react';
 import { FileSpreadsheet, UploadCloud, AlertTriangle, CheckCircle2, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
-import { PayrollRow, BillingRow } from '../types';
+import { PayrollRow, BillingRow, InvoicePrintRow } from '../types';
 import { CompanyId } from '../config/companies';
 import {
   readWorkbookFile,
@@ -27,6 +27,10 @@ interface PastExcelImportPanelProps {
   selectedCompanyId: CompanyId;
   onPayrollLoaded: (data: PayrollRow[]) => void;
   onBillingLoaded: (data: BillingRow[]) => void;
+  // ★2026-09-15追加(23章「集計」シート方式の名目指標を行レベルにも拡張): 大阪の
+  // 「請求書（スタナビ）」シートのように契約単価(請求＠)データを持つ会社向け。CsvUploaderの
+  // onInvoiceLoadedと同じApp.tsx側のハンドラをそのまま渡す想定。
+  onInvoiceLoaded: (data: InvoicePrintRow[]) => void;
 }
 
 function toPastImportCompany(id: CompanyId): PastImportCompany | null {
@@ -42,6 +46,7 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
   selectedCompanyId,
   onPayrollLoaded,
   onBillingLoaded,
+  onInvoiceLoaded,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -97,6 +102,8 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
     if (!result) return;
     onPayrollLoaded(result.payrollRows);
     onBillingLoaded(result.billingRows);
+    // ★2026-09-15追加: 契約単価(請求＠)データがある場合のみ反映(松山・四国は常に空配列)
+    if (result.invoiceRows.length > 0) onInvoiceLoaded(result.invoiceRows);
     setApplied(true);
   };
 
@@ -212,6 +219,12 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
                 <span className="text-slate-700">
                   請求データ: <strong>{result.billingRows.length}</strong> 件
                 </span>
+                {/* ★2026-09-15追加: 契約単価(請求＠)データがある場合のみ件数を表示(松山・四国は常に0件) */}
+                {result.invoiceRows.length > 0 && (
+                  <span className="text-slate-700">
+                    契約単価データ: <strong>{result.invoiceRows.length}</strong> 件
+                  </span>
+                )}
                 <span className="text-slate-700">
                   対象年月: <strong className="font-mono">{result.targetMonth}</strong>
                 </span>

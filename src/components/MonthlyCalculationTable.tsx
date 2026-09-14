@@ -305,6 +305,16 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               <th className="py-3 px-3 whitespace-nowrap text-center cursor-pointer hover:bg-slate-200 bg-indigo-50/50" onClick={() => handleSort('grossProfitRate')}>
                 粗利率
               </th>
+              {/* ★2026-09-15追加(23章「集計」シート方式の名目指標を行レベルにも拡張)。
+                  ★2026-09-16修正(はまさんの指摘): 「名目粗利額」列は元データ(大阪の契約別売上
+                  実績表シート)に存在しない独自追加だったため削除し、実在する「名目粗利率」のみ残す。 */}
+              <th
+                className="py-3 px-3 whitespace-nowrap text-center cursor-pointer hover:bg-slate-200 bg-sky-50/50"
+                onClick={() => handleSort('nominalGrossMarginRate')}
+                title="1−支払＠/請求＠。大阪人材の集計シート方式による名目上の粗利率です。請求書印刷CSV未読込・未紐付けの行は「データなし」になります"
+              >
+                名目粗利率 <span className="text-sky-600">ⓘ</span>
+              </th>
               <th className="py-3 px-3 whitespace-nowrap text-center cursor-pointer hover:bg-slate-200" onClick={() => handleSort('transportDiff')}>
                 交通費突合
               </th>
@@ -314,7 +324,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
           <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
             {filteredResults.length === 0 ? (
               <tr>
-                <td colSpan={15} className="py-12 text-center text-slate-400">
+                <td colSpan={16} className="py-12 text-center text-slate-400">
                   該当する計算結果データが見つかりません。CSVデータを読み込んでください。
                 </td>
               </tr>
@@ -421,6 +431,15 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                       >
                         {row.grossProfitRate}%
                       </span>
+                    </td>
+
+                    {/* 名目粗利率 (★2026-09-15追加。ヘッダーのツールチップ参照) */}
+                    <td className="py-2.5 px-3 text-center font-mono text-sky-800 bg-sky-50/30 whitespace-nowrap">
+                      {row.nominalGrossMarginRateDataAvailable ? (
+                        `${row.nominalGrossMarginRate}%`
+                      ) : (
+                        <span className="text-slate-300">データなし</span>
+                      )}
                     </td>
 
                     {/* 交通費突合 */}

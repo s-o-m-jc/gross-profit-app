@@ -278,6 +278,15 @@ export interface GrossProfitResult {
   // 大阪人材の集計シートも同様の単純合算方式で、按分は行っていない)。
   payUnitPrice: number;
 
+  // ★2026-09-15追加(23章タスクA拡張): 「月次粗利明細一覧」(行レベル・契約/スタッフ単位)にも
+  // 「集計」シートと同じ名目指標を表示するため追加。定義はFiscalYearSummary.nominalGrossMarginRate/
+  // MonthlyTrend.nominalGrossMarginRate/ClientRanking.nominalGrossMarginRateと同一(1−支払＠/請求＠)の
+  // 行レベル版であり、新しい計算ロジックではなく既存のbillingUnitPrice/payUnitPriceをそのまま使う。
+  // 請求＠(billingUnitPrice)が0(請求書印刷CSV未読込・未紐付け等で契約単価が取得できない)の場合は
+  // falseとし、UI側で「0%」と「データなし」を区別する。
+  nominalGrossMarginRateDataAvailable: boolean;
+  nominalGrossMarginRate: number; // (%) = 1 − payUnitPrice / billingUnitPrice。データ無しの場合は0。
+
   // 休業分補償・休業手当・次月調整(15章)の手入力行を、通常の請求行と区別するためのタグ。
   // これらは請求CSV由来の行ではなく、対象月・クライアント(または対象月のみ)単位で
   // 派遣売上または給与総額(原価)にそのまま加算するための合成行として1行ずつ追加される。

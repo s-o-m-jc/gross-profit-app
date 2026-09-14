@@ -244,11 +244,20 @@ export function calculateGrossProfit(
 
     const retirementAmount = retirementMap.get(key) || 0;
     const invoicePrint = invoiceMap.get(`${billing.targetMonth}_${billing.billingNo}`);
-    // 請求＠算出用の契約単価。請求書印刷CSV由来(未読込 or 未紐付けの場合は0)
-    const billingUnitPrice = invoicePrint?.unitPrice || 0;
+    // 請求＠算出用の契約単価。請求書印刷CSV由来(未読込 or 未紐付けの場合はbilling.unitPriceに
+    // フォールバックする。★2026-09-15追加: 四国の過去実績Excel(実績加工シートP列「請求単価」)は
+    // BillingRow.unitPriceに契約単価を持っているが、従来はinvoicePrintしか参照しておらずこの値が
+    // 一切使われていなかった(実データ確認済みの取りこぼし)。請求書印刷CSVによる紐付けを優先しつつ、
+    // 無い場合はbilling.unitPriceを使うことで、既にデータとして存在する契約単価を活かす)
+    const billingUnitPrice = invoicePrint?.unitPrice || billing.unitPrice || 0;
     // 支払＠算出用の支払単価 = 時間内(金額) ÷ 時間内時間。時間内時間が0またはpayroll未紐付けなら0
     // (0除算回避。SUM集計では0は寄与しないため、自動的に「除外」と同じ効果になる)
     const payUnitPrice = payroll && payroll.regularHours > 0 ? payroll.regularAmount / payroll.regularHours : 0;
+    // ★2026-09-15追加(23章タスクA拡張): 行レベルの名目粗利率(詳細はtypes.ts参照)
+    const nominalGrossMarginRateDataAvailable = billingUnitPrice > 0;
+    const nominalGrossMarginRate = billingUnitPrice > 0
+      ? Number(((1 - payUnitPrice / billingUnitPrice) * 100).toFixed(2))
+      : 0;
 
     // 担当者: 手入力(クライアント×対象月)があれば優先、なければ取り込み元(現状は松山のみ)の値
     // (★2026-09-11追加、23章タスクB)
@@ -416,6 +425,8 @@ export function calculateGrossProfit(
       paymentDueDate: invoicePrint?.paymentDueDate,
       billingUnitPrice,
       payUnitPrice,
+      nominalGrossMarginRateDataAvailable,
+      nominalGrossMarginRate,
       personInCharge,
     });
   });
@@ -467,6 +478,9 @@ export function calculateGrossProfit(
         invoicePrintStatus: 'MISSING_INVOICE',
         billingUnitPrice: 0,
         payUnitPrice: payroll.regularHours > 0 ? payroll.regularAmount / payroll.regularHours : 0,
+        // 請求が存在しない行のため請求＠が無く、名目粗利率は算出不可
+        nominalGrossMarginRateDataAvailable: false,
+        nominalGrossMarginRate: 0,
       });
     }
   });
@@ -514,6 +528,9 @@ export function calculateGrossProfit(
       alerts: [],
       billingUnitPrice: 0,
       payUnitPrice: 0,
+      // 手入力の合成行のため請求＠が無く、名目粗利率は算出不可
+      nominalGrossMarginRateDataAvailable: false,
+      nominalGrossMarginRate: 0,
       manualEntryType: 'LEAVE_COMPENSATION',
       manualEntryMemo: lc.memo,
       // 休業分補償はclientCodeを持つため、他の行と同様にクライアント×対象月の担当者手入力を適用する
@@ -558,6 +575,9 @@ export function calculateGrossProfit(
       alerts: [],
       billingUnitPrice: 0,
       payUnitPrice: 0,
+      // 手入力の合成行のため請求＠が無く、名目粗利率は算出不可
+      nominalGrossMarginRateDataAvailable: false,
+      nominalGrossMarginRate: 0,
       manualEntryType: 'LEAVE_ALLOWANCE',
       manualEntryMemo: la.memo,
     });
@@ -604,6 +624,9 @@ export function calculateGrossProfit(
       alerts: [],
       billingUnitPrice: 0,
       payUnitPrice: 0,
+      // 手入力の合成行のため請求＠が無く、名目粗利率は算出不可
+      nominalGrossMarginRateDataAvailable: false,
+      nominalGrossMarginRate: 0,
       manualEntryType: isSales ? 'NEXT_MONTH_ADJUSTMENT_SALES' : 'NEXT_MONTH_ADJUSTMENT_COST',
       manualEntryMemo: adj.memo,
     });

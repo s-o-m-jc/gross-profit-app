@@ -741,6 +741,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
                 selectedCompanyId={selectedCompanyId}
                 onPayrollLoaded={handlePayrollLoaded}
                 onBillingLoaded={handleBillingLoaded}
+                onInvoiceLoaded={handleInvoiceLoaded}
               />
             )}
 

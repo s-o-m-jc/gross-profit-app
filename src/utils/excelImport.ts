@@ -29,8 +29,8 @@
 
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
-import { PayrollRow, BillingRow } from '../types';
-import { parsePayrollCsv, parseBillingCsv } from './csvParser';
+import { PayrollRow, BillingRow, InvoicePrintRow } from '../types';
+import { parsePayrollCsv, parseBillingCsv, parseInvoicePrintCsv } from './csvParser';
 
 // 未払計上表シートの「時間」列(H:MM形式で24時間を超えうる、[h]:mm書式のExcelセル)。
 // Excel上はこれらのセルは「1日を1.0とする経過日数」の実数として保存されている
@@ -91,6 +91,12 @@ export type PastImportCompany = 'matsuyama' | 'shikoku' | 'osaka';
 export interface PastImportResult {
   payrollRows: PayrollRow[];
   billingRows: BillingRow[];
+  // ★2026-09-15追加(23章「集計」シート方式の名目指標を行レベルにも拡張): 契約単価(請求＠)。
+  // 従来このモジュールはpayrollRows/billingRowsしか返しておらず、過去実績Excel取り込み分は
+  // 常に請求＠が取得できず名目粗利率・名目粗利額が「データなし」になっていた。大阪の
+  // 「請求書（スタナビ）」シートのように契約単価(時間内－単価)を持つシートがある場合はここに
+  // 格納する(現状は大阪のみ。松山・四国の過去実績Excelには該当シートが無いため空配列)。
+  invoiceRows: InvoicePrintRow[];
   targetMonth: string;
   /** シートが見つからない等、部分的に取り込めなかった場合の警告(取り込み自体は続行) */
   warnings: string[];
@@ -202,7 +208,8 @@ export function extractMatsuyamaPastData(
       .map((r) => ({ ...r, targetMonth }));
   }
 
-  return { payrollRows, billingRows, targetMonth, warnings };
+  // 松山の過去実績Excelには契約単価(請求＠)を持つシートが無いため常に空(23章参照)
+  return { payrollRows, billingRows, invoiceRows: [], targetMonth, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -283,12 +290,15 @@ export function extractShikokuPastData(
         billingTransport: 0,
         referralFee: 0,
         workHours: 0,
+        // ★2026-09-15追加: このunitPrice(P列「請求単価」)はcalculator.tsのbillingUnitPrice算出で
+        // 請求書印刷CSV未読込時のフォールバックとして参照されるようになった(23章参照)。
+        // 別シートに独立した契約単価データ(InvoicePrintRow相当)は無いため、invoiceRowsは空のまま。
         unitPrice: Number(row[SHIKOKU_COL.billingUnitPrice]) || 0,
       });
     });
   }
 
-  return { payrollRows, billingRows, targetMonth, warnings };
+  return { payrollRows, billingRows, invoiceRows: [], targetMonth, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -310,11 +320,20 @@ export function extractShikokuPastData(
  * - 大阪の給与一覧シートには駐車場代・退職金配賦に該当する列が存在しない(実データ確認済み。
  *   parsePayrollCsvのparkingKey候補が見つからずparkingFeeは常に0になるが、これは大阪の実態
  *   (該当項目自体が無い)を正しく反映した結果であり、取込漏れではない)。
+ * - ★2026-09-15追加(23章「集計」シート方式の名目指標を行レベルにも拡張): 「請求書（スタナビ）」
+ *   シート(1行目がヘッダー)には契約単価(「時間内－単価」列)が契約(受注番号・請求番号)単位で
+ *   入っている。実データ検証済み: このシートの「請求番号」列は「請求支払（スタナビ）」シートの
+ *   「請求No」と同じ値(例: 20004253)で紐付き、「時間内－単価」(例: 1930)は「契約別売上実績表」
+ *   シート自体が持つ「請求＠」列の値と完全一致する。既存のparseInvoicePrintCsv(請求書印刷CSV用)を
+ *   そのまま再利用できるが、ハイフンの文字種が候補名と異なる(全角ハイフン「－」(U+FF0D)。
+ *   候補名側は減算記号「−」(U+2212)。csvParser.ts側に候補を追加済み)。
  */
 const OSAKA_PAYROLL_SHEET = '給与一覧（スタナビ）';
 const OSAKA_PAYROLL_HEADER_ROW = 1;
 const OSAKA_BILLING_SHEET = '請求支払（スタナビ）';
 const OSAKA_BILLING_HEADER_ROW = 1;
+const OSAKA_INVOICE_SHEET = '請求書（スタナビ）';
+const OSAKA_INVOICE_HEADER_ROW = 1;
 
 export function extractOsakaPastData(
   wb: XLSX.WorkBook,
@@ -345,7 +364,22 @@ export function extractOsakaPastData(
       .map((r) => ({ ...r, targetMonth }));
   }
 
-  return { payrollRows, billingRows, targetMonth, warnings };
+  // ★2026-09-15追加(23章「集計」シート方式の名目指標を行レベルにも拡張): 契約単価(請求＠)。
+  // 見つからなくても給与・請求データの取り込み自体は継続する(名目粗利率が「データなし」になるだけ)。
+  const invoiceSheet = wb.Sheets[OSAKA_INVOICE_SHEET];
+  let invoiceRows: InvoicePrintRow[] = [];
+  if (!invoiceSheet) {
+    warnings.push(
+      `「${OSAKA_INVOICE_SHEET}」シートが見つかりませんでした。契約単価(請求＠)は取り込まれず、名目粗利率・名目粗利額は算出されません。`
+    );
+  } else {
+    const csv = plainSheetToCsv(invoiceSheet, OSAKA_INVOICE_HEADER_ROW);
+    invoiceRows = parseInvoicePrintCsv(csv, fileName)
+      .filter((r) => r.billingNo)
+      .map((r) => ({ ...r, targetMonth }));
+  }
+
+  return { payrollRows, billingRows, invoiceRows, targetMonth, warnings };
 }
 
 export function extractPastData(

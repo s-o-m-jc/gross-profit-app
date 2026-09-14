@@ -532,7 +532,11 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
       const dueDateKey = findColumnKey(row, ['振込予定日', '支払期日']);
       const printKey = findColumnKey(row, ['印刷ステータス', '印刷済']);
       const sentKey = findColumnKey(row, ['送付ステータス', '送付']);
-      const unitPriceKey = findColumnKey(row, ['時間内−単価', '請求単価']);
+      // ★2026-09-15追加(23章「集計」シート方式の名目指標を行レベルにも拡張): 大阪の
+      // 「請求書（スタナビ）」シートは同じ列名だが区切り文字が全角ハイフン「－」(U+FF0D、
+      // NFKC正規化でASCIIハイフン"-"になる)であり、既存候補のU+2212(NFKC正規化されない)とは
+      // 一致しないため、正規化後の形("時間内-単価")を候補に追加する(実データ確認済み)。
+      const unitPriceKey = findColumnKey(row, ['時間内−単価', '時間内-単価', '請求単価']);
 
       const printVal = getStr(row, printKey);
       let printStatus: InvoicePrintRow['printStatus'] = '印刷済';
