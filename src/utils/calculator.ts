@@ -721,6 +721,9 @@ export function calculateFiscalYearSummary(
       dispatch: 0,
       salary: 0,
       socialInsuranceOther: 0,
+      // ★2026-09-18追加(はまさんの指摘): 社保他小計の内訳グループ(雇保・社保・交通費自社負担)
+      // だけでは駐車場代が発生する行・月で内訳合計と一致しないため、駐車場代も独立集計する。
+      parkingFee: 0,
       // ★2026-09-15追加(はまさんの指摘): 退職金配賦(RetirementPanel手入力、拠点・取込元によらず
       // 共通のretirementMapで解決される値)は社保他に畳み込まず、独立した項目として集計する。
       retirementAmount: 0,
@@ -838,6 +841,11 @@ export function calculateFiscalYearSummary(
       // 含まれているため、月次サマリ表の内訳合計を必ずgrossProfitと一致させるため
       // socialInsuranceOther(社保他)にそのまま畳み込んで集計する(下記の派生値算出コメント参照)。
       mTrend.socialInsuranceOther += r.parkingFee;
+      // ★2026-09-18追加(はまさんの指摘): 社保他小計の内訳(雇保/社保/交通費自社負担)だけでは
+      // 駐車場代が発生する行・月で内訳合計と一致しないため、駐車場代も独立集計する
+      // (socialInsuranceOtherへの加算は上のr.parkingFee加算で既に行われている。この
+      // mTrend.parkingFeeは表示専用の内訳項目で、grossProfitの計算自体には影響しない)。
+      mTrend.parkingFee += r.parkingFee;
       // ★2026-09-15修正(はまさんの指摘): 退職金配賦(retirementAmount)は、拠点・取込元
       // (CSV/Excel/手入力)によらずRetirementPanel.tsxの手入力データを`targetMonth_staffNo`で
       // 引き当てて得る値であり(このr.retirementAmount自体は上記のretirementMap経由で既に

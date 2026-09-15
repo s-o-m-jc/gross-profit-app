@@ -484,6 +484,13 @@ export interface MonthlyTrend {
   // 別途保持し、月次サマリ表では参考列として表示する)。退職金配賦は含めない
   // (下記retirementAmount参照)。
   socialInsuranceOther: number;
+  // 駐車場代 (当月合計、表示用) = Σ parkingFee。「集計」シート(大阪方式)には無い列だが、
+  // socialInsuranceOtherの計算に含まれているため、月次サマリ表・月次粗利明細一覧の
+  // 「社保他小計」内訳グループの4列目として独立表示する
+  // (★2026-09-18追加。はまさんの指摘: 雇保・社保・交通費(自社負担)の3列だけでは、駐車場代が
+  // 発生する行・月で「内訳合計 ≠ 社保他小計」という表示上の不一致が生じるため、
+  // 雇保+社保+交通費(自社負担)+駐車場代 = 社保他小計 が常に一致するようにした)。
+  parkingFee: number;
   // 退職金配賦 (当月合計、表示用) = Σ retirementAmount。RetirementPanel手入力データを
   // targetMonth_staffNoキーで引き当てた値(拠点・取込元によらず共通のretirementMapで解決される。
   // calculator.ts calculateGrossProfit参照)の月次合計。「集計」シート(大阪方式)には無い列だが、

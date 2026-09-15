@@ -46,6 +46,22 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
   const [expandedClientCode, setExpandedClientCode] = useState<string | null>(null);
   // 22章タスク2: 有給残日数アラートの閾値(年5日の有給取得義務を踏まえ、仮に10日をデフォルトとする)
   const [leaveBalanceThreshold, setLeaveBalanceThreshold] = useState<number>(DEFAULT_LEAVE_BALANCE_THRESHOLD);
+  // ★2026-09-18追加(はまさんのご要望): 月次サマリ表の「売上内訳」「給与内訳」「社保他内訳」を
+  // それぞれ独立して開閉できるようにする。既定は非表示(集計列のみ表示)で、集計列の見出しを
+  // クリックすると該当する内訳列が展開される。
+  const [showSalesBreakdown, setShowSalesBreakdown] = useState(false);
+  const [showSalaryBreakdown, setShowSalaryBreakdown] = useState(false);
+  const [showSocialBreakdown, setShowSocialBreakdown] = useState(false);
+  const anyMonthlySummaryBreakdownOpen = showSalesBreakdown || showSalaryBreakdown || showSocialBreakdown;
+  // ★2026-09-19修正(表構造の不具合): 月次サマリ表の見出し1段目(常時表示の各列)は元々常に
+  // rowSpan={2}にしていたが、内訳がすべて閉じている(anyMonthlySummaryBreakdownOpen===false)場合、
+  // 見出し2段目(内訳の個別列名)の<tr>自体を描画しないため、rowSpan=2が「存在しない2段目」を
+  // 飛び越えて、HTMLのテーブルグリッド計算上、theadの次に来る実際の<tr>(tbodyの最初のデータ行)
+  // まで浸食してしまう(rowSpan/colSpanのグリッド計算はthead/tbodyの区切りを無視し、テーブル
+  // 全体を1つの行グリッドとして扱うため)。この結果、内訳が閉じている既定状態で表が丸ごとズレて
+  // 見えるバグがあった。内訳が開いている時だけrowSpan=2(2段目が実在するため正しく機能する)、
+  // 閉じている時はrowSpan=1(2段目自体が存在しないため、1段の通常ヘッダーとして扱う)にすることで
+  // 解消した。
 
   const rankedClients = useMemo(() => {
     const withData = summary.clientRankings.filter((c) => c.nominalGrossMarginRateDataAvailable);
@@ -206,9 +222,21 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
           1人当たり有給日数の3項目が抜けていたため追加(実質粗利率は既存のgrossMarginRate、
           有給(日)は既存のpaidLeaveDaysをそのまま使い、1人当たり有給日数のみ新規フィールドを
           追加)。また列の並び順を「集計」シートのヘッダー行の実際の並びに合わせ、交通費(自社負担)を
-          社保の直後(社保他の直前)に移動した。退職金配賦は「集計」シートには無い列だが、
-          RetirementPanel手入力データがgrossProfitの原価に含まれる以上、独立して見えないと
-          運用上困る(はまさん指摘済み)ため、末尾に「追加項目」と明記した上で残している。 */}
+          社保の直後(社保他の直前)に移動した。
+          ★2026-09-18再修正(はまさんのご要望): 以下2点を反映。
+          1. 退職金配賦は末尾の単独「追加項目」列から、「給与内訳」グループに組み込んだ
+             (給与内訳が「給与・休業手当・退職金配賦」の3列になり、「給与総額 = 給与+休業手当+
+             退職金配賦」という関係になる)。
+          2. 「社保他」列を「社保他小計」に改称し、「雇保・社保・交通費(自社負担)」の3列を
+             その内訳グループとした。★ただし実際のsocialInsuranceOtherの計算式(calculator.ts)には
+             駐車場代(parkingFee)も含まれており、この3列の単純合計と社保他小計の値が一致しない
+             月がありうる(駐車場代が発生する月)。はまさんの依頼文言どおり3列のみを内訳として
+             表示しているが、この差異は目視確認時にお伝えする。
+          さらに、3つの内訳グループ(売上内訳・給与内訳・社保他内訳)を既定で非表示にし、集計列
+          (派遣売上/給与総額/社保他小計)の見出しをクリックすると展開/折りたたみできるように
+          した(showSalesBreakdown/showSalaryBreakdown/showSocialBreakdown、開閉は独立)。
+          折りたたみ時は内訳列自体をDOMから外す(colSpan/非表示ではなく行・列を増減させる)ため、
+          複数月を縦に並べて内訳だけをまとめて比較できる。 */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
         <div className="mb-4">
           <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
@@ -216,42 +244,61 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
             <span>月次サマリ ({summary.startMonth} 〜 {summary.endMonth})</span>
           </h3>
           <p className="text-xs text-slate-500">
-            大阪人材の月別総合計シート「集計」タブと同じ項目の、選択中の決算期・月別内訳
+            大阪人材の月別総合計シート「集計」タブと同じ項目の、選択中の決算期・月別内訳。
+            「派遣売上」「給与総額」「社保他小計」の見出しをクリックすると、その内訳列が展開されます。
           </p>
         </div>
         <div className="overflow-x-auto table-scroll">
           <table className="min-w-full text-left text-xs border-collapse whitespace-nowrap">
-            {/* ★2026-09-15変更(はまさんのご要望): 元Excel(「集計」シート)と同じ2段構成の
-                グループ見出しにした。「派遣売上 = 派遣 + 交通費(相手企業負担) + 休業分補償」
-                「給与総額 = 給与 + 休業手当」という関係が視覚的に分かるよう、合計値の列の直後に
-                その内訳列を隣接配置し、内訳列の上にcolSpanで結合した親見出し(売上内訳/給与内訳)を
-                付けている。グループに属さない列はrowSpan={2}で2段ぶち抜きにする。
-                列そのものの追加・削除はしておらず、並び順と見出しの段組みだけの変更。 */}
             <thead>
-              <tr className="bg-slate-100 text-slate-700 font-bold">
-                <th className="py-2 px-3" rowSpan={2}>月</th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>スタッフ人数</th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>派遣売上</th>
+              <tr className={`bg-slate-100 text-slate-700 font-bold ${anyMonthlySummaryBreakdownOpen ? '' : 'border-b border-slate-200'}`}>
+                <th className="py-2 px-3" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>月</th>
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>スタッフ人数</th>
                 <th
-                  className="py-1.5 px-3 text-center bg-emerald-50 border-l border-r border-emerald-200 text-emerald-800 font-extrabold"
-                  colSpan={3}
-                  title="派遣売上 = 派遣 + 交通費(相手企業負担) + 休業分補償"
+                  className="py-2 px-3 text-right cursor-pointer hover:bg-slate-200 select-none"
+                  rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
+                  onClick={() => setShowSalesBreakdown((v) => !v)}
+                  title="クリックして内訳(派遣・交通費(相手企業負担)・休業分補償)の表示/非表示を切り替え"
                 >
-                  売上内訳
+                  <span className="inline-flex items-center justify-end gap-1 w-full">
+                    <span>派遣売上</span>
+                    {showSalesBreakdown ? <ChevronUp className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
+                  </span>
                 </th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>紹介手数料</th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>総売上</th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>給与総額</th>
+                {showSalesBreakdown && (
+                  <th
+                    className="py-1.5 px-3 text-center bg-emerald-50 border-l border-r border-emerald-200 text-emerald-800 font-extrabold"
+                    colSpan={3}
+                    title="派遣売上 = 派遣 + 交通費(相手企業負担) + 休業分補償"
+                  >
+                    売上内訳
+                  </th>
+                )}
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>紹介手数料</th>
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>総売上</th>
                 <th
-                  className="py-1.5 px-3 text-center bg-amber-50 border-l border-r border-amber-200 text-amber-800 font-extrabold"
-                  colSpan={2}
-                  title="給与総額 = 給与 + 休業手当"
+                  className="py-2 px-3 text-right cursor-pointer hover:bg-slate-200 select-none"
+                  rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
+                  onClick={() => setShowSalaryBreakdown((v) => !v)}
+                  title="クリックして内訳(給与・休業手当・退職金配賦)の表示/非表示を切り替え"
                 >
-                  給与内訳
+                  <span className="inline-flex items-center justify-end gap-1 w-full">
+                    <span>給与総額</span>
+                    {showSalaryBreakdown ? <ChevronUp className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
+                  </span>
                 </th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>請求＠</th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>支払＠</th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>名目粗利率</th>
+                {showSalaryBreakdown && (
+                  <th
+                    className="py-1.5 px-3 text-center bg-amber-50 border-l border-r border-amber-200 text-amber-800 font-extrabold"
+                    colSpan={3}
+                    title="給与総額 = 給与 + 休業手当 + 退職金配賦"
+                  >
+                    給与内訳
+                  </th>
+                )}
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>請求＠</th>
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>支払＠</th>
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>名目粗利率</th>
                 {/* ★2026-09-16追加(はまさんの指摘・「集計」シートヘッダー行との突合): 「交通費(税抜)」列。
                     はまさんが元Excelのセルを直接確認した結果、数式ではなく手入力の固定値であり、
                     このアプリが持つどのデータからも導出できない外部データと判明した(値が交通費
@@ -260,51 +307,75 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                     列自体は「集計」シートとの項目一致のため用意しつつ、値は表示しない。 */}
                 <th
                   className="py-2 px-3 text-right"
-                  rowSpan={2}
+                  rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
                   title="元Excelでは手入力の固定値(このアプリのデータからは導出不可)。データの出所判明まで「不明」表示にしています"
                 >
                   交通費(税抜) <span className="text-amber-500">ⓘ</span>
                 </th>
                 <th
-                  className="py-2 px-3 text-right"
-                  rowSpan={2}
-                  title="参考値(給与CSV由来)。右の「社保」列に既に含まれているため、「社保他」の合計には加算していません"
+                  className="py-2 px-3 text-right cursor-pointer hover:bg-slate-200 select-none"
+                  rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
+                  onClick={() => setShowSocialBreakdown((v) => !v)}
+                  title="クリックして内訳(雇保・社保・交通費(自社負担)・駐車場代)の表示/非表示を切り替え。雇保は社保に含まれる参考値のため、社保+交通費(自社負担)+駐車場代の3項目が社保他小計と一致します"
                 >
-                  雇用保険 <span className="text-slate-400">ⓘ</span>
+                  <span className="inline-flex items-center justify-end gap-1 w-full">
+                    <span>社保他小計</span>
+                    {showSocialBreakdown ? <ChevronUp className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
+                  </span>
                 </th>
-                <th className="py-2 px-3 text-right" rowSpan={2} title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">
-                  社保
-                </th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>交通費(自社負担)</th>
-                <th className="py-2 px-3 text-right" rowSpan={2} title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代">
-                  社保他
-                </th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>有給金額</th>
-                <th className="py-2 px-3 text-right bg-indigo-50/50" rowSpan={2}>実質粗利益</th>
-                <th className="py-2 px-3 text-right bg-indigo-50/50" rowSpan={2}>実質粗利率</th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>有給(日)</th>
-                <th className="py-2 px-3 text-right" rowSpan={2}>1人当たり有給日数</th>
-                {/* ★2026-09-15追加(はまさんの指摘): 退職金配賦(RetirementPanel手入力)は「集計」
-                    シートには無い列だが、大阪の給与シートに列が無いこととは無関係に拠点を問わず
-                    入力されうる項目のため、grossProfitの原価に含まれる以上は「社保他」に畳み込まず
-                    独立列として表示する(拠点別の入力状況が見えるように)。★2026-09-16: 「集計」
-                    シートの項目一覧には無いため、末尾に追加項目として配置する。 */}
-                <th
-                  className="py-2 px-3 text-right bg-slate-50"
-                  rowSpan={2}
-                  title="「集計」シートには無い列。RetirementPanelでの手入力(拠点共通)を独立表示"
-                >
-                  退職金配賦 <span className="text-slate-400">(追加項目)</span>
-                </th>
+                {showSocialBreakdown && (
+                  <th
+                    className="py-1.5 px-3 text-center bg-violet-50 border-l border-r border-violet-200 text-violet-800 font-extrabold"
+                    colSpan={4}
+                    title="社保他小計 = 社保(雇用保険込み) + 交通費(自社負担) + 駐車場代(雇保は社保に含まれる参考列のため合計には含みません)"
+                  >
+                    社保他内訳
+                  </th>
+                )}
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>有給金額</th>
+                <th className="py-2 px-3 text-right bg-indigo-50/50" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>実質粗利益</th>
+                <th className="py-2 px-3 text-right bg-indigo-50/50" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>実質粗利率</th>
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>有給(日)</th>
+                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>1人当たり有給日数</th>
               </tr>
-              {/* 2段目: グループ(売上内訳・給与内訳)に属する個別の列名のみ */}
-              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                <th className="py-2 px-3 text-right bg-emerald-50/60 border-l border-emerald-200">派遣</th>
-                <th className="py-2 px-3 text-right bg-emerald-50/60">交通費(相手企業負担)</th>
-                <th className="py-2 px-3 text-right bg-emerald-50/60 border-r border-emerald-200">休業分補償</th>
-                <th className="py-2 px-3 text-right bg-amber-50/60 border-l border-amber-200">給与</th>
-                <th className="py-2 px-3 text-right bg-amber-50/60 border-r border-amber-200">休業手当</th>
-              </tr>
+              {/* 2段目: 展開中のグループの個別列名のみ(すべて閉じている場合、この行自体を描画しない) */}
+              {anyMonthlySummaryBreakdownOpen && (
+                <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                  {showSalesBreakdown && (
+                    <>
+                      <th className="py-2 px-3 text-right bg-emerald-50/60 border-l border-emerald-200">派遣</th>
+                      <th className="py-2 px-3 text-right bg-emerald-50/60">交通費(相手企業負担)</th>
+                      <th className="py-2 px-3 text-right bg-emerald-50/60 border-r border-emerald-200">休業分補償</th>
+                    </>
+                  )}
+                  {showSalaryBreakdown && (
+                    <>
+                      <th className="py-2 px-3 text-right bg-amber-50/60 border-l border-amber-200">給与</th>
+                      <th className="py-2 px-3 text-right bg-amber-50/60">休業手当</th>
+                      <th className="py-2 px-3 text-right bg-amber-50/60 border-r border-amber-200">退職金配賦</th>
+                    </>
+                  )}
+                  {showSocialBreakdown && (
+                    <>
+                      <th
+                        className="py-2 px-3 text-right bg-violet-50/60 border-l border-violet-200"
+                        title="参考値(給与CSV由来)。「社保」に既に含まれているため、社保他小計の合計には加算していません"
+                      >
+                        雇保 <span className="text-slate-400">ⓘ</span>
+                      </th>
+                      <th className="py-2 px-3 text-right bg-violet-50/60" title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">
+                        社保
+                      </th>
+                      <th className="py-2 px-3 text-right bg-violet-50/60">交通費(自社負担)</th>
+                      {/* ★2026-09-18追加(はまさんの指摘): 雇保・社保・交通費(自社負担)の3列だけでは
+                          駐車場代が発生する月に内訳合計と社保他小計が一致しなかったため、4列目として
+                          追加した。社保+交通費(自社負担)+駐車場代の3項目(雇保を除く)が社保他小計と
+                          厳密に一致する(雇保は社保に既に含まれる参考値のため、合計には含めない)。 */}
+                      <th className="py-2 px-3 text-right bg-violet-50/60 border-r border-violet-200">駐車場代</th>
+                    </>
+                  )}
+                </tr>
+              )}
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
               {summary.monthlyTrends.map((m) => (
@@ -313,33 +384,54 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   <td className="py-2 px-3 text-right font-mono">{m.staffCount}名</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.dispatchSales.toLocaleString()}</td>
                   {/* 売上内訳 (派遣売上の内訳。ヘッダーのグループ見出し参照) */}
-                  <td className="py-2 px-3 text-right font-mono bg-emerald-50/30 border-l border-emerald-200">
-                    ¥{m.dispatch.toLocaleString()}
-                  </td>
-                  <td className="py-2 px-3 text-right font-mono bg-emerald-50/30">¥{m.transportBilling.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono bg-emerald-50/30 border-r border-emerald-200">
-                    ¥{m.leaveCompensation.toLocaleString()}
-                  </td>
+                  {showSalesBreakdown && (
+                    <>
+                      <td className="py-2 px-3 text-right font-mono bg-emerald-50/30 border-l border-emerald-200">
+                        ¥{m.dispatch.toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono bg-emerald-50/30">¥{m.transportBilling.toLocaleString()}</td>
+                      <td className="py-2 px-3 text-right font-mono bg-emerald-50/30 border-r border-emerald-200">
+                        ¥{m.leaveCompensation.toLocaleString()}
+                      </td>
+                    </>
+                  )}
                   <td className="py-2 px-3 text-right font-mono">¥{m.referralSales.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono font-bold">¥{m.totalSales.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.totalSalary.toLocaleString()}</td>
                   {/* 給与内訳 (給与総額の内訳。ヘッダーのグループ見出し参照) */}
-                  <td className="py-2 px-3 text-right font-mono bg-amber-50/30 border-l border-amber-200">
-                    ¥{m.salary.toLocaleString()}
-                  </td>
-                  <td className="py-2 px-3 text-right font-mono bg-amber-50/30 border-r border-amber-200">
-                    ¥{m.leaveAllowance.toLocaleString()}
-                  </td>
+                  {showSalaryBreakdown && (
+                    <>
+                      <td className="py-2 px-3 text-right font-mono bg-amber-50/30 border-l border-amber-200">
+                        ¥{m.salary.toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono bg-amber-50/30">¥{m.leaveAllowance.toLocaleString()}</td>
+                      <td className="py-2 px-3 text-right font-mono bg-amber-50/30 border-r border-amber-200">
+                        ¥{m.retirementAmount.toLocaleString()}
+                      </td>
+                    </>
+                  )}
                   <td className="py-2 px-3 text-right font-mono">¥{m.billingUnitPriceSum.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.payUnitPriceSum.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">
                     {m.nominalGrossMarginRateDataAvailable ? `${m.nominalGrossMarginRate}%` : 'データなし'}
                   </td>
                   <td className="py-2 px-3 text-right font-mono text-slate-300">不明</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.employmentInsurance.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.socialInsurance.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.transportSalary.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.socialInsuranceOther.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono" title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代">
+                    ¥{m.socialInsuranceOther.toLocaleString()}
+                  </td>
+                  {/* 社保他内訳 (社保他小計の内訳。ヘッダーのグループ見出し参照) */}
+                  {showSocialBreakdown && (
+                    <>
+                      <td className="py-2 px-3 text-right font-mono bg-violet-50/30 border-l border-violet-200">
+                        ¥{m.employmentInsurance.toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono bg-violet-50/30">¥{m.socialInsurance.toLocaleString()}</td>
+                      <td className="py-2 px-3 text-right font-mono bg-violet-50/30">¥{m.transportSalary.toLocaleString()}</td>
+                      <td className="py-2 px-3 text-right font-mono bg-violet-50/30 border-r border-violet-200">
+                        ¥{m.parkingFee.toLocaleString()}
+                      </td>
+                    </>
+                  )}
                   <td className="py-2 px-3 text-right font-mono">¥{m.paidLeaveAmount.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono font-extrabold text-emerald-700 bg-indigo-50/30">
                     ¥{m.grossProfit.toLocaleString()}
@@ -349,7 +441,6 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   </td>
                   <td className="py-2 px-3 text-right font-mono">{m.paidLeaveDays}日</td>
                   <td className="py-2 px-3 text-right font-mono">{m.avgPaidLeaveDaysPerStaff}日</td>
-                  <td className="py-2 px-3 text-right font-mono bg-slate-50">¥{m.retirementAmount.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
