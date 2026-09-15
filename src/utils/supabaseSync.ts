@@ -41,6 +41,7 @@ function normalizeState(state: Partial<MonthlyDataState> | null | undefined): Mo
     nextMonthAdjustmentRows: state.nextMonthAdjustmentRows || [],
     paidLeaveOverrideRows: state.paidLeaveOverrideRows || [],
     personInChargeRows: state.personInChargeRows || [],
+    referralFeeRows: state.referralFeeRows || [],
   };
 }
 

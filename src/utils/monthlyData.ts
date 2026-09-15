@@ -22,6 +22,7 @@ import {
   BillingRow,
   InvoicePrintRow,
   RetirementRow,
+  ReferralFeeRow,
   LeaveCompensationRow,
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
@@ -48,6 +49,9 @@ export interface MonthlyDataState {
   // 他の手入力カテゴリと異なり、履歴として複数追加するのではなく、クライアント×対象月の組み合わせ
   // ごとに常に1件だけを保つ(upsertPersonInChargeRow参照)。
   personInChargeRows: PersonInChargeRow[];
+  // ★2026-09-19追加(はまさんの指摘): 紹介手数料(手入力)。retirementRowsと全く同じ設計
+  // (対象月・スタッフNoで1件ずつ追加/削除)。
+  referralFeeRows: ReferralFeeRow[];
 }
 
 export type MonthlyCategory = keyof MonthlyDataState;
@@ -62,7 +66,8 @@ export type ManualEntryCategory =
   | 'nextMonthAdjustmentRows'
   | 'retirementRows'
   | 'paidLeaveOverrideRows'
-  | 'personInChargeRows';
+  | 'personInChargeRows'
+  | 'referralFeeRows';
 
 /** 対象月が空/判定不能だった行の格納先 (実際のYYYY-MM形式とは衝突しない固定文字列) */
 export const UNKNOWN_MONTH_KEY = '対象月不明';
@@ -87,6 +92,7 @@ export function emptyMonthlyDataState(): MonthlyDataState {
     nextMonthAdjustmentRows: [],
     paidLeaveOverrideRows: [],
     personInChargeRows: [],
+    referralFeeRows: [],
   };
 }
 
@@ -190,6 +196,7 @@ export function flattenCompanyMonths(companyMonths: CompanyMonthlyData): Monthly
     result.nextMonthAdjustmentRows.push(...(m.nextMonthAdjustmentRows || []));
     result.paidLeaveOverrideRows.push(...(m.paidLeaveOverrideRows || []));
     result.personInChargeRows.push(...(m.personInChargeRows || []));
+    result.referralFeeRows.push(...(m.referralFeeRows || []));
   });
   return result;
 }
@@ -212,7 +219,8 @@ export function hasAnyData(app: AppMonthlyData): boolean {
         (m.leaveAllowanceRows && m.leaveAllowanceRows.length > 0) ||
         (m.nextMonthAdjustmentRows && m.nextMonthAdjustmentRows.length > 0) ||
         (m.paidLeaveOverrideRows && m.paidLeaveOverrideRows.length > 0) ||
-        (m.personInChargeRows && m.personInChargeRows.length > 0)
+        (m.personInChargeRows && m.personInChargeRows.length > 0) ||
+        (m.referralFeeRows && m.referralFeeRows.length > 0)
     )
   );
 }

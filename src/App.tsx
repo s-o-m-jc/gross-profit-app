@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   Wallet,
   Briefcase,
+  Handshake,
   Database,
 } from 'lucide-react';
 import { Header } from './components/Header';
@@ -24,6 +25,7 @@ import { ChangeHistoryPanel } from './components/ChangeHistoryPanel';
 import { ManualAdjustmentsPanel } from './components/ManualAdjustmentsPanel';
 import { PersonInChargePanel } from './components/PersonInChargePanel';
 import { RetirementPanel } from './components/RetirementPanel';
+import { ReferralFeePanel } from './components/ReferralFeePanel';
 import { MonthlyCalculationTable } from './components/MonthlyCalculationTable';
 import { StaffPayrollDetail } from './components/StaffPayrollDetail';
 import { AnomalyAuditPanel } from './components/AnomalyAuditPanel';
@@ -37,6 +39,7 @@ import {
   BillingRow,
   InvoicePrintRow,
   RetirementRow,
+  ReferralFeeRow,
   LeaveCompensationRow,
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
@@ -253,12 +256,13 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     nextMonthAdjustmentRows,
     paidLeaveOverrideRows,
     personInChargeRows,
+    referralFeeRows,
   } = flattened;
 
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
   const [fiscalYear, setFiscalYear] = useState<string>(fiscalYearOptions[0].value);
   const [activeTab, setActiveTab] = useState<
-    'monthly' | 'staffPayroll' | 'retirement' | 'fiscal' | 'audit' | 'dataManagement'
+    'monthly' | 'staffPayroll' | 'retirement' | 'referralFee' | 'fiscal' | 'audit' | 'dataManagement'
   >('monthly');
   // 月次粗利明細一覧の「年間(決算期)」表示切替用: 選択中の決算期に属する12ヶ月分の対象年月一覧とラベル
   const fiscalYearMonths = useMemo(() => getFiscalYearMonths(fiscalYear, 12), [fiscalYear]);
@@ -461,6 +465,10 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   const handleAddRetirement = (row: RetirementRow) => handleAddManualEntry('retirementRows', row);
   const handleRemoveRetirement = (row: RetirementRow) =>
     handleRemoveManualEntry('retirementRows', row.targetMonth, row.id);
+  // ★2026-09-19追加(はまさんの指摘): 紹介手数料(手入力)。retirementRowsと全く同じ扱い。
+  const handleAddReferralFee = (row: ReferralFeeRow) => handleAddManualEntry('referralFeeRows', row);
+  const handleRemoveReferralFee = (row: ReferralFeeRow) =>
+    handleRemoveManualEntry('referralFeeRows', row.targetMonth, row.id);
   // ★2026-09-11追加(23章タスクB「担当者」列復活): 担当者(手入力)。他の手入力カテゴリと異なり、
   // クライアント×対象月の組み合わせは常に1件だけを保つため、追加専用のupsertPersonInChargeRowを使う
   // (削除は他のカテゴリと同じくremoveManualEntryRowを流用できる)。
@@ -528,7 +536,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       leaveCompensationRows,
       leaveAllowanceRows,
       nextMonthAdjustmentRows,
-      personInChargeRows
+      personInChargeRows,
+      referralFeeRows
     );
   }, [
     payrollRows,
@@ -540,6 +549,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     leaveAllowanceRows,
     nextMonthAdjustmentRows,
     personInChargeRows,
+    referralFeeRows,
   ]);
 
   // 決算期サマリー計算 (calculateFiscalYearSummary自身が、渡された全月のデータの中から
@@ -659,6 +669,18 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             </button>
 
             <button
+              onClick={() => setActiveTab('referralFee')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'referralFee'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Handshake className="w-4 h-4" />
+              <span>紹介手数料</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('dataManagement')}
               className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
                 activeTab === 'dataManagement'
@@ -758,6 +780,18 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             companyMonths={selectedCompanyMonths}
             onAdd={handleAddRetirement}
             onRemove={handleRemoveRetirement}
+            canEdit={canEdit}
+          />
+        )}
+
+        {/* タブ: 紹介手数料 (★2026-09-19新設。はまさんの指摘: 退職金配賦と同じ位置づけで手入力
+            できる仕組みが必要とのことで、RetirementPanelと全く同じ設計・扱いで新設した) */}
+        {activeTab === 'referralFee' && (
+          <ReferralFeePanel
+            companyName={selectedCompany.name}
+            companyMonths={selectedCompanyMonths}
+            onAdd={handleAddReferralFee}
+            onRemove={handleRemoveReferralFee}
             canEdit={canEdit}
           />
         )}

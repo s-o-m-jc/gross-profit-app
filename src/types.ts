@@ -150,6 +150,21 @@ export interface RetirementRow {
   memo?: string;
 }
 
+// ★2026-09-19追加(はまさんの指摘): 紹介手数料データレコード (手入力・売上側)。
+// RetirementRow(退職金配賦)と全く同じ設計: 対象月・スタッフNoを1件ずつ手入力し、CSV取込は
+// 行わない。現状、紹介手数料はcsvParser.tsのparseBillingCsv(候補列名「紹介手数料」「紹介料」)が
+// CSV由来で読み取る仕組みが既にあるが、実データでは3社ともこの列が実質存在せず常に0になって
+// いる(過去実績Excel(四国の実績加工シート等)にも該当列が無い)。CSV由来の値(常に0)に
+// 加算する形で手入力値を反映する(calculator.ts参照。CSV側に値が入るようになった場合でも
+// 二重計上にはならず、両方の合計が使われる)。
+export interface ReferralFeeRow {
+  id: string;                  // ユニーク識別子 (手入力行の一覧表示・削除用)
+  targetMonth: string;         // 対象年月
+  staffNo: string;             // スタッフNo
+  amount: number;              // 紹介手数料額 (毎月分)
+  memo?: string;                // 備考
+}
+
 // 休業分補償データレコード (手入力・売上側。派遣先都合等による休業期間の売上補償を派遣売上に加算する)
 export interface LeaveCompensationRow {
   id: string;                  // ユニーク識別子 (手入力行の一覧表示・削除用)

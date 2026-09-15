@@ -14,6 +14,7 @@ import {
   BillingRow,
   InvoicePrintRow,
   RetirementRow,
+  ReferralFeeRow,
   LeaveCompensationRow,
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
@@ -162,13 +163,26 @@ export function calculateGrossProfit(
   nextMonthAdjustments: NextMonthAdjustmentRow[] = [],
   // ★2026-09-11追加(23章タスクB「担当者」列復活): クライアント×対象月単位の担当者手入力(上書き)。
   // 存在すれば取り込み元(BillingRow.personInCharge)より優先する。
-  personInChargeOverrides: PersonInChargeRow[] = []
+  personInChargeOverrides: PersonInChargeRow[] = [],
+  // ★2026-09-19追加(はまさんの指摘「紹介手数料の手入力が必要」): 対象月・スタッフNo単位の
+  // 紹介手数料手入力。retirementsと全く同じ設計・使い方(下記referralFeeMap参照)。
+  referralFees: ReferralFeeRow[] = []
 ): GrossProfitResult[] {
   // 退職金データのマップ作成 キー: `${targetMonth}_${staffNo}`
   const retirementMap = new Map<string, number>();
   retirements.forEach((r) => {
     const key = `${r.targetMonth}_${r.staffNo}`;
     retirementMap.set(key, (retirementMap.get(key) || 0) + (r.retirementAmount || 0));
+  });
+
+  // 紹介手数料データのマップ作成 キー: `${targetMonth}_${staffNo}` (★2026-09-19追加)。
+  // retirementMapと全く同じ組み立て方。CSV由来のBillingRow.referralFee(現状は常に0)に
+  // 加算する形で使う(下記の各resultsへの反映箇所参照。CSV側に将来値が入るようになっても
+  // 二重計上にはならず、両方の合計が使われる設計)。
+  const referralFeeMap = new Map<string, number>();
+  referralFees.forEach((r) => {
+    const key = `${r.targetMonth}_${r.staffNo}`;
+    referralFeeMap.set(key, (referralFeeMap.get(key) || 0) + (r.amount || 0));
   });
 
   // 請求書印刷データのマップ作成 キー: `${targetMonth}_${billingNo}`
@@ -243,6 +257,10 @@ export function calculateGrossProfit(
     }
 
     const retirementAmount = retirementMap.get(key) || 0;
+    // 紹介手数料 = CSV由来の値(現状は常に0) + 手入力(targetMonth_staffNo単位)。
+    // ★2026-09-19追加(はまさんの指摘)。retirementAmountと同じ組み立て方(取り込み元の値に
+    // 手入力分を加算するだけで、新しい計算ロジックではない)。
+    const referralFee = (billing.referralFee || 0) + (referralFeeMap.get(key) || 0);
     const invoicePrint = invoiceMap.get(`${billing.targetMonth}_${billing.billingNo}`);
     // 請求＠算出用の契約単価。請求書印刷CSV由来(未読込 or 未紐付けの場合はbilling.unitPriceに
     // フォールバックする。★2026-09-15追加: 四国の過去実績Excel(実績加工シートP列「請求単価」)は
@@ -398,7 +416,7 @@ export function calculateGrossProfit(
       billingAmountExTax,
       billingAmountIncTax,
       billingTransport: billing.billingTransport,
-      referralFee: billing.referralFee || 0,
+      referralFee,
       paymentAmount,
       socialInsurance,
       employmentInsurance,
@@ -436,6 +454,9 @@ export function calculateGrossProfit(
     const key = `${payroll.targetMonth}_${payroll.staffNo}`;
     if (!processedPayrollKeys.has(key)) {
       const retirementAmount = retirementMap.get(key) || 0;
+      // ★2026-09-19追加: 請求データが無い(給与のみ存在)行でも、紹介手数料の手入力は
+      // targetMonth_staffNo単位のため引き当て可能。retirementAmountと同じ扱い。
+      const referralFee = referralFeeMap.get(key) || 0;
       const totalCostExTax = payroll.paymentAmount + payroll.socialInsurance + payroll.parkingFee + retirementAmount;
 
       results.push({
@@ -449,7 +470,7 @@ export function calculateGrossProfit(
         billingAmountExTax: 0,
         billingAmountIncTax: 0,
         billingTransport: 0,
-        referralFee: 0,
+        referralFee,
         paymentAmount: payroll.paymentAmount,
         socialInsurance: payroll.socialInsurance,
         employmentInsurance: payroll.employmentInsurance,

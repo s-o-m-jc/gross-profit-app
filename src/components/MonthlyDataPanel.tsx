@@ -27,7 +27,8 @@ const CATEGORY_COLUMNS: {
     | 'leaveAllowanceRows'
     | 'nextMonthAdjustmentRows'
     | 'paidLeaveOverrideRows'
-    | 'personInChargeRows';
+    | 'personInChargeRows'
+    | 'referralFeeRows';
   label: string;
 }[] = [
   { key: 'payrollRows', label: '給与' },
@@ -42,6 +43,8 @@ const CATEGORY_COLUMNS: {
   { key: 'paidLeaveOverrideRows', label: '有給(手入力)' },
   // ★2026-09-11追加(23章タスクB「担当者」列復活): 担当者(手入力)。
   { key: 'personInChargeRows', label: '担当者(手入力)' },
+  // ★2026-09-19追加(はまさんの指摘): 紹介手数料(手入力)。
+  { key: 'referralFeeRows', label: '紹介手数料(手入力)' },
 ];
 
 const CountBadge: React.FC<{ count: number }> = ({ count }) =>
