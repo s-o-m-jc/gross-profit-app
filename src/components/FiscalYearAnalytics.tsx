@@ -221,50 +221,89 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
         </div>
         <div className="overflow-x-auto table-scroll">
           <table className="min-w-full text-left text-xs border-collapse whitespace-nowrap">
+            {/* ★2026-09-15変更(はまさんのご要望): 元Excel(「集計」シート)と同じ2段構成の
+                グループ見出しにした。「派遣売上 = 派遣 + 交通費(相手企業負担) + 休業分補償」
+                「給与総額 = 給与 + 休業手当」という関係が視覚的に分かるよう、合計値の列の直後に
+                その内訳列を隣接配置し、内訳列の上にcolSpanで結合した親見出し(売上内訳/給与内訳)を
+                付けている。グループに属さない列はrowSpan={2}で2段ぶち抜きにする。
+                列そのものの追加・削除はしておらず、並び順と見出しの段組みだけの変更。 */}
             <thead>
-              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                <th className="py-2 px-3">月</th>
-                <th className="py-2 px-3 text-right">スタッフ人数</th>
-                <th className="py-2 px-3 text-right">派遣売上</th>
-                <th className="py-2 px-3 text-right">紹介手数料</th>
-                <th className="py-2 px-3 text-right">総売上</th>
-                <th className="py-2 px-3 text-right">給与総額</th>
-                <th className="py-2 px-3 text-right">請求＠</th>
-                <th className="py-2 px-3 text-right">支払＠</th>
-                <th className="py-2 px-3 text-right">名目粗利率</th>
-                <th className="py-2 px-3 text-right">派遣</th>
-                <th className="py-2 px-3 text-right">交通費(相手企業負担)</th>
-                <th className="py-2 px-3 text-right">休業分補償</th>
+              <tr className="bg-slate-100 text-slate-700 font-bold">
+                <th className="py-2 px-3" rowSpan={2}>月</th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>スタッフ人数</th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>派遣売上</th>
+                <th
+                  className="py-1.5 px-3 text-center bg-emerald-50 border-l border-r border-emerald-200 text-emerald-800 font-extrabold"
+                  colSpan={3}
+                  title="派遣売上 = 派遣 + 交通費(相手企業負担) + 休業分補償"
+                >
+                  売上内訳
+                </th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>紹介手数料</th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>総売上</th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>給与総額</th>
+                <th
+                  className="py-1.5 px-3 text-center bg-amber-50 border-l border-r border-amber-200 text-amber-800 font-extrabold"
+                  colSpan={2}
+                  title="給与総額 = 給与 + 休業手当"
+                >
+                  給与内訳
+                </th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>請求＠</th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>支払＠</th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>名目粗利率</th>
                 {/* ★2026-09-16追加(はまさんの指摘・「集計」シートヘッダー行との突合): 「交通費(税抜)」列。
                     はまさんが元Excelのセルを直接確認した結果、数式ではなく手入力の固定値であり、
                     このアプリが持つどのデータからも導出できない外部データと判明した(値が交通費
                     (自社負担)と一致する月としない月がある理由もこれで説明がつく)。データの出所が
                     判明するまでは、誤った値を計算して表示するよりも「不明」と明示する方が安全なため、
                     列自体は「集計」シートとの項目一致のため用意しつつ、値は表示しない。 */}
-                <th className="py-2 px-3 text-right" title="元Excelでは手入力の固定値(このアプリのデータからは導出不可)。データの出所判明まで「不明」表示にしています">
+                <th
+                  className="py-2 px-3 text-right"
+                  rowSpan={2}
+                  title="元Excelでは手入力の固定値(このアプリのデータからは導出不可)。データの出所判明まで「不明」表示にしています"
+                >
                   交通費(税抜) <span className="text-amber-500">ⓘ</span>
                 </th>
-                <th className="py-2 px-3 text-right">給与</th>
-                <th className="py-2 px-3 text-right">休業手当</th>
-                <th className="py-2 px-3 text-right" title="参考値(給与CSV由来)。右の「社保」列に既に含まれているため、「社保他」の合計には加算していません">
+                <th
+                  className="py-2 px-3 text-right"
+                  rowSpan={2}
+                  title="参考値(給与CSV由来)。右の「社保」列に既に含まれているため、「社保他」の合計には加算していません"
+                >
                   雇用保険 <span className="text-slate-400">ⓘ</span>
                 </th>
-                <th className="py-2 px-3 text-right" title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">社保</th>
-                <th className="py-2 px-3 text-right">交通費(自社負担)</th>
-                <th className="py-2 px-3 text-right" title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代">社保他</th>
-                <th className="py-2 px-3 text-right">有給金額</th>
-                <th className="py-2 px-3 text-right bg-indigo-50/50">実質粗利益</th>
-                <th className="py-2 px-3 text-right bg-indigo-50/50">実質粗利率</th>
-                <th className="py-2 px-3 text-right">有給(日)</th>
-                <th className="py-2 px-3 text-right">1人当たり有給日数</th>
+                <th className="py-2 px-3 text-right" rowSpan={2} title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">
+                  社保
+                </th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>交通費(自社負担)</th>
+                <th className="py-2 px-3 text-right" rowSpan={2} title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代">
+                  社保他
+                </th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>有給金額</th>
+                <th className="py-2 px-3 text-right bg-indigo-50/50" rowSpan={2}>実質粗利益</th>
+                <th className="py-2 px-3 text-right bg-indigo-50/50" rowSpan={2}>実質粗利率</th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>有給(日)</th>
+                <th className="py-2 px-3 text-right" rowSpan={2}>1人当たり有給日数</th>
                 {/* ★2026-09-15追加(はまさんの指摘): 退職金配賦(RetirementPanel手入力)は「集計」
                     シートには無い列だが、大阪の給与シートに列が無いこととは無関係に拠点を問わず
                     入力されうる項目のため、grossProfitの原価に含まれる以上は「社保他」に畳み込まず
                     独立列として表示する(拠点別の入力状況が見えるように)。★2026-09-16: 「集計」
                     シートの項目一覧には無いため、末尾に追加項目として配置する。 */}
-                <th className="py-2 px-3 text-right bg-slate-50" title="「集計」シートには無い列。RetirementPanelでの手入力(拠点共通)を独立表示">
+                <th
+                  className="py-2 px-3 text-right bg-slate-50"
+                  rowSpan={2}
+                  title="「集計」シートには無い列。RetirementPanelでの手入力(拠点共通)を独立表示"
+                >
                   退職金配賦 <span className="text-slate-400">(追加項目)</span>
                 </th>
+              </tr>
+              {/* 2段目: グループ(売上内訳・給与内訳)に属する個別の列名のみ */}
+              <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                <th className="py-2 px-3 text-right bg-emerald-50/60 border-l border-emerald-200">派遣</th>
+                <th className="py-2 px-3 text-right bg-emerald-50/60">交通費(相手企業負担)</th>
+                <th className="py-2 px-3 text-right bg-emerald-50/60 border-r border-emerald-200">休業分補償</th>
+                <th className="py-2 px-3 text-right bg-amber-50/60 border-l border-amber-200">給与</th>
+                <th className="py-2 px-3 text-right bg-amber-50/60 border-r border-amber-200">休業手当</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -273,20 +312,30 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   <td className="py-2 px-3 font-semibold text-slate-600">{m.month}</td>
                   <td className="py-2 px-3 text-right font-mono">{m.staffCount}名</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.dispatchSales.toLocaleString()}</td>
+                  {/* 売上内訳 (派遣売上の内訳。ヘッダーのグループ見出し参照) */}
+                  <td className="py-2 px-3 text-right font-mono bg-emerald-50/30 border-l border-emerald-200">
+                    ¥{m.dispatch.toLocaleString()}
+                  </td>
+                  <td className="py-2 px-3 text-right font-mono bg-emerald-50/30">¥{m.transportBilling.toLocaleString()}</td>
+                  <td className="py-2 px-3 text-right font-mono bg-emerald-50/30 border-r border-emerald-200">
+                    ¥{m.leaveCompensation.toLocaleString()}
+                  </td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.referralSales.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono font-bold">¥{m.totalSales.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.totalSalary.toLocaleString()}</td>
+                  {/* 給与内訳 (給与総額の内訳。ヘッダーのグループ見出し参照) */}
+                  <td className="py-2 px-3 text-right font-mono bg-amber-50/30 border-l border-amber-200">
+                    ¥{m.salary.toLocaleString()}
+                  </td>
+                  <td className="py-2 px-3 text-right font-mono bg-amber-50/30 border-r border-amber-200">
+                    ¥{m.leaveAllowance.toLocaleString()}
+                  </td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.billingUnitPriceSum.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.payUnitPriceSum.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">
                     {m.nominalGrossMarginRateDataAvailable ? `${m.nominalGrossMarginRate}%` : 'データなし'}
                   </td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.dispatch.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.transportBilling.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.leaveCompensation.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono text-slate-300">不明</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.salary.toLocaleString()}</td>
-                  <td className="py-2 px-3 text-right font-mono">¥{m.leaveAllowance.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.employmentInsurance.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.socialInsurance.toLocaleString()}</td>
                   <td className="py-2 px-3 text-right font-mono">¥{m.transportSalary.toLocaleString()}</td>
