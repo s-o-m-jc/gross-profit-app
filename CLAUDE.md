@@ -42,6 +42,7 @@ Claude Code(ローカル・クラウド問わず)は、このファイルを毎�
      - **この解除作業(Vercelダッシュボード Settings → Git → Disconnect)は、ローカルのClaude Code(このセッション)からは実行できなかった**。理由: (a) この環境に`vercel` CLIが未インストール、Vercel APIトークンも未設定で、Vercelダッシュボードを操作する手段が無い、(b) `gh api repos/s-o-m-jc/gross-profit-app/hooks`等でGitHub側のWebhook/連携状態を確認しようとしたが、`gh`の認証トークン(`hamayannn`・`s-o-m-jc`どちらも)に`admin:repo_hook`スコープが無く、GitHub App認可済みトークンでもないため403/404で失敗する。そのため、**はまさんご自身がVercelダッシュボードで手動で連携解除を行う必要がある**。
      - 確認方法(はまさんが解除作業を行った後、Claude Codeが検証可能): 次回push後に`gh api repos/s-o-m-jc/gross-profit-app/deployments --jq '.[].environment' | sort -u`を実行し、`Production – gross-profit-app-oqpi`のみが表示され、`Production – gross-profit-app`(-oqpi無し)が増えていないことを確認する。
      - 今後同様の混乱を避けるため、Vercel関連の連携状況を変更した場合は、この節に追記すること。
+     - **2026-09-19追記: はまさんがVercelダッシュボードで連携解除を完了**。`gross-profit-app`(-oqpi無し)のSettings → Git → Disconnectを実施済み。`gross-profit-app-oqpi`側のGit連携・本番URL表示に影響が無いことも、はまさんご自身が目視確認済み。この直後のcommitをpushし、`gh api repos/.../deployments`の`environment`一覧が`gross-profit-app-oqpi`のみになったことをClaude Codeが検証する(検証結果は本ファイルでなく、その時点のはまさんとの会話に記録)。
 
 ## 関連ドキュメント
 
