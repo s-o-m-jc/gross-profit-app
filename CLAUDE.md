@@ -29,8 +29,13 @@ Claude Code(ローカル・クラウド問わず)は、このファイルを毎�
 
 ## 本番環境のURL (★重要・毎回確認しない)
 
-- 最新の本番デプロイURL(2026-09-15時点、GitHub Deployments APIで確認・最新コミットe49ac6fと一致): https://gross-profit-itpztjt95-s-o-m-jc.vercel.app
-  - 注意: このURLはVercelの「そのデプロイ固有のURL」形式(末尾にランダムな文字列が付く)。新しいデプロイのたびに変わる可能性があるため、常に最新のURLを使いたい場合はVercelダッシュボード(https://vercel.com/dashboard)の「Domains」タブでハッシュの付かない固定URLを確認すること。
+- **常に使うべき本番URL(固定・ハッシュ無し)**: https://gross-profit-app-oqpi.vercel.app
+  - このURLは毎回変わらない(Vercelプロジェクトのデフォルトドメイン)。新しいコミットをpushすれば、Vercelの自動デプロイによりこのURLの中身が自動的に最新化される。**はまさんに共有する際は必ずこのURLを使うこと**。
+
+- **★重要・要注意(2026-09-15判明、はまさん報告「本番URLを開いても何も表示されない」の調査結果)**:
+  1. **GitHub Deployments API(`gh api repos/.../deployments/{id}/statuses`)が返す`environment_url`は、Vercelの「そのデプロイ固有のURL」(末尾にランダムな文字列、例: `https://gross-profit-app-oqpi-mimdm9uy2-s-o-m-jc.vercel.app`)であり、これは常にVercelの認証(SSO)保護がかかっていて、`s-o-m-jc`のVercelアカウントにログインしていない状態でアクセスすると`vercel.com/sso-api`へのリダイレクトになり、はまさんには「何も表示されない」ように見える。**ビルド失敗でも環境変数の設定漏れでもなく、単にこのURL形式自体がはまさんには開けない設計だった**(curlで確認済み: HTTP 302 → `Location: https://vercel.com/sso-api?...`)。今後、`gh api`のdeployments経由で取得した`environment_url`を、ハッシュ付きのまま**はまさんに直接共有しないこと**。ビルドが成功しているかどうかの確認(`state: "success"`か)には使ってよいが、共有用URLとしては上記の固定ドメインを使うこと。
+  2. **`https://gross-profit-app.vercel.app`(末尾に`-oqpi`が付かない別名)は、このリポジトリとは無関係な全くの別プロジェクト**(「販売・工事 粗利表 管理システム」という別アプリ、Firebase/EmailJS/PDF生成ライブラリを使用。中身を確認して判明)。名前が似ているため混同しやすいが、**絶対にこちらのURLをこのアプリの本番URLとして案内しないこと**。
+  3. GitHub上のこのリポジトリには、同時に2つのVercelプロジェクト(`gross-profit-app`と`gross-profit-app-oqpi`)が連携されており、push毎に両方へデプロイが走る(`gh api repos/.../deployments`の`environment`フィールドで確認可能)。上記2点の混同はここに起因する。`gross-profit-app-oqpi`側(固定ドメイン`gross-profit-app-oqpi.vercel.app`)が実際に使われている本番プロジェクトで、こちらを正としてよい(2026-09-15、直近ビルドのJS/CSSアセットのハッシュ値がローカルの`npm run build`出力と一致することを確認済み)。
 
 ## 関連ドキュメント
 

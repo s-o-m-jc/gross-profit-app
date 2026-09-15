@@ -29,12 +29,6 @@ import {
   PersonInChargeRow,
 } from '../types';
 import { CompanyId, COMPANIES } from '../config/companies';
-import {
-  getSamplePayrollData,
-  getSampleBillingData,
-  getSampleInvoicePrintData,
-  getSampleRetirementData,
-} from './sampleData';
 
 export interface MonthlyDataState {
   payrollRows: PayrollRow[];
@@ -271,15 +265,7 @@ export function migrateLegacyInvoiceBucket(app: AppMonthlyData): AppMonthlyData 
   return next;
 }
 
-/**
- * サンプルデータ(四国人材の2026-04〜06分)を、月ごとにグルーピングして
- * 指定した会社の月別データにマージする(初回起動時 or 「サンプルデータ読込」ボタン用)。
- */
-export function mergeSampleDataIntoCompanyMonths(companyMonths: CompanyMonthlyData): CompanyMonthlyData {
-  let next = companyMonths;
-  next = mergeGroupedRowsIntoCompanyMonths(next, 'payrollRows', groupByTargetMonth(getSamplePayrollData()));
-  next = mergeGroupedRowsIntoCompanyMonths(next, 'billingRows', groupByTargetMonth(getSampleBillingData()));
-  next = mergeGroupedRowsIntoCompanyMonths(next, 'retirementRows', groupByTargetMonth(getSampleRetirementData()));
-  next = mergeGroupedRowsIntoCompanyMonths(next, 'invoiceRows', groupByTargetMonth(getSampleInvoicePrintData()));
-  return next;
-}
+// ★2026-09-19削除(はまさんの指摘「サンプルデータを読み込む運用は今後一切行わない」):
+// 以前ここにあったmergeSampleDataIntoCompanyMonths()(サンプルデータをグルーピングして
+// 会社の月別データにマージする関数、初回オンボーディング処理・「サンプルデータ読込」ボタンの
+// 両方から呼ばれていた)を撤去した。呼び出し元が両方とも先に削除済みのため撤去可能と判断。

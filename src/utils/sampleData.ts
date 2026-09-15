@@ -1,14 +1,19 @@
 /**
  * 派遣事業 粗利・経理管理システム
- * テスト用データ生成器
+ * CSVひな形(テンプレート)定義
+ *
+ * ★2026-09-19修正(はまさんの指摘「サンプルデータを読み込む運用は今後一切行わない」):
+ * 以前はこのファイルに「アプリの初期表示用にダミーデータを一括投入する」ための関数
+ * (getSamplePayrollData/getSampleBillingData/getSampleInvoicePrintData/
+ * getSampleRetirementData)もあったが、その運用自体(初回オンボーディング処理・
+ * ヘッダーの「サンプルデータ読込」ボタン、いずれも撤去済み)ごと廃止したため削除した。
+ * 以下のCSV文字列定数(SAMPLE_PAYROLL_CSV等)は、CsvUploader.tsxの「ひな形CSVダウンロード」
+ * ボタン(アップロードすべきCSVの列構成の見本を示すためだけの、別の機能)から今も参照されて
+ * いるため残している。
  *
  * 2026-08-20: 実データ検証結果(要件整理ドキュメント11章)に合わせ、列構成を
  * 実際のスタッフナビ出力(未払計上表・請求支払一覧表印刷CSV)準拠に更新。
- * 高橋裕樹(S1003)の2026-04データで20日締重複行の統合デモ、
- * 社保負担額のわずかな差異(SOCIAL_INSURANCE_MISMATCH検算アラート)のデモを含む。
  */
-
-import { PayrollRow, BillingRow, InvoicePrintRow, RetirementRow } from '../types';
 
 // 「時間内」(金額)・「時間内時間」(H:MM形式の時間)は支払＠算出用の実列。
 // 実データのCSVは時間外・深夜内等の割増区分も含む多数の列を持つが、ひな形としては最小限のみ記載。
@@ -60,86 +65,3 @@ B202605-004,2026-05-31,2026-06-30,印刷済,送付済,2500
 B202606-001,2026-06-30,2026-07-31,未印刷,未送付,2619
 B202606-002,2026-06-30,2026-07-31,未印刷,未送付,2405
 B202606-003,2026-06-30,2026-07-31,未印刷,未送付,3024`;
-
-export function getSamplePayrollData(): PayrollRow[] {
-  // regularAmount(時間内)・regularHours(時間内時間)は支払＠算出用のデモ値。
-  // 実データでは"164:30"のようなH:MM形式だが、ここではパース後の10進数値を直接指定している。
-  // ★2026-08-27追加: staffCategory(スタッフ区分)・paidLeaveRemainingDays(有給残日数)は
-  // 22章タスク2(離職率・有給残日数アラート)のデモ用に追加した値。S1006は2026-04のみ在籍する
-  // (5月以降データが無い)ことで離職のデモになる。S1003は有給残日数を閾値超え(15日)にしてある。
-  return [
-    { targetMonth: '2026-04', staffNo: 'S1001', staffName: '佐藤 健太', paymentAmount: 280000, socialInsurance: 42000, employmentInsurance: 2800, parkingFee: 5000, salaryTransport: 15000, paidLeaveAllowance: 8000, paidLeaveDays: 1, regularAmount: 252000, regularHours: 160, payDate: '2026-05-15', remarks: '製造派遣Aライン', staffCategory: '稼働中', paidLeaveRemainingDays: 9 },
-    { targetMonth: '2026-04', staffNo: 'S1002', staffName: '鈴木 美咲', paymentAmount: 250000, socialInsurance: 37500, employmentInsurance: 2500, parkingFee: 0, salaryTransport: 12000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 225000, regularHours: 150, payDate: '2026-05-15', remarks: '事務派遣', staffCategory: '稼働中', paidLeaveRemainingDays: 5 },
-    { targetMonth: '2026-04', staffNo: 'S1003', staffName: '高橋 裕樹', paymentAmount: 320000, socialInsurance: 48000, employmentInsurance: 3200, parkingFee: 8000, salaryTransport: 18000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 288000, regularHours: 160, payDate: '2026-05-15', remarks: 'エンジニア派遣', staffCategory: '稼働中', paidLeaveRemainingDays: 14 },
-    { targetMonth: '2026-04', staffNo: 'S1004', staffName: '田中 太郎', paymentAmount: 290000, socialInsurance: 43500, employmentInsurance: 2900, parkingFee: 0, salaryTransport: 10000, paidLeaveAllowance: 6000, paidLeaveDays: 1, regularAmount: 261000, regularHours: 160, payDate: '2026-05-15', remarks: 'コールセンター', staffCategory: '稼働中', paidLeaveRemainingDays: 7 },
-    { targetMonth: '2026-04', staffNo: 'S1005', staffName: '渡辺 順子', paymentAmount: 210000, socialInsurance: 31500, employmentInsurance: 2100, parkingFee: 0, salaryTransport: 8000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 189000, regularHours: 140, payDate: '2026-05-15', remarks: '軽作業 (低粗利検証)', staffCategory: '稼働中', paidLeaveRemainingDays: 3 },
-    { targetMonth: '2026-04', staffNo: 'S1006', staffName: '伊藤 誠', paymentAmount: 260000, socialInsurance: 39000, employmentInsurance: 2600, parkingFee: 0, salaryTransport: 14000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 234000, regularHours: 150, payDate: '2026-05-15', remarks: '給料のみ存在データ (請求漏れ検証・離職デモ: 5月以降データなし)', staffCategory: '稼働中', paidLeaveRemainingDays: 2 },
-    { targetMonth: '2026-05', staffNo: 'S1001', staffName: '佐藤 健太', paymentAmount: 285000, socialInsurance: 42750, employmentInsurance: 2850, parkingFee: 5000, salaryTransport: 15000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 256500, regularHours: 160, payDate: '2026-06-15', remarks: '製造派遣Aライン', staffCategory: '稼働中', paidLeaveRemainingDays: 10 },
-    { targetMonth: '2026-05', staffNo: 'S1002', staffName: '鈴木 美咲', paymentAmount: 255000, socialInsurance: 38250, employmentInsurance: 2550, parkingFee: 0, salaryTransport: 12000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 229500, regularHours: 150, payDate: '2026-06-15', remarks: '事務派遣', staffCategory: '稼働中', paidLeaveRemainingDays: 5 },
-    { targetMonth: '2026-05', staffNo: 'S1003', staffName: '高橋 裕樹', paymentAmount: 330000, socialInsurance: 49500, employmentInsurance: 3300, parkingFee: 8000, salaryTransport: 18000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 297000, regularHours: 160, payDate: '2026-06-15', remarks: 'エンジニア派遣', staffCategory: '稼働中', paidLeaveRemainingDays: 14 },
-    { targetMonth: '2026-05', staffNo: 'S1004', staffName: '田中 太郎', paymentAmount: 295000, socialInsurance: 44250, employmentInsurance: 2950, parkingFee: 0, salaryTransport: 10000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 265500, regularHours: 160, payDate: '2026-06-15', remarks: 'コールセンター', staffCategory: '稼働中', paidLeaveRemainingDays: 7 },
-    { targetMonth: '2026-06', staffNo: 'S1001', staffName: '佐藤 健太', paymentAmount: 290000, socialInsurance: 43500, employmentInsurance: 2900, parkingFee: 5000, salaryTransport: 15000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 261000, regularHours: 160, payDate: '2026-07-15', remarks: '製造派遣Aライン', staffCategory: '稼働中', paidLeaveRemainingDays: 12 },
-    { targetMonth: '2026-06', staffNo: 'S1002', staffName: '鈴木 美咲', paymentAmount: 260000, socialInsurance: 39000, employmentInsurance: 2600, parkingFee: 0, salaryTransport: 12000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 234000, regularHours: 150, payDate: '2026-07-15', remarks: '事務派遣', staffCategory: '稼働中', paidLeaveRemainingDays: 5 },
-    { targetMonth: '2026-06', staffNo: 'S1003', staffName: '高橋 裕樹', paymentAmount: 325000, socialInsurance: 48750, employmentInsurance: 3250, parkingFee: 8000, salaryTransport: 18000, paidLeaveAllowance: 0, paidLeaveDays: 0, regularAmount: 292500, regularHours: 160, payDate: '2026-07-15', remarks: 'エンジニア派遣', staffCategory: '稼働中', paidLeaveRemainingDays: 15 },
-  ];
-}
-
-export function getSampleBillingData(): BillingRow[] {
-  return [
-    { billingNo: 'B202604-001', targetMonth: '2026-04', staffNo: 'S1001', staffName: '佐藤 健太', clientCode: 'C101', clientName: 'トヨタ自動車九州', orderNo: 'O-1001-0401', orderName: 'トヨタ自動車九州・製造ライン(佐藤)', billingAmountExTax: 420000, paymentAmount: 280000, socialInsuranceBilling: 44800, paidLeaveDaysUsed: 1, billingTransport: 10000, referralFee: 0, workHours: 160, unitPrice: 2625 },
-    { billingNo: 'B202604-002', targetMonth: '2026-04', staffNo: 'S1002', staffName: '鈴木 美咲', clientCode: 'C102', clientName: 'ソニーセミコンダクタ', orderNo: 'O-1002-0401', orderName: 'ソニーセミコンダクタ・事務(鈴木)', billingAmountExTax: 360000, paymentAmount: 250000, socialInsuranceBilling: 40000, paidLeaveDaysUsed: 0, billingTransport: 12000, referralFee: 0, workHours: 150, unitPrice: 2400 },
-    // 20日締重複行のデモ: 同一請求No・スタッフ・クライアント・受注名称だが受注番号違いで2行に分かれるケース
-    { billingNo: 'B202604-003', targetMonth: '2026-04', staffNo: 'S1003', staffName: '高橋 裕樹', clientCode: 'C103', clientName: '安川電機', orderNo: 'O-1003-0401', orderName: '安川電機・エンジニア(高橋)前半', billingAmountExTax: 86180, paymentAmount: 0, socialInsuranceBilling: 0, paidLeaveDaysUsed: 0, billingTransport: 0, referralFee: 0, workHours: 0, unitPrice: 3000 },
-    // 社保負担額に労災保険相当が上乗せされているデモ(給与CSV合計48000+3200=51200に対し52400。SOCIAL_INSURANCE_MISMATCHアラートが発火する)
-    { billingNo: 'B202604-003', targetMonth: '2026-04', staffNo: 'S1003', staffName: '高橋 裕樹', clientCode: 'C103', clientName: '安川電機', orderNo: 'O-1003-0402', orderName: '安川電機・エンジニア(高橋)前半', billingAmountExTax: 393820, paymentAmount: 320000, socialInsuranceBilling: 52400, paidLeaveDaysUsed: 0, billingTransport: 18000, referralFee: 0, workHours: 160, unitPrice: 3000 },
-    { billingNo: 'B202604-004', targetMonth: '2026-04', staffNo: 'S1004', staffName: '田中 太郎', clientCode: 'C104', clientName: '九電工', orderNo: 'O-1004-0401', orderName: '九電工・コールセンター(田中)', billingAmountExTax: 400000, paymentAmount: 290000, socialInsuranceBilling: 46400, paidLeaveDaysUsed: 1, billingTransport: 15000, referralFee: 0, workHours: 160, unitPrice: 2500 },
-    { billingNo: 'B202604-005', targetMonth: '2026-04', staffNo: 'S1005', staffName: '渡辺 順子', clientCode: 'C105', clientName: '福岡流通倉庫', orderNo: 'O-1005-0401', orderName: '福岡流通倉庫・軽作業(渡辺)', billingAmountExTax: 260000, paymentAmount: 210000, socialInsuranceBilling: 33600, paidLeaveDaysUsed: 0, billingTransport: 8000, referralFee: 0, workHours: 140, unitPrice: 1857 },
-    { billingNo: 'B202604-007', targetMonth: '2026-04', staffNo: 'S1099', staffName: '未登録スタッフ', clientCode: 'C106', clientName: '西日本鉄道', orderNo: 'O-1099-0401', orderName: '西日本鉄道・臨時(未登録)', billingAmountExTax: 300000, paymentAmount: 0, socialInsuranceBilling: 0, paidLeaveDaysUsed: 0, billingTransport: 5000, referralFee: 150000, workHours: 120, unitPrice: 2500 },
-    { billingNo: 'B202605-001', targetMonth: '2026-05', staffNo: 'S1001', staffName: '佐藤 健太', clientCode: 'C101', clientName: 'トヨタ自動車九州', orderNo: 'O-1001-0501', orderName: 'トヨタ自動車九州・製造ライン(佐藤)', billingAmountExTax: 430000, paymentAmount: 285000, socialInsuranceBilling: 45600, paidLeaveDaysUsed: 0, billingTransport: 15000, referralFee: 0, workHours: 164, unitPrice: 2622 },
-    { billingNo: 'B202605-002', targetMonth: '2026-05', staffNo: 'S1002', staffName: '鈴木 美咲', clientCode: 'C102', clientName: 'ソニーセミコンダクタ', orderNo: 'O-1002-0501', orderName: 'ソニーセミコンダクタ・事務(鈴木)', billingAmountExTax: 370000, paymentAmount: 255000, socialInsuranceBilling: 40800, paidLeaveDaysUsed: 0, billingTransport: 12000, referralFee: 0, workHours: 154, unitPrice: 2402 },
-    { billingNo: 'B202605-003', targetMonth: '2026-05', staffNo: 'S1003', staffName: '高橋 裕樹', clientCode: 'C103', clientName: '安川電機', orderNo: 'O-1003-0501', orderName: '安川電機・エンジニア(高橋)', billingAmountExTax: 500000, paymentAmount: 330000, socialInsuranceBilling: 52800, paidLeaveDaysUsed: 0, billingTransport: 18000, referralFee: 0, workHours: 166, unitPrice: 3012 },
-    { billingNo: 'B202605-004', targetMonth: '2026-05', staffNo: 'S1004', staffName: '田中 太郎', clientCode: 'C104', clientName: '九電工', orderNo: 'O-1004-0501', orderName: '九電工・コールセンター(田中)', billingAmountExTax: 410000, paymentAmount: 295000, socialInsuranceBilling: 47200, paidLeaveDaysUsed: 0, billingTransport: 10000, referralFee: 0, workHours: 164, unitPrice: 2500 },
-    { billingNo: 'B202606-001', targetMonth: '2026-06', staffNo: 'S1001', staffName: '佐藤 健太', clientCode: 'C101', clientName: 'トヨタ自動車九州', orderNo: 'O-1001-0601', orderName: 'トヨタ自動車九州・製造ライン(佐藤)', billingAmountExTax: 440000, paymentAmount: 290000, socialInsuranceBilling: 46400, paidLeaveDaysUsed: 0, billingTransport: 15000, referralFee: 0, workHours: 168, unitPrice: 2619 },
-    { billingNo: 'B202606-002', targetMonth: '2026-06', staffNo: 'S1002', staffName: '鈴木 美咲', clientCode: 'C102', clientName: 'ソニーセミコンダクタ', orderNo: 'O-1002-0601', orderName: 'ソニーセミコンダクタ・事務(鈴木)', billingAmountExTax: 380000, paymentAmount: 260000, socialInsuranceBilling: 41600, paidLeaveDaysUsed: 0, billingTransport: 12000, referralFee: 0, workHours: 158, unitPrice: 2405 },
-    { billingNo: 'B202606-003', targetMonth: '2026-06', staffNo: 'S1003', staffName: '高橋 裕樹', clientCode: 'C103', clientName: '安川電機', orderNo: 'O-1003-0601', orderName: '安川電機・エンジニア(高橋)', billingAmountExTax: 490000, paymentAmount: 325000, socialInsuranceBilling: 52000, paidLeaveDaysUsed: 0, billingTransport: 18000, referralFee: 0, workHours: 162, unitPrice: 3024 },
-  ];
-}
-
-export function getSampleInvoicePrintData(): InvoicePrintRow[] {
-  // unitPrice(時間内−単価)はgetSampleBillingData()の同一billingNoの値と揃えている(デモ用の整合性のため)。
-  // 実データでは請求支払一覧CSVに単価列が無く、この請求書印刷CSV側にのみ単価が存在する点に注意。
-  // targetMonthは対応するbillingNoの対象月と揃えている(実データではファイル名から取得。11-2章参照)。
-  return [
-    { billingNo: 'B202604-001', targetMonth: '2026-04', invoiceIssueDate: '2026-04-30', paymentDueDate: '2026-05-31', printStatus: '印刷済', sentStatus: '送付済', unitPrice: 2625 },
-    { billingNo: 'B202604-002', targetMonth: '2026-04', invoiceIssueDate: '2026-04-30', paymentDueDate: '2026-05-31', printStatus: '印刷済', sentStatus: '送付済', unitPrice: 2400 },
-    { billingNo: 'B202604-003', targetMonth: '2026-04', invoiceIssueDate: '2026-04-30', paymentDueDate: '2026-05-31', printStatus: '未印刷', sentStatus: '未送付', unitPrice: 3000 },
-    { billingNo: 'B202604-004', targetMonth: '2026-04', invoiceIssueDate: '2026-04-30', paymentDueDate: '2026-05-31', printStatus: '印刷済', sentStatus: '送付済', unitPrice: 2500 },
-    { billingNo: 'B202604-005', targetMonth: '2026-04', invoiceIssueDate: '2026-04-30', paymentDueDate: '2026-05-31', printStatus: '印刷済', sentStatus: '未送付', unitPrice: 1857 },
-    { billingNo: 'B202604-007', targetMonth: '2026-04', invoiceIssueDate: '2026-04-30', paymentDueDate: '2026-05-31', printStatus: '印刷済', sentStatus: '送付済', unitPrice: 2500 },
-    { billingNo: 'B202605-001', targetMonth: '2026-05', invoiceIssueDate: '2026-05-31', paymentDueDate: '2026-06-30', printStatus: '印刷済', sentStatus: '送付済', unitPrice: 2622 },
-    { billingNo: 'B202605-002', targetMonth: '2026-05', invoiceIssueDate: '2026-05-31', paymentDueDate: '2026-06-30', printStatus: '印刷済', sentStatus: '送付済', unitPrice: 2402 },
-    { billingNo: 'B202605-003', targetMonth: '2026-05', invoiceIssueDate: '2026-05-31', paymentDueDate: '2026-06-30', printStatus: '印刷済', sentStatus: '送付済', unitPrice: 3012 },
-    { billingNo: 'B202605-004', targetMonth: '2026-05', invoiceIssueDate: '2026-05-31', paymentDueDate: '2026-06-30', printStatus: '印刷済', sentStatus: '送付済', unitPrice: 2500 },
-    { billingNo: 'B202606-001', targetMonth: '2026-06', invoiceIssueDate: '2026-06-30', paymentDueDate: '2026-07-31', printStatus: '未印刷', sentStatus: '未送付', unitPrice: 2619 },
-    { billingNo: 'B202606-002', targetMonth: '2026-06', invoiceIssueDate: '2026-06-30', paymentDueDate: '2026-07-31', printStatus: '未印刷', sentStatus: '未送付', unitPrice: 2405 },
-    { billingNo: 'B202606-003', targetMonth: '2026-06', invoiceIssueDate: '2026-06-30', paymentDueDate: '2026-07-31', printStatus: '未印刷', sentStatus: '未送付', unitPrice: 3024 },
-  ];
-}
-
-// ★2026-08-26: 退職金はCSV取込から手入力方式に変更したため、サンプル行にも一意なidを付与する。
-export function getSampleRetirementData(): RetirementRow[] {
-  return [
-    { id: 'SAMPLE_RET_202604_S1001', targetMonth: '2026-04', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202604_S1002', targetMonth: '2026-04', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202604_S1003', targetMonth: '2026-04', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202604_S1004', targetMonth: '2026-04', staffNo: 'S1004', retirementAmount: 11000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202604_S1005', targetMonth: '2026-04', staffNo: 'S1005', retirementAmount: 8000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202605_S1001', targetMonth: '2026-05', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202605_S1002', targetMonth: '2026-05', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202605_S1003', targetMonth: '2026-05', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202605_S1004', targetMonth: '2026-05', staffNo: 'S1004', retirementAmount: 11000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202606_S1001', targetMonth: '2026-06', staffNo: 'S1001', retirementAmount: 12000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202606_S1002', targetMonth: '2026-06', staffNo: 'S1002', retirementAmount: 10000, memo: '毎月定額積立配賦' },
-    { id: 'SAMPLE_RET_202606_S1003', targetMonth: '2026-06', staffNo: 'S1003', retirementAmount: 15000, memo: '毎月定額積立配賦' },
-  ];
-}
