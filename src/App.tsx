@@ -53,7 +53,6 @@ import {
   initialAppMonthlyData,
   flattenCompanyMonths,
   mergeGroupedRowsIntoCompanyMonths,
-  mergeSampleDataIntoCompanyMonths,
   clearCompanyMonths,
   groupByTargetMonth,
   hasAnyData,
@@ -319,15 +318,11 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         prevMonthlyDataRef.current = remote;
         setIsOffline(false);
         setSyncError(null);
-        // 管理者かつ本当にデータが1件も無い(初回利用)場合のみ、四国人材へサンプルデータを
-        // 自動投入する(従来のIndexedDB単体運用時の挙動を踏襲した初回オンボーディング用)。
-        if (canEdit && !hasAnyData(remote) && allowedCompanyIds.includes(DEFAULT_COMPANY_ID)) {
-          const withSample = {
-            ...remote,
-            [DEFAULT_COMPANY_ID]: mergeSampleDataIntoCompanyMonths(remote[DEFAULT_COMPANY_ID]),
-          };
-          setMonthlyData(withSample);
-        }
+        // ★2026-09-19削除(はまさんの指摘「サンプルデータを読み込む運用は今後一切行わない」):
+        // 以前はここで、管理者かつ本当にデータが1件も無い(初回利用)場合のみ四国人材へ
+        // サンプルデータを自動投入していた(従来のIndexedDB単体運用時の挙動を踏襲した初回
+        // オンボーディング用)。この方針転換に伴い撤去。データベースが空の状態でアプリを
+        // 開いた場合は、単純にデータ無しの空の画面になる。
         // ローカルキャッシュも最新化しておく(次回オフライン時のフォールバック用)
         await saveAppState({ monthlyData: remote, selectedCompanyId });
       } catch (e) {
