@@ -478,13 +478,6 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   const handleRemovePersonInCharge = (row: PersonInChargeRow) =>
     handleRemoveManualEntry('personInChargeRows', row.targetMonth, row.id);
 
-  const handleLoadSampleData = () => {
-    setMonthlyData((prev) => ({
-      ...prev,
-      [selectedCompanyId]: mergeSampleDataIntoCompanyMonths(prev[selectedCompanyId]),
-    }));
-  };
-
   const handleClearAll = () => {
     if (
       !window.confirm(
@@ -583,7 +576,6 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         fiscalYear={fiscalYear}
         onFiscalYearChange={setFiscalYear}
         fiscalYearOptions={fiscalYearOptions}
-        onLoadSampleData={handleLoadSampleData}
         onOpenMCodeGuide={() => setIsMCodeGuideOpen(true)}
         alertCount={fiscalSummary.alertCount}
         totalBillingCount={calculatedResults.length}

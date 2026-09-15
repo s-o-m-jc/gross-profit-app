@@ -9,7 +9,6 @@ import {
   FileSpreadsheet,
   Settings,
   HelpCircle,
-  RefreshCw,
   CheckCircle2,
   AlertTriangle,
   Building2,
@@ -33,11 +32,9 @@ interface HeaderProps {
   fiscalYear: string;
   onFiscalYearChange: (fy: string) => void;
   fiscalYearOptions: { value: string; label: string }[];
-  onLoadSampleData: () => void;
   onOpenMCodeGuide: () => void;
   alertCount: number;
   totalBillingCount: number;
-  /** adminのみtrue。falseの場合はデータ変更系ボタン(サンプルデータ読込)を無効化する */
   canEdit: boolean;
   userEmail: string | null;
   userRole: UserRole;
@@ -55,7 +52,6 @@ export const Header: React.FC<HeaderProps> = ({
   fiscalYear,
   onFiscalYearChange,
   fiscalYearOptions,
-  onLoadSampleData,
   onOpenMCodeGuide,
   alertCount,
   totalBillingCount,
@@ -86,7 +82,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* 中央右: 会社切り替え・決算期切り替え & サンプルデータ読み込み。
+          {/* 中央右: 会社切り替え・決算期切り替え。
               項目数が増えても縮んで文字が縦崩れしないよう、この行だけ横スクロールを許可する。 */}
           <div className="flex items-center space-x-3 min-w-0 overflow-x-auto whitespace-nowrap py-1 [scrollbar-width:thin]">
             <div className="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-indigo-500/40 text-xs flex-shrink-0">
@@ -140,18 +136,6 @@ export const Header: React.FC<HeaderProps> = ({
                 <option value={0.0}>0% (非課税/税抜表示)</option>
               </select>
             </div>
-
-            {/* サンプルデータ読み込みボタン (viewerは閲覧専用のため無効化) */}
-            {canEdit && (
-              <button
-                onClick={onLoadSampleData}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30 transition-colors flex-shrink-0"
-                title="v1.1仕様書に基づいたテスト用データを一括ロードします"
-              >
-                <RefreshCw className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-                <span className="hidden sm:inline">サンプルデータ読込</span>
-              </button>
-            )}
 
             {/* Mコード解説ボタン */}
             <button

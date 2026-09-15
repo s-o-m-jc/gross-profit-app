@@ -29,7 +29,7 @@ Claude Code(ローカル・クラウド問わず)は、このファイルを毎�
 
 ## 本番環境のURL (★重要・毎回確認しない)
 
-- 最新の本番デプロイURL(2026-09-09時点、GitHub Deployments APIで確認): https://gross-profit-app-oqpi-h5mnwm6l5-s-o-m-jc.vercel.app
+- 最新の本番デプロイURL(2026-09-15時点、GitHub Deployments APIで確認・最新コミットe49ac6fと一致): https://gross-profit-itpztjt95-s-o-m-jc.vercel.app
   - 注意: このURLはVercelの「そのデプロイ固有のURL」形式(末尾にランダムな文字列が付く)。新しいデプロイのたびに変わる可能性があるため、常に最新のURLを使いたい場合はVercelダッシュボード(https://vercel.com/dashboard)の「Domains」タブでハッシュの付かない固定URLを確認すること。
 
 ## 関連ドキュメント
