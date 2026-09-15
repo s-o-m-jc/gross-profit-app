@@ -36,6 +36,12 @@ Claude Code(ローカル・クラウド問わず)は、このファイルを毎�
   1. **GitHub Deployments API(`gh api repos/.../deployments/{id}/statuses`)が返す`environment_url`は、Vercelの「そのデプロイ固有のURL」(末尾にランダムな文字列、例: `https://gross-profit-app-oqpi-mimdm9uy2-s-o-m-jc.vercel.app`)であり、これは常にVercelの認証(SSO)保護がかかっていて、`s-o-m-jc`のVercelアカウントにログインしていない状態でアクセスすると`vercel.com/sso-api`へのリダイレクトになり、はまさんには「何も表示されない」ように見える。**ビルド失敗でも環境変数の設定漏れでもなく、単にこのURL形式自体がはまさんには開けない設計だった**(curlで確認済み: HTTP 302 → `Location: https://vercel.com/sso-api?...`)。今後、`gh api`のdeployments経由で取得した`environment_url`を、ハッシュ付きのまま**はまさんに直接共有しないこと**。ビルドが成功しているかどうかの確認(`state: "success"`か)には使ってよいが、共有用URLとしては上記の固定ドメインを使うこと。
   2. **`https://gross-profit-app.vercel.app`(末尾に`-oqpi`が付かない別名)は、このリポジトリとは無関係な全くの別プロジェクト**(「販売・工事 粗利表 管理システム」という別アプリ、Firebase/EmailJS/PDF生成ライブラリを使用。中身を確認して判明)。名前が似ているため混同しやすいが、**絶対にこちらのURLをこのアプリの本番URLとして案内しないこと**。
   3. GitHub上のこのリポジトリには、同時に2つのVercelプロジェクト(`gross-profit-app`と`gross-profit-app-oqpi`)が連携されており、push毎に両方へデプロイが走る(`gh api repos/.../deployments`の`environment`フィールドで確認可能)。上記2点の混同はここに起因する。`gross-profit-app-oqpi`側(固定ドメイン`gross-profit-app-oqpi.vercel.app`)が実際に使われている本番プロジェクトで、こちらを正としてよい(2026-09-15、直近ビルドのJS/CSSアセットのハッシュ値がローカルの`npm run build`出力と一致することを確認済み)。
+  4. **誤って連携されていた`gross-profit-app`(-oqpi無し)プロジェクトについて(2026-09-19、はまさんからの依頼と対応)**:
+     - 上記3.の通り、このリポジトリには本来不要な`gross-profit-app`(-oqpi無し)も連携されていた。中身を確認したところ「販売・工事 粗利表 管理システム」という、本アプリ(派遣事業 粗利・経理管理システム)とは全く別のシステムだった。はまさんに確認した結果、本アプリの前身かどうかも不明、はまさんのPC上にも該当フォルダが見当たらず、**由来は不明**とのこと。
+     - 正体不明で他の誰かが実際に使っている可能性もゼロではないため、**Vercelプロジェクト自体の削除はせず、このGitHubリポジトリとのGit連携のみを解除する**方針となった(はまさんの明示的な指示)。`gross-profit-app-oqpi`側は絶対に触らないこと。
+     - **この解除作業(Vercelダッシュボード Settings → Git → Disconnect)は、ローカルのClaude Code(このセッション)からは実行できなかった**。理由: (a) この環境に`vercel` CLIが未インストール、Vercel APIトークンも未設定で、Vercelダッシュボードを操作する手段が無い、(b) `gh api repos/s-o-m-jc/gross-profit-app/hooks`等でGitHub側のWebhook/連携状態を確認しようとしたが、`gh`の認証トークン(`hamayannn`・`s-o-m-jc`どちらも)に`admin:repo_hook`スコープが無く、GitHub App認可済みトークンでもないため403/404で失敗する。そのため、**はまさんご自身がVercelダッシュボードで手動で連携解除を行う必要がある**。
+     - 確認方法(はまさんが解除作業を行った後、Claude Codeが検証可能): 次回push後に`gh api repos/s-o-m-jc/gross-profit-app/deployments --jq '.[].environment' | sort -u`を実行し、`Production – gross-profit-app-oqpi`のみが表示され、`Production – gross-profit-app`(-oqpi無し)が増えていないことを確認する。
+     - 今後同様の混乱を避けるため、Vercel関連の連携状況を変更した場合は、この節に追記すること。
 
 ## 関連ドキュメント
 
