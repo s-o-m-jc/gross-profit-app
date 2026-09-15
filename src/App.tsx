@@ -22,7 +22,6 @@ import { CsvUploader } from './components/CsvUploader';
 import { PastExcelImportPanel } from './components/PastExcelImportPanel';
 import { MonthlyDataPanel } from './components/MonthlyDataPanel';
 import { ChangeHistoryPanel } from './components/ChangeHistoryPanel';
-import { ManualAdjustmentsPanel } from './components/ManualAdjustmentsPanel';
 import { PersonInChargePanel } from './components/PersonInChargePanel';
 import { RetirementPanel } from './components/RetirementPanel';
 import { ReferralFeePanel } from './components/ReferralFeePanel';
@@ -67,14 +66,6 @@ import { loadAppState, saveAppState } from './utils/persistence';
 import { fetchMonthlyDataForCompanies, replaceCompanyMonthlyData } from './utils/supabaseSync';
 import { downloadBackupFile, parseBackupFile } from './utils/backupFile';
 import { useAuth, Profile } from './lib/AuthContext';
-
-/**
- * ★2026-08-26: 拠点ごとの項目対応表の整理が終わるまで、休業分補償・休業手当・次月調整の
- * 手入力調整パネルは実運用では使わない方針となったため、UI表示のみ一時的にオフにする。
- * データモデル・保存ロジック(addManualEntryRow/removeManualEntryRow等)はそのまま残しており、
- * このフラグをtrueに戻せば即座に再表示できる。
- */
-const SHOW_MANUAL_ADJUSTMENTS_PANEL = false;
 
 // ★2026-09-17追加(はまさんの指摘): 過去データを2023年分まで遡って取り込んでいく運用のため、
 // 決算期セレクタの選択肢は最低でもこの年から選べるようにする(実データがさらに古い場合は
@@ -606,22 +597,6 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
       {/* メインコンテンツ */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* 手入力調整パネル (休業分補償・休業手当・次月調整)
-            ★2026-08-26: 拠点ごとの項目対応表の整理が終わるまでUI非表示(SHOW_MANUAL_ADJUSTMENTS_PANEL参照) */}
-        {SHOW_MANUAL_ADJUSTMENTS_PANEL && (
-          <ManualAdjustmentsPanel
-            companyName={selectedCompany.name}
-            companyMonths={selectedCompanyMonths}
-            onAddLeaveCompensation={handleAddLeaveCompensation}
-            onRemoveLeaveCompensation={handleRemoveLeaveCompensation}
-            onAddLeaveAllowance={handleAddLeaveAllowance}
-            onRemoveLeaveAllowance={handleRemoveLeaveAllowance}
-            onAddNextMonthAdjustment={handleAddNextMonthAdjustment}
-            onRemoveNextMonthAdjustment={handleRemoveNextMonthAdjustment}
-            canEdit={canEdit}
-          />
-        )}
-
         {/* ★2026-09-02移動: 過去実績Excel取り込み・CSVアップローダーは、以前はここ(全タブ共通の
             エリア)に常時表示していたが、月次粗利明細一覧・スタッフ給与明細タブで縦幅を圧迫し
             画面を有効活用できない要因になっていたため、「データ管理」タブの中に移動した
@@ -677,7 +652,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               }`}
             >
               <Handshake className="w-4 h-4" />
-              <span>紹介手数料</span>
+              <span>紹介手数料・その他調整</span>
             </button>
 
             <button
@@ -784,14 +759,22 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
           />
         )}
 
-        {/* タブ: 紹介手数料 (★2026-09-19新設。はまさんの指摘: 退職金配賦と同じ位置づけで手入力
-            できる仕組みが必要とのことで、RetirementPanelと全く同じ設計・扱いで新設した) */}
+        {/* タブ: 紹介手数料・その他調整 (★2026-09-19新設。はまさんの指摘: 退職金配賦と同じ位置づけで
+            手入力できる仕組みが必要とのことで、RetirementPanelと全く同じ設計・扱いで新設した。
+            ★2026-09-19方針変更: 休業分補償・休業手当・次月調整(旧ManualAdjustmentsPanel、UI非表示中
+            だった)を、新規タブを増やさずこのタブ配下のサブタブとして統合した) */}
         {activeTab === 'referralFee' && (
           <ReferralFeePanel
             companyName={selectedCompany.name}
             companyMonths={selectedCompanyMonths}
-            onAdd={handleAddReferralFee}
-            onRemove={handleRemoveReferralFee}
+            onAddReferralFee={handleAddReferralFee}
+            onRemoveReferralFee={handleRemoveReferralFee}
+            onAddLeaveCompensation={handleAddLeaveCompensation}
+            onRemoveLeaveCompensation={handleRemoveLeaveCompensation}
+            onAddLeaveAllowance={handleAddLeaveAllowance}
+            onRemoveLeaveAllowance={handleRemoveLeaveAllowance}
+            onAddNextMonthAdjustment={handleAddNextMonthAdjustment}
+            onRemoveNextMonthAdjustment={handleRemoveNextMonthAdjustment}
             canEdit={canEdit}
           />
         )}
