@@ -555,6 +555,20 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     return calculateFiscalYearSummary(calculatedResults, payrollRows, fiscalYear, 12);
   }, [calculatedResults, payrollRows, fiscalYear]);
 
+  // ★2026-09-20追加(はまさんのご要望「決算期グラフに前年対比を追加」): 選択中の決算期の
+  // 1年前(開始年月の年だけ-1した決算期)のサマリーを、前年対比グラフ用に同じ関数
+  // (calculateFiscalYearSummary)で計算する。新しい計算ロジックは追加せず、開始年月を
+  // 1年ずらして既存関数を再利用するだけ(決算期の範囲計算自体はgetFiscalYearMonths任せ)。
+  // データが存在しない過去期間を渡しても、calculateFiscalYearSummaryは全月0埋めのMonthlyTrendを
+  // 返す設計のため、以下は常に安全に呼び出せる。
+  const previousFiscalYearStart = useMemo(() => {
+    const [y, m] = fiscalYear.split('-');
+    return `${parseInt(y, 10) - 1}-${m}`;
+  }, [fiscalYear]);
+  const previousFiscalSummary = useMemo(() => {
+    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousFiscalYearStart, 12);
+  }, [calculatedResults, payrollRows, previousFiscalYearStart]);
+
   if (!isDataLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100 text-slate-500 text-sm">
@@ -842,7 +856,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
         {/* タブ 3: 決算期 (年間) 集計 */}
         {activeTab === 'fiscal' && (
-          <FiscalYearAnalytics summary={fiscalSummary} />
+          <FiscalYearAnalytics summary={fiscalSummary} previousSummary={previousFiscalSummary} />
         )}
       </main>
 
