@@ -91,8 +91,10 @@ interface MonthlyCalculationTableProps {
   fiscalYearMonths: string[];
   /** 選択中の決算期のラベル(ヘッダーの決算期セレクタと同一の表示文字列) */
   fiscalYearLabel: string;
-  /** 選択中の対象年月("YYYY-MM"または"ALL")。★2026-08-27(22-11章修正5):
-   * 「スタッフ給与明細」タブと状態を共有するため、App.tsx(AppShell)側で一元管理する。 */
+  /** 選択中の対象年月("YYYY-MM")。★2026-08-27(22-11章修正5):
+   * 「スタッフ給与明細」タブと状態を共有するため、App.tsx(AppShell)側で一元管理する。
+   * ★2026-09-20修正: 「全月(ALL)」という特殊値は廃止し、常に選択中の決算期内の具体的な
+   * 1ヶ月を指す(App.tsx側で常に有効な値を保つよう自動選択される)。 */
   selectedMonth: string;
   onSelectedMonthChange: (month: string) => void;
 }
@@ -134,32 +136,24 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
 
   const fiscalYearMonthSet = useMemo(() => new Set(fiscalYearMonths), [fiscalYearMonths]);
 
-  // 対象年月ユニークリスト
+  // 対象年月プルダウンの選択肢一覧。
   // ★2026-09-20修正(はまさんの指摘「対象年月プルダウンが決算期と連動していない」): 以前は
   // resultsに含まれる全期間の月をそのまま列挙していたため、データが存在する全期間(何年分も)が
   // 一つの長いリストになってしまっていた。画面上部の「決算期指定」と同じ範囲(fiscalYearMonths、
-  // App.tsx側でbuildFiscalYearOptions/getFiscalYearMonthsから計算)に絞り込む。
-  const availableMonths = useMemo(() => {
-    const months = Array.from(new Set(results.map((r) => r.targetMonth))).sort();
-    return months.filter((m) => fiscalYearMonthSet.has(m));
-  }, [results, fiscalYearMonthSet]);
-
-  // 「全対象年月(この決算期)」選択時の件数表示用。決算期内の月に絞った件数(selectedMonthの
-  // 選択状態には依存しない、「月ごと」プルダウンの選択肢自体の説明のため)。
-  const fiscalYearResultsCount = useMemo(
-    () => results.filter((r) => fiscalYearMonthSet.has(r.targetMonth)).length,
-    [results, fiscalYearMonthSet]
-  );
+  // App.tsx側でbuildFiscalYearOptions/getFiscalYearMonthsから計算)をそのまま選択肢にする
+  // (常にちょうど12ヶ月ぶん。データが無い月を選んでも単に0件表示になるだけで、決算期という
+  // 範囲自体は固定・自明なため、resultsから動的に組み立てる必要が無くなった)。
+  // ★2026-09-20再修正(はまさんの指摘「『全月』選択肢を削除してほしい。全期間表示は決算期
+  // (年間)集計画面の役割」): 「全対象年月(ALL)」という選択肢を廃止し、必ず具体的な1ヶ月を
+  // 選ぶ形にした(決算期全体をまとめて見たい場合は、既存の「年間(決算期)」表示切替を使う)。
+  const availableMonths = fiscalYearMonths;
 
   // フィルタリング処理
   const filteredResults = useMemo(() => {
     return results.filter((item) => {
-      // 表示範囲フィルタ: 月ごと(選択した1ヶ月 or 決算期内の全月) / 年間(決算期、選択中の決算期の12ヶ月分)
-      // ★2026-09-20修正: 「月ごと」の「全対象年月」も、以前は決算期に関わらずデータが存在する
-      // 全期間を対象にしていたが、「選択中の決算期内の全月」という意味に変更した。そのため
-      // viewScopeによらず、まず選択中の決算期の月かどうかを判定する。
+      // 表示範囲フィルタ: 月ごと(選択した1ヶ月) / 年間(決算期、選択中の決算期の12ヶ月分)
       if (!fiscalYearMonthSet.has(item.targetMonth)) return false;
-      if (viewScope === 'month' && selectedMonth !== 'ALL' && item.targetMonth !== selectedMonth) {
+      if (viewScope === 'month' && item.targetMonth !== selectedMonth) {
         return false;
       }
 
@@ -306,7 +300,6 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               onChange={(e) => onSelectedMonthChange(e.target.value)}
               className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
             >
-              <option value="ALL">全月(この決算期・{fiscalYearResultsCount}件)</option>
               {availableMonths.map((m) => (
                 <option key={m} value={m}>
                   {m}

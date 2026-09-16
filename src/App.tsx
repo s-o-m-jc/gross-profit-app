@@ -261,36 +261,30 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     [fiscalYearOptions, fiscalYear]
   );
 
-  // ★2026-08-27追加(22-11章修正5): 選択中の対象年月("YYYY-MM"または"ALL")。
+  // ★2026-08-27追加(22-11章修正5): 選択中の対象年月("YYYY-MM")。
   // 「月次粗利明細一覧」「スタッフ給与明細」の2タブで状態を共有する(タブを切り替えても
-  // 選択が保持されるように、App.tsx側で一元管理する)。ログイン直後・アプリ起動時(データが
-  // 初めて揃ったタイミング)のみ、直近の対象月を1度だけ自動選択する。
-  const [selectedTargetMonth, setSelectedTargetMonth] = useState<string>('ALL');
-  const didAutoSelectTargetMonth = useRef(false);
+  // 選択が保持されるように、App.tsx側で一元管理する)。
+  //
+  // ★2026-09-20修正(はまさんの指摘「対象年月プルダウンから『全月』選択肢を削除してほしい。
+  // 全期間まとめて見る機能は決算期(年間)集計画面の方にあるので不要」): 「全月(ALL)」という
+  // 特殊値そのものを廃止し、常に選択中の決算期に含まれる具体的な1ヶ月を指すようにした。
+  // 以前は(1)初回のみ直近の対象月を自動選択するeffectと、(2)決算期切替で範囲外になったら
+  // 「全月」に戻すeffectの2つに分かれていたが、「全月」という着地点が無くなったため1つに
+  // 統合した。決算期(fiscalYearMonths)が変わる、または選択中の月が新しい決算期の範囲外に
+  // なった場合は、その決算期の中でデータが存在する最新の月(無ければ決算期の最終月)を
+  // 自動選択する。
+  const [selectedTargetMonth, setSelectedTargetMonth] = useState<string>('');
   useEffect(() => {
-    if (didAutoSelectTargetMonth.current) return;
-    const months = Array.from(
+    const monthsWithData = Array.from(
       new Set([...billingRows.map((b) => b.targetMonth), ...payrollRows.map((p) => p.targetMonth)])
-    )
-      .filter(Boolean)
-      .sort();
-    if (months.length > 0) {
-      setSelectedTargetMonth(months[months.length - 1]);
-      didAutoSelectTargetMonth.current = true;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [billingRows, payrollRows]);
-
-  // ★2026-09-20追加(はまさんの指摘「対象年月プルダウンが決算期と連動していない」): 決算期を
-  // 切り替えた結果、それまで選択していた特定の対象月が新しい決算期の範囲外になった場合は、
-  // 「全月(この決算期)」に自動的にリセットする。リセットしないと、月次粗利明細一覧・
-  // スタッフ給与明細のプルダウンには存在しない月が選択されたままになり(値が選択肢に無い)、
-  // 表示が0件のまま何も出なくなってしまう。
-  useEffect(() => {
-    if (selectedTargetMonth !== 'ALL' && !fiscalYearMonths.includes(selectedTargetMonth)) {
-      setSelectedTargetMonth('ALL');
-    }
-  }, [fiscalYearMonths, selectedTargetMonth]);
+    ).filter(Boolean);
+    const scopedMonthsWithData = monthsWithData.filter((m) => fiscalYearMonths.includes(m)).sort();
+    const fallback =
+      scopedMonthsWithData.length > 0
+        ? scopedMonthsWithData[scopedMonthsWithData.length - 1]
+        : fiscalYearMonths[fiscalYearMonths.length - 1] || '';
+    setSelectedTargetMonth((prev) => (fiscalYearMonths.includes(prev) ? prev : fallback));
+  }, [fiscalYearMonths, billingRows, payrollRows]);
 
   // モーダル表示フラグ
   const [isMCodeGuideOpen, setIsMCodeGuideOpen] = useState(false);
@@ -568,6 +562,17 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   const previousFiscalSummary = useMemo(() => {
     return calculateFiscalYearSummary(calculatedResults, payrollRows, previousFiscalYearStart, 12);
   }, [calculatedResults, payrollRows, previousFiscalYearStart]);
+
+  // ★2026-09-20追加(はまさんのご要望「スタッフ人数・粗利率のグラフを直近3決算期分の折れ線で
+  // 比較できるようにしてほしい」): 前々期(2年前)のサマリーも同じ考え方(既存関数の開始年月を
+  // 2年ずらすだけ)で計算する。
+  const previousPreviousFiscalYearStart = useMemo(() => {
+    const [y, m] = fiscalYear.split('-');
+    return `${parseInt(y, 10) - 2}-${m}`;
+  }, [fiscalYear]);
+  const previousPreviousFiscalSummary = useMemo(() => {
+    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousPreviousFiscalYearStart, 12);
+  }, [calculatedResults, payrollRows, previousPreviousFiscalYearStart]);
 
   if (!isDataLoaded) {
     return (
@@ -856,7 +861,11 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
         {/* タブ 3: 決算期 (年間) 集計 */}
         {activeTab === 'fiscal' && (
-          <FiscalYearAnalytics summary={fiscalSummary} previousSummary={previousFiscalSummary} />
+          <FiscalYearAnalytics
+            summary={fiscalSummary}
+            previousSummary={previousFiscalSummary}
+            previousPreviousSummary={previousPreviousFiscalSummary}
+          />
         )}
       </main>
 

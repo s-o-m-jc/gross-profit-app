@@ -40,12 +40,20 @@ interface FiscalYearAnalyticsProps {
    * 月次推移グラフ・スタッフ人数グラフで、同じ相対月位置(配列インデックス、必ず12ヶ月分
    * ゼロ埋め済みなので添字を合わせるだけで同月比較になる)の値を破線の参考系列として重ねる。 */
   previousSummary: FiscalYearSummary;
+  /** ★2026-09-20追加(はまさんのご要望「スタッフ人数・粗利率のグラフを直近3決算期分で比較
+   * できるようにしてほしい」): 選択中の決算期の2年前の決算期のサマリー(previousSummaryと同じ
+   * 考え方、開始年月を2年ずらして同じcalculateFiscalYearSummaryで計算したもの)。 */
+  previousPreviousSummary: FiscalYearSummary;
 }
 
 const DEFAULT_LEAVE_BALANCE_THRESHOLD = 10;
 const CLIENT_RANKING_LIMIT = 10;
 
-export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summary, previousSummary }) => {
+export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
+  summary,
+  previousSummary,
+  previousPreviousSummary,
+}) => {
   // 22章タスク3: 得意先別ランキングのベスト/ワースト切替、行クリックでの月次トレンド展開
   const [rankingMode, setRankingMode] = useState<'best' | 'worst'>('best');
   const [expandedClientCode, setExpandedClientCode] = useState<string | null>(null);
@@ -130,14 +138,16 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
     };
   }, [summary]);
 
-  // ★2026-09-20追加(はまさんのご要望「グラフに前年対比を追加」): 月次推移グラフ・スタッフ人数
-  // グラフ共通で使う、今期・前期を同じ相対月位置(配列インデックス)で1本にまとめたデータ。
+  // ★2026-09-20追加(はまさんのご要望「グラフに前年対比を追加」): 月次推移グラフで使う、
+  // 今期・前期を同じ相対月位置(配列インデックス)で1本にまとめたデータ。
   // summary.monthlyTrends・previousSummary.monthlyTrendsは、calculateFiscalYearSummaryの実装上
   // 必ず指定した月数(12)ぶんゼロ埋め済みの配列を返すため、単純に添字を揃えるだけで
   // 「今期のn番目の月」⇔「前期のn番目の月(=ちょうど1年前の同月)」の対応が取れる。
   // 名目粗利率はデータが無い月に0が入る仕様(nominalGrossMarginRateDataAvailable===false)のため、
   // 折れ線がグラフ上で誤って「0%」に落ち込んで見えないよう、データ無しの月はnullにしてグラフの
   // 該当区間を欠測として扱う(connectNullsで前後の実データ点同士を線で結ぶ)。
+  // ★2026-09-20再修正(はまさんのご要望「前年分の名目・実質粗利率も追加してほしい」): 前年の
+  // 粗利率2種もあわせて持たせる。
   const chartData = useMemo(() => {
     return summary.monthlyTrends.map((m, i) => {
       const prev = previousSummary.monthlyTrends[i];
@@ -150,6 +160,8 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
         staffCount: m.staffCount,
         prevTotalSales: prev ? prev.totalSales : null,
         prevGrossProfit: prev ? prev.grossProfit : null,
+        prevGrossMarginRate: prev ? prev.grossMarginRate : null,
+        prevNominalGrossMarginRate: prev && prev.nominalGrossMarginRateDataAvailable ? prev.nominalGrossMarginRate : null,
         prevStaffCount: prev ? prev.staffCount : null,
       };
     });
@@ -159,7 +171,37 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
   // 破線を表示せず、系列自体を出さない(前期データが本当に無いのか、単に未取込なのか
   // 画面からは区別できないため、無い場合は素直に非表示にする)。
   const hasPreviousYearSalesData = previousSummary.monthlyTrends.some((m) => m.totalSales !== 0 || m.grossProfit !== 0);
+
+  // ★2026-09-20追加(はまさんのご要望「スタッフ人数・粗利率のグラフを直近3決算期分の折れ線で
+  // 比較できるようにしてほしい」): 今期・前期・前々期を同じ相対月位置で1本にまとめたデータ。
+  // X軸ラベルは今期の実際の対象年月("2024-10"等)を使う(前期・前々期は同じ相対位置=ちょうど
+  // 1年前・2年前の同月に対応する)。
+  const threePeriodData = useMemo(() => {
+    return summary.monthlyTrends.map((m, i) => {
+      const prev = previousSummary.monthlyTrends[i];
+      const prevPrev = previousPreviousSummary.monthlyTrends[i];
+      return {
+        month: m.month,
+        staffCount: m.staffCount,
+        prevStaffCount: prev ? prev.staffCount : null,
+        prevPrevStaffCount: prevPrev ? prevPrev.staffCount : null,
+        grossMarginRate: m.grossMarginRate,
+        nominalGrossMarginRate: m.nominalGrossMarginRateDataAvailable ? m.nominalGrossMarginRate : null,
+        prevGrossMarginRate: prev ? prev.grossMarginRate : null,
+        prevNominalGrossMarginRate: prev && prev.nominalGrossMarginRateDataAvailable ? prev.nominalGrossMarginRate : null,
+        prevPrevGrossMarginRate: prevPrev ? prevPrev.grossMarginRate : null,
+        prevPrevNominalGrossMarginRate:
+          prevPrev && prevPrev.nominalGrossMarginRateDataAvailable ? prevPrev.nominalGrossMarginRate : null,
+      };
+    });
+  }, [summary.monthlyTrends, previousSummary.monthlyTrends, previousPreviousSummary.monthlyTrends]);
+
   const hasPreviousYearStaffData = previousSummary.monthlyTrends.some((m) => m.staffCount !== 0);
+  const hasPreviousPreviousYearStaffData = previousPreviousSummary.monthlyTrends.some((m) => m.staffCount !== 0);
+  const hasPreviousYearMarginData = previousSummary.monthlyTrends.some((m) => m.grossMarginRate !== 0 || m.nominalGrossMarginRateDataAvailable);
+  const hasPreviousPreviousYearMarginData = previousPreviousSummary.monthlyTrends.some(
+    (m) => m.grossMarginRate !== 0 || m.nominalGrossMarginRateDataAvailable
+  );
 
   return (
     <div className="space-y-6 mb-8">
@@ -329,14 +371,19 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
             「派遣売上」「給与総額」「社保他小計」の見出しをクリックすると、その内訳列が展開されます。
           </p>
         </div>
-        <div className="overflow-x-auto table-scroll">
+        {/* ★2026-09-20修正(はまさんのご要望「合計行の表示位置を他タブと統一」): 以前はtbodyの
+            末尾(全12ヶ月の後)に合計行を置いていたが、月次粗利明細一覧・スタッフ給与明細と同じ
+            パターン(合計行をthead側に含め、theadごとsticky top-0で画面上部に固定する)に統一した。
+            それに伴い、テーブルの外枠もoverflow-x-auto単体からoverflow-auto+max-h-[calc(100vh-80px)]
+            (縦スクロールもこの枠内に閉じ込める)に変更している。 */}
+        <div className="overflow-auto table-scroll max-h-[calc(100vh-80px)] rounded-lg border border-slate-200">
           <table className="min-w-full text-left text-xs border-collapse whitespace-nowrap">
-            <thead>
+            <thead className="sticky top-0 z-20 shadow-sm">
               <tr className={`bg-slate-100 text-slate-700 font-bold ${anyMonthlySummaryBreakdownOpen ? '' : 'border-b border-slate-200'}`}>
-                <th className="py-2 px-3" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>月</th>
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>スタッフ人数</th>
+                <th className="py-2 px-3 bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>月</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>スタッフ人数</th>
                 <th
-                  className="py-2 px-3 text-right cursor-pointer hover:bg-slate-200 select-none"
+                  className="py-2 px-3 text-right bg-slate-100 cursor-pointer hover:bg-slate-200 select-none"
                   rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
                   onClick={() => setShowSalesBreakdown((v) => !v)}
                   title="クリックして内訳(派遣・交通費(相手企業負担)・休業分補償)の表示/非表示を切り替え"
@@ -355,10 +402,10 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                     売上内訳
                   </th>
                 )}
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>紹介手数料</th>
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>総売上</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>紹介手数料</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>総売上</th>
                 <th
-                  className="py-2 px-3 text-right cursor-pointer hover:bg-slate-200 select-none"
+                  className="py-2 px-3 text-right bg-slate-100 cursor-pointer hover:bg-slate-200 select-none"
                   rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
                   onClick={() => setShowSalaryBreakdown((v) => !v)}
                   title="クリックして内訳(給与・休業手当・退職金配賦)の表示/非表示を切り替え"
@@ -377,9 +424,9 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                     給与内訳
                   </th>
                 )}
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>請求＠</th>
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>支払＠</th>
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>名目粗利率</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>請求＠</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>支払＠</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>名目粗利率</th>
                 {/* ★2026-09-16追加(はまさんの指摘・「集計」シートヘッダー行との突合): 「交通費(税抜)」列。
                     はまさんが元Excelのセルを直接確認した結果、数式ではなく手入力の固定値であり、
                     このアプリが持つどのデータからも導出できない外部データと判明した(値が交通費
@@ -394,7 +441,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   交通費(税抜) <span className="text-amber-500">ⓘ</span>
                 </th>
                 <th
-                  className="py-2 px-3 text-right cursor-pointer hover:bg-slate-200 select-none"
+                  className="py-2 px-3 text-right bg-slate-100 cursor-pointer hover:bg-slate-200 select-none"
                   rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
                   onClick={() => setShowSocialBreakdown((v) => !v)}
                   title="クリックして内訳(雇保・社保・交通費(自社負担)・駐車場代)の表示/非表示を切り替え。雇保は社保に含まれる参考値のため、社保+交通費(自社負担)+駐車場代の3項目が社保他小計と一致します"
@@ -413,11 +460,11 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                     社保他内訳
                   </th>
                 )}
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>有給金額</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>有給金額</th>
                 <th className="py-2 px-3 text-right bg-indigo-50/50" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>実質粗利益</th>
                 <th className="py-2 px-3 text-right bg-indigo-50/50" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>実質粗利率</th>
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>有給(日)</th>
-                <th className="py-2 px-3 text-right" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>1人当たり有給日数</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>有給(日)</th>
+                <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>1人当たり有給日数</th>
               </tr>
               {/* 2段目: 展開中のグループの個別列名のみ(すべて閉じている場合、この行自体を描画しない) */}
               {anyMonthlySummaryBreakdownOpen && (
@@ -457,6 +504,76 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   )}
                 </tr>
               )}
+              {/* 合計行 (★2026-09-20移動: 以前はtbody末尾にあったが、月次粗利明細一覧・スタッフ
+                  給与明細と同じパターンに合わせ、theadの一部として画面上部に固定表示するようにした。
+                  値の出所・計算式はmonthlyTotals(上記useMemo)のコメント参照。 */}
+              <tr className="bg-indigo-50 text-indigo-900 font-extrabold border-b-2 border-indigo-200">
+                <td className="py-2 px-3 bg-indigo-50">合計</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">{monthlyTotals.staffCount}名</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.dispatchSales.toLocaleString()}</td>
+                {showSalesBreakdown && (
+                  <>
+                    <td className="py-2 px-3 text-right font-mono bg-emerald-50/60 border-l border-emerald-200">
+                      ¥{monthlyTotals.dispatch.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono bg-emerald-50/60">
+                      ¥{monthlyTotals.transportBilling.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono bg-emerald-50/60 border-r border-emerald-200">
+                      ¥{monthlyTotals.leaveCompensation.toLocaleString()}
+                    </td>
+                  </>
+                )}
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.referralSales.toLocaleString()}</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.totalSales.toLocaleString()}</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.totalSalary.toLocaleString()}</td>
+                {showSalaryBreakdown && (
+                  <>
+                    <td className="py-2 px-3 text-right font-mono bg-amber-50/60 border-l border-amber-200">
+                      ¥{monthlyTotals.salary.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono bg-amber-50/60">
+                      ¥{monthlyTotals.leaveAllowance.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono bg-amber-50/60 border-r border-amber-200">
+                      ¥{monthlyTotals.retirementAmount.toLocaleString()}
+                    </td>
+                  </>
+                )}
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.billingUnitPriceSum.toLocaleString()}</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.payUnitPriceSum.toLocaleString()}</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">
+                  {monthlyTotals.nominalGrossMarginRateDataAvailable ? `${monthlyTotals.nominalGrossMarginRate}%` : 'データなし'}
+                </td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50 text-slate-400">不明</td>
+                <td
+                  className="py-2 px-3 text-right font-mono bg-indigo-50"
+                  title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代"
+                >
+                  ¥{monthlyTotals.socialInsuranceOther.toLocaleString()}
+                </td>
+                {showSocialBreakdown && (
+                  <>
+                    <td className="py-2 px-3 text-right font-mono bg-violet-50/60 border-l border-violet-200">
+                      ¥{monthlyTotals.employmentInsurance.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono bg-violet-50/60">
+                      ¥{monthlyTotals.socialInsurance.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono bg-violet-50/60">
+                      ¥{monthlyTotals.transportSalary.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono bg-violet-50/60 border-r border-violet-200">
+                      ¥{monthlyTotals.parkingFee.toLocaleString()}
+                    </td>
+                  </>
+                )}
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.paidLeaveAmount.toLocaleString()}</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-100">¥{monthlyTotals.grossProfit.toLocaleString()}</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-100">{monthlyTotals.grossMarginRate}%</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">{monthlyTotals.paidLeaveDays}日</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">{monthlyTotals.avgPaidLeaveDaysPerStaff}日</td>
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
               {summary.monthlyTrends.map((m) => (
@@ -524,76 +641,6 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                   <td className="py-2 px-3 text-right font-mono">{m.avgPaidLeaveDaysPerStaff}日</td>
                 </tr>
               ))}
-              {/* ★2026-09-20追加(はまさんのご要望「月次サマリの合計数値表示」): 決算期全体の
-                  年間合計行。値の出所・計算式はmonthlyTotals(上記useMemo)のコメント参照。 */}
-              <tr className="bg-slate-50 font-bold text-slate-900 border-t-2 border-slate-300">
-                <td className="py-2 px-3">合計</td>
-                <td className="py-2 px-3 text-right font-mono">{monthlyTotals.staffCount}名</td>
-                <td className="py-2 px-3 text-right font-mono">¥{monthlyTotals.dispatchSales.toLocaleString()}</td>
-                {showSalesBreakdown && (
-                  <>
-                    <td className="py-2 px-3 text-right font-mono bg-emerald-50/50 border-l border-emerald-200">
-                      ¥{monthlyTotals.dispatch.toLocaleString()}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono bg-emerald-50/50">
-                      ¥{monthlyTotals.transportBilling.toLocaleString()}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono bg-emerald-50/50 border-r border-emerald-200">
-                      ¥{monthlyTotals.leaveCompensation.toLocaleString()}
-                    </td>
-                  </>
-                )}
-                <td className="py-2 px-3 text-right font-mono">¥{monthlyTotals.referralSales.toLocaleString()}</td>
-                <td className="py-2 px-3 text-right font-mono font-extrabold">¥{monthlyTotals.totalSales.toLocaleString()}</td>
-                <td className="py-2 px-3 text-right font-mono">¥{monthlyTotals.totalSalary.toLocaleString()}</td>
-                {showSalaryBreakdown && (
-                  <>
-                    <td className="py-2 px-3 text-right font-mono bg-amber-50/50 border-l border-amber-200">
-                      ¥{monthlyTotals.salary.toLocaleString()}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono bg-amber-50/50">
-                      ¥{monthlyTotals.leaveAllowance.toLocaleString()}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono bg-amber-50/50 border-r border-amber-200">
-                      ¥{monthlyTotals.retirementAmount.toLocaleString()}
-                    </td>
-                  </>
-                )}
-                <td className="py-2 px-3 text-right font-mono">¥{monthlyTotals.billingUnitPriceSum.toLocaleString()}</td>
-                <td className="py-2 px-3 text-right font-mono">¥{monthlyTotals.payUnitPriceSum.toLocaleString()}</td>
-                <td className="py-2 px-3 text-right font-mono">
-                  {monthlyTotals.nominalGrossMarginRateDataAvailable ? `${monthlyTotals.nominalGrossMarginRate}%` : 'データなし'}
-                </td>
-                <td className="py-2 px-3 text-right font-mono text-slate-300">不明</td>
-                <td className="py-2 px-3 text-right font-mono" title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代">
-                  ¥{monthlyTotals.socialInsuranceOther.toLocaleString()}
-                </td>
-                {showSocialBreakdown && (
-                  <>
-                    <td className="py-2 px-3 text-right font-mono bg-violet-50/50 border-l border-violet-200">
-                      ¥{monthlyTotals.employmentInsurance.toLocaleString()}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono bg-violet-50/50">
-                      ¥{monthlyTotals.socialInsurance.toLocaleString()}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono bg-violet-50/50">
-                      ¥{monthlyTotals.transportSalary.toLocaleString()}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono bg-violet-50/50 border-r border-violet-200">
-                      ¥{monthlyTotals.parkingFee.toLocaleString()}
-                    </td>
-                  </>
-                )}
-                <td className="py-2 px-3 text-right font-mono">¥{monthlyTotals.paidLeaveAmount.toLocaleString()}</td>
-                <td className="py-2 px-3 text-right font-mono font-extrabold text-emerald-700 bg-indigo-50/50">
-                  ¥{monthlyTotals.grossProfit.toLocaleString()}
-                </td>
-                <td className="py-2 px-3 text-right font-mono font-extrabold text-emerald-700 bg-indigo-50/50">
-                  {monthlyTotals.grossMarginRate}%
-                </td>
-                <td className="py-2 px-3 text-right font-mono">{monthlyTotals.paidLeaveDays}日</td>
-                <td className="py-2 px-3 text-right font-mono">{monthlyTotals.avgPaidLeaveDaysPerStaff}日</td>
-              </tr>
             </tbody>
           </table>
         </div>
@@ -602,9 +649,19 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
       {/* 2. 月次推移 Recharts チャート
           ★2026-09-20修正(はまさんのご要望): 1.「直接原価」の棒グラフ系列を削除し、代わりに
           「名目粗利率」の折れ線を追加した(既存の「粗利率」は「実質粗利率」に改称。同じ値・同じ
-          定義で、表示名のみ変更)。2. 前年(前決算期)の同月データを、総売上高・粗利益それぞれ
-          破線の参考系列として重ねた(前期データが1件も無い場合は誤解を招くため系列自体を
-          表示しない)。 */}
+          定義で、表示名のみ変更)。2. 前年(前決算期)の同月データを、総売上高・実質粗利益・
+          実質粗利率・名目粗利率それぞれ破線の参考系列として重ねた(前期データが1件も無い場合は
+          誤解を招くため系列自体を表示しない)。3. 前年比較用の破線は、色を濃く・線を太くして
+          視認性を上げた(以前は薄いパステル色・細線で見づらいとの指摘があったため)。
+          ★重要(はまさんへの確認事項): 「粗利益」バーは「名目粗利益」ではなく「実質粗利益」に
+          改称した。このアプリには「名目粗利率」(%)は存在するが「名目粗利益」(金額)に相当する
+          フィールドは存在しない(以前、名目粗利額という列を独自に計算して追加したことがあったが、
+          はまさんが実際のExcelを確認した結果「名目粗利率」のみが実在する項目で「名目粗利額」は
+          存在しないとのご指摘を受けて削除した経緯があるため)。このグラフの「粗利益」バーの実体は
+          実額ベースの粗利益(=月次サマリ表の「実質粗利益」列と同じ値)のため、「名目粗利益」という
+          ラベルを付けると誤ったデータ表示になってしまうと判断し、「実質粗利益」に変更した。
+          もし「名目粗利益」という金額を新たに計算で追加してほしいという意図であれば、算出方法
+          (例: 派遣売上×名目粗利率 等)をご指示いただければ別途対応します。 */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -613,8 +670,8 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
               <span>決算期月次売上・粗利益推移 ({summary.startMonth} 〜 {summary.endMonth})</span>
             </h3>
             <p className="text-xs text-slate-500">
-              月別の総売上高(棒)・粗利益(棒)、実質粗利率・名目粗利率(折れ線)の推移
-              {hasPreviousYearSalesData && '。破線は前年同月の総売上高・粗利益'}
+              月別の総売上高(棒)・実質粗利益(棒)、実質粗利率・名目粗利率(折れ線)の推移
+              {hasPreviousYearSalesData && '。太い破線は前年同月の値'}
             </p>
           </div>
         </div>
@@ -652,7 +709,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
               <Bar yAxisId="left" dataKey="totalSales" name="総売上高" fill="#6366f1" radius={[4, 4, 0, 0]} />
-              <Bar yAxisId="left" dataKey="grossProfit" name="粗利益" fill="#10b981" radius={[4, 4, 0, 0]} />
+              <Bar yAxisId="left" dataKey="grossProfit" name="実質粗利益" fill="#10b981" radius={[4, 4, 0, 0]} />
               <Line
                 yAxisId="right"
                 type="monotone"
@@ -675,26 +732,51 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
               />
               {hasPreviousYearSalesData && (
                 <>
+                  {/* ★2026-09-20修正(はまさんの指摘「前年比較の破線が薄くて分かりにくい」):
+                      以前は#a5b4fc/#6ee7b7(パステル調)・strokeWidth 1.5だったが、はっきり濃い色
+                      (indigo-700/emerald-700相当)・strokeWidth 2.5・大きめの破線間隔に変更した。 */}
                   <Line
                     yAxisId="left"
                     type="monotone"
                     dataKey="prevTotalSales"
                     name="総売上高(前年)"
-                    stroke="#a5b4fc"
-                    strokeWidth={1.5}
-                    strokeDasharray="5 5"
-                    dot={false}
+                    stroke="#3730a3"
+                    strokeWidth={2.5}
+                    strokeDasharray="8 4"
+                    dot={{ r: 3 }}
                     connectNulls
                   />
                   <Line
                     yAxisId="left"
                     type="monotone"
                     dataKey="prevGrossProfit"
-                    name="粗利益(前年)"
-                    stroke="#6ee7b7"
-                    strokeWidth={1.5}
-                    strokeDasharray="5 5"
-                    dot={false}
+                    name="実質粗利益(前年)"
+                    stroke="#047857"
+                    strokeWidth={2.5}
+                    strokeDasharray="8 4"
+                    dot={{ r: 3 }}
+                    connectNulls
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="prevGrossMarginRate"
+                    name="実質粗利率(前年)"
+                    stroke="#b45309"
+                    strokeWidth={2}
+                    strokeDasharray="8 4"
+                    dot={{ r: 2.5 }}
+                    connectNulls
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="prevNominalGrossMarginRate"
+                    name="名目粗利率(前年)"
+                    stroke="#0369a1"
+                    strokeWidth={2}
+                    strokeDasharray="2 3"
+                    dot={{ r: 2.5 }}
                     connectNulls
                   />
                 </>
@@ -704,30 +786,31 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
         </div>
       </div>
 
-      {/* 2.6 スタッフ人数 月次推移 (★2026-09-20新規追加。はまさんのご要望「スタッフ人数の
-          グラフを新規作成」。前年対比の破線を含める点も上記月次推移グラフと共通の設計) */}
+      {/* 2.6 スタッフ人数 月次推移 (★2026-09-20新規追加、直近3決算期分の折れ線比較に変更
+          (はまさんのご要望「棒グラフ+前年のみ点線比較は見づらいため、今期・前期・前々期を
+          折れ線グラフで並べて表示してほしい」)。データが存在する期の分だけ線を描画する。 */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
               <Users className="w-4 h-4 text-indigo-600" />
-              <span>決算期月次スタッフ人数推移 ({summary.startMonth} 〜 {summary.endMonth})</span>
+              <span>決算期月次スタッフ人数推移 (直近3決算期比較、{summary.startMonth} 〜 {summary.endMonth} = 今期)</span>
             </h3>
             <p className="text-xs text-slate-500">
-              月別の稼働スタッフ人数(棒){hasPreviousYearStaffData && '。破線は前年同月のスタッフ人数'}
+              月別の稼働スタッフ人数を、今期(実線)・前期(破線)・前々期(点線)の3決算期分並べて比較
             </p>
           </div>
         </div>
 
-        {!hasPreviousYearStaffData && (
+        {!hasPreviousYearStaffData && !hasPreviousPreviousYearStaffData && (
           <p className="text-[11px] text-slate-400 mb-2">
-            前年(前決算期)分のデータが無いため、前年対比の破線は表示していません。
+            前期・前々期分のデータが無いため、今期のみ表示しています。
           </p>
         )}
 
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+            <LineChart data={threePeriodData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -736,20 +819,135 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({ summar
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
-              <Bar dataKey="staffCount" name="スタッフ人数" fill="#6366f1" radius={[4, 4, 0, 0]} />
+              <Line
+                type="monotone"
+                dataKey="staffCount"
+                name="スタッフ人数(今期)"
+                stroke="#4f46e5"
+                strokeWidth={2.5}
+                dot={{ r: 4 }}
+              />
               {hasPreviousYearStaffData && (
                 <Line
                   type="monotone"
                   dataKey="prevStaffCount"
-                  name="スタッフ人数(前年)"
-                  stroke="#a5b4fc"
-                  strokeWidth={1.5}
-                  strokeDasharray="5 5"
-                  dot={false}
+                  name="スタッフ人数(前期)"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  strokeDasharray="8 4"
+                  dot={{ r: 3 }}
                   connectNulls
                 />
               )}
-            </ComposedChart>
+              {hasPreviousPreviousYearStaffData && (
+                <Line
+                  type="monotone"
+                  dataKey="prevPrevStaffCount"
+                  name="スタッフ人数(前々期)"
+                  stroke="#10b981"
+                  strokeWidth={1.75}
+                  strokeDasharray="2 3"
+                  dot={{ r: 2.5 }}
+                  connectNulls
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* 2.7 粗利率 月次推移 (★2026-09-20新規追加。はまさんのご要望「スタッフ人数グラフと同じ
+          考え方で、名目粗利率・実質粗利率も直近3決算期分の単独の折れ線グラフを新設してほしい」。
+          既存の月次推移グラフ(総売上高・粗利益の棒グラフ)とは別の独立したグラフとして追加した)。 */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
+              <BarChart2 className="w-4 h-4 text-indigo-600" />
+              <span>決算期月次粗利率推移 (直近3決算期比較、{summary.startMonth} 〜 {summary.endMonth} = 今期)</span>
+            </h3>
+            <p className="text-xs text-slate-500">
+              月別の実質粗利率・名目粗利率を、今期(実線)・前期(破線)・前々期(点線)の3決算期分並べて比較
+            </p>
+          </div>
+        </div>
+
+        {!hasPreviousYearMarginData && !hasPreviousPreviousYearMarginData && (
+          <p className="text-[11px] text-slate-400 mb-2">
+            前期・前々期分のデータが無いため、今期のみ表示しています。
+          </p>
+        )}
+
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={threePeriodData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+              <YAxis unit="%" domain={[0, 40]} tick={{ fontSize: 11 }} />
+              <Tooltip
+                formatter={(value: any, name: any) => [value === null || value === undefined ? 'データなし' : `${value}%`, name]}
+                contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
+              />
+              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+              <Line type="monotone" dataKey="grossMarginRate" name="実質粗利率(今期)" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 4 }} />
+              <Line
+                type="monotone"
+                dataKey="nominalGrossMarginRate"
+                name="名目粗利率(今期)"
+                stroke="#0ea5e9"
+                strokeWidth={2.5}
+                dot={{ r: 4 }}
+                connectNulls
+              />
+              {hasPreviousYearMarginData && (
+                <>
+                  <Line
+                    type="monotone"
+                    dataKey="prevGrossMarginRate"
+                    name="実質粗利率(前期)"
+                    stroke="#d97706"
+                    strokeWidth={2}
+                    strokeDasharray="8 4"
+                    dot={{ r: 3 }}
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="prevNominalGrossMarginRate"
+                    name="名目粗利率(前期)"
+                    stroke="#0369a1"
+                    strokeWidth={2}
+                    strokeDasharray="8 4"
+                    dot={{ r: 3 }}
+                    connectNulls
+                  />
+                </>
+              )}
+              {hasPreviousPreviousYearMarginData && (
+                <>
+                  <Line
+                    type="monotone"
+                    dataKey="prevPrevGrossMarginRate"
+                    name="実質粗利率(前々期)"
+                    stroke="#fbbf24"
+                    strokeWidth={1.75}
+                    strokeDasharray="2 3"
+                    dot={{ r: 2.5 }}
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="prevPrevNominalGrossMarginRate"
+                    name="名目粗利率(前々期)"
+                    stroke="#38bdf8"
+                    strokeWidth={1.75}
+                    strokeDasharray="2 3"
+                    dot={{ r: 2.5 }}
+                    connectNulls
+                  />
+                </>
+              )}
+            </LineChart>
           </ResponsiveContainer>
         </div>
       </div>

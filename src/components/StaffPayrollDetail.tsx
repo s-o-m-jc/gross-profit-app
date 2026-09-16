@@ -40,7 +40,9 @@ import { hasLegacyPayrollRows } from '../utils/monthlyData';
 
 interface StaffPayrollDetailProps {
   payrollRows: PayrollRow[];
-  /** 選択中の対象年月("YYYY-MM"または"ALL")。月次粗利明細一覧タブと状態を共有する。 */
+  /** 選択中の対象年月("YYYY-MM")。月次粗利明細一覧タブと状態を共有する。
+   * ★2026-09-20修正: 「全月(ALL)」という特殊値は廃止し、常に選択中の決算期内の具体的な
+   * 1ヶ月を指す(App.tsx側で常に有効な値を保つよう自動選択される)。 */
   selectedMonth: string;
   onSelectedMonthChange: (month: string) => void;
   /** ★2026-09-20追加(はまさんの指摘「対象年月プルダウンが決算期と連動していない」):
@@ -573,24 +575,17 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
   // ★2026-09-20修正(はまさんの指摘「対象年月プルダウンが決算期と連動していない」): 以前は
   // payrollRowsに含まれる全期間の月をそのまま列挙していたため、データが存在する全期間(何年分も)
   // が一つの長いリストになってしまっていた。画面上部の「決算期指定」と同じ範囲
-  // (fiscalYearMonths)に絞り込む。
+  // (fiscalYearMonths)をそのまま選択肢にする(常にちょうど12ヶ月ぶん)。
+  // ★2026-09-20再修正(はまさんの指摘「『全月』選択肢を削除してほしい」): 「全対象年月(ALL)」
+  // という選択肢を廃止し、必ず具体的な1ヶ月を選ぶ形にした(決算期全体を見る機能は「決算期
+  // (年間)集計・グラフ」画面の役割のため、このタブでは持たない)。
   const fiscalYearMonthSet = useMemo(() => new Set(fiscalYearMonths), [fiscalYearMonths]);
-  const availableMonths = useMemo(
-    () => Array.from(new Set(payrollRows.map((p) => p.targetMonth))).filter((m) => fiscalYearMonthSet.has(m)).sort(),
-    [payrollRows, fiscalYearMonthSet]
-  );
-  // 「全対象年月(この決算期)」選択時の件数表示用
-  const fiscalYearRowsCount = useMemo(
-    () => payrollRows.filter((p) => fiscalYearMonthSet.has(p.targetMonth)).length,
-    [payrollRows, fiscalYearMonthSet]
-  );
+  const availableMonths = fiscalYearMonths;
 
   const filteredRows = useMemo(() => {
     return payrollRows.filter((p) => {
-      // ★2026-09-20修正: 「全対象年月」も、以前は決算期に関わらずデータが存在する全期間を
-      // 対象にしていたが、「選択中の決算期内の全月」という意味に変更した。
       if (!fiscalYearMonthSet.has(p.targetMonth)) return false;
-      if (selectedMonth !== 'ALL' && p.targetMonth !== selectedMonth) return false;
+      if (p.targetMonth !== selectedMonth) return false;
       if (searchQuery.trim() !== '') {
         const q = searchQuery.toLowerCase();
         const match =
@@ -719,7 +714,6 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
             onChange={(e) => onSelectedMonthChange(e.target.value)}
             className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
           >
-            <option value="ALL">全月(この決算期・{fiscalYearRowsCount}件)</option>
             {availableMonths.map((m) => (
               <option key={m} value={m}>
                 {m}
