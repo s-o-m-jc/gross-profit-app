@@ -281,6 +281,17 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [billingRows, payrollRows]);
 
+  // ★2026-09-20追加(はまさんの指摘「対象年月プルダウンが決算期と連動していない」): 決算期を
+  // 切り替えた結果、それまで選択していた特定の対象月が新しい決算期の範囲外になった場合は、
+  // 「全月(この決算期)」に自動的にリセットする。リセットしないと、月次粗利明細一覧・
+  // スタッフ給与明細のプルダウンには存在しない月が選択されたままになり(値が選択肢に無い)、
+  // 表示が0件のまま何も出なくなってしまう。
+  useEffect(() => {
+    if (selectedTargetMonth !== 'ALL' && !fiscalYearMonths.includes(selectedTargetMonth)) {
+      setSelectedTargetMonth('ALL');
+    }
+  }, [fiscalYearMonths, selectedTargetMonth]);
+
   // モーダル表示フラグ
   const [isMCodeGuideOpen, setIsMCodeGuideOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -736,6 +747,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             payrollRows={payrollRows}
             selectedMonth={selectedTargetMonth}
             onSelectedMonthChange={setSelectedTargetMonth}
+            fiscalYearMonths={fiscalYearMonths}
             paidLeaveOverrideRows={paidLeaveOverrideRows}
             onAddPaidLeaveOverride={handleAddPaidLeaveOverride}
             onRemovePaidLeaveOverride={handleRemovePaidLeaveOverride}
@@ -811,6 +823,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               onSaveToFile={handleSaveToFile}
               onLoadFromFile={handleLoadFromFile}
               canEdit={canEdit}
+              fiscalYearMonths={fiscalYearMonths}
+              fiscalYearLabel={fiscalYearLabel}
             />
             {canEdit && !isOffline && (
               <ChangeHistoryPanel companyId={selectedCompanyId} companyName={selectedCompany.name} />

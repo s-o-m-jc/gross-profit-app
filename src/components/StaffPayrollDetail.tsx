@@ -43,6 +43,11 @@ interface StaffPayrollDetailProps {
   /** 選択中の対象年月("YYYY-MM"または"ALL")。月次粗利明細一覧タブと状態を共有する。 */
   selectedMonth: string;
   onSelectedMonthChange: (month: string) => void;
+  /** ★2026-09-20追加(はまさんの指摘「対象年月プルダウンが決算期と連動していない」):
+   * 選択中の決算期に属する対象年月一覧("YYYY-MM"×12)。月次粗利明細一覧タブ(画面上部の
+   * 「決算期指定」)と同じ値をApp.tsx(AppShell)側から渡してもらい、対象年月プルダウンを
+   * その決算期の月だけに絞り込む。 */
+  fiscalYearMonths: string[];
   // ★2026-09-02追加(スタッフ給与明細バグ報告): 有給(手入力)。前月集計漏れ等でCSV由来の
   // 有給日数・有給金額が実態とズレている場合に、詳細画面から追加できる補正行。
   paidLeaveOverrideRows: PaidLeaveOverrideRow[];
@@ -495,6 +500,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
   payrollRows,
   selectedMonth,
   onSelectedMonthChange,
+  fiscalYearMonths,
   paidLeaveOverrideRows,
   onAddPaidLeaveOverride,
   onRemovePaidLeaveOverride,
@@ -564,13 +570,26 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
     );
   };
 
+  // ★2026-09-20修正(はまさんの指摘「対象年月プルダウンが決算期と連動していない」): 以前は
+  // payrollRowsに含まれる全期間の月をそのまま列挙していたため、データが存在する全期間(何年分も)
+  // が一つの長いリストになってしまっていた。画面上部の「決算期指定」と同じ範囲
+  // (fiscalYearMonths)に絞り込む。
+  const fiscalYearMonthSet = useMemo(() => new Set(fiscalYearMonths), [fiscalYearMonths]);
   const availableMonths = useMemo(
-    () => Array.from(new Set(payrollRows.map((p) => p.targetMonth))).sort(),
-    [payrollRows]
+    () => Array.from(new Set(payrollRows.map((p) => p.targetMonth))).filter((m) => fiscalYearMonthSet.has(m)).sort(),
+    [payrollRows, fiscalYearMonthSet]
+  );
+  // 「全対象年月(この決算期)」選択時の件数表示用
+  const fiscalYearRowsCount = useMemo(
+    () => payrollRows.filter((p) => fiscalYearMonthSet.has(p.targetMonth)).length,
+    [payrollRows, fiscalYearMonthSet]
   );
 
   const filteredRows = useMemo(() => {
     return payrollRows.filter((p) => {
+      // ★2026-09-20修正: 「全対象年月」も、以前は決算期に関わらずデータが存在する全期間を
+      // 対象にしていたが、「選択中の決算期内の全月」という意味に変更した。
+      if (!fiscalYearMonthSet.has(p.targetMonth)) return false;
       if (selectedMonth !== 'ALL' && p.targetMonth !== selectedMonth) return false;
       if (searchQuery.trim() !== '') {
         const q = searchQuery.toLowerCase();
@@ -582,7 +601,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
       }
       return true;
     });
-  }, [payrollRows, searchQuery, selectedMonth]);
+  }, [payrollRows, searchQuery, selectedMonth, fiscalYearMonthSet]);
 
   // 表示行 + 一覧列の値をあらかじめまとめて計算しておき、ソート・描画の両方で使い回す。
   // ★2026-09-02修正: 有給(手入力)の追加日数・金額を、一覧の「有給日数」「総支給額」
@@ -700,7 +719,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
             onChange={(e) => onSelectedMonthChange(e.target.value)}
             className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
           >
-            <option value="ALL">全対象年月 ({payrollRows.length}件)</option>
+            <option value="ALL">全月(この決算期・{fiscalYearRowsCount}件)</option>
             {availableMonths.map((m) => (
               <option key={m} value={m}>
                 {m}

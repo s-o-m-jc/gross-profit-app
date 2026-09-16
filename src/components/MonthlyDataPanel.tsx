@@ -15,6 +15,12 @@ interface MonthlyDataPanelProps {
   onLoadFromFile: (file: File) => void;
   /** falseの場合(viewer)は「ファイルから読込」(上書き操作)を非表示にする。閲覧・エクスポートは可能。 */
   canEdit: boolean;
+  /** ★2026-09-20追加(はまさんの指摘「月一覧が決算期と連動していない」): 選択中の決算期に
+   * 属する対象年月一覧("YYYY-MM"×12)。画面上部の「決算期指定」と同じ値をApp.tsx(AppShell)側
+   * から渡してもらい、月一覧をその決算期の月だけに絞り込む(データが存在する全期間ではなく)。 */
+  fiscalYearMonths: string[];
+  /** 選択中の決算期のラベル(月一覧の見出し脇に「◯◯年◯月期の月のみ表示中」等の説明表示用) */
+  fiscalYearLabel: string;
 }
 
 const CATEGORY_COLUMNS: {
@@ -66,9 +72,16 @@ export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
   onSaveToFile,
   onLoadFromFile,
   canEdit,
+  fiscalYearMonths,
+  fiscalYearLabel,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const months = listRealMonths(companyMonths);
+  // ★2026-09-20修正(はまさんの指摘「月一覧が決算期と連動していない」): 以前はこの会社に
+  // 存在する全期間の月をそのまま列挙していたため、データが存在する全期間(何年分も)が
+  // 一つの長い一覧になってしまっていた。画面上部の「決算期指定」と同じ範囲(fiscalYearMonths)
+  // に絞り込む。
+  const fiscalYearMonthSet = new Set(fiscalYearMonths);
+  const months = listRealMonths(companyMonths).filter((m) => fiscalYearMonthSet.has(m));
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
@@ -79,7 +92,7 @@ export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
             <span>データ管理 ({companyName})</span>
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            月ごとに読み込み済みのCSVデータ一覧。ブラウザに自動保存され、リロードしても保持されます。
+            月ごとに読み込み済みのCSVデータ一覧(選択中の決算期「{fiscalYearLabel}」の月のみ表示)。ブラウザに自動保存され、リロードしても保持されます。
           </p>
         </div>
 
@@ -120,7 +133,8 @@ export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
 
       {months.length === 0 ? (
         <p className="text-xs text-slate-400 py-4 text-center border border-dashed border-slate-200 rounded-lg">
-          まだこの会社のデータは読み込まれていません。下のエリアからCSVをアップロードしてください。
+          選択中の決算期「{fiscalYearLabel}」にはまだこの会社のデータが読み込まれていません。
+          下のエリアからCSVをアップロードするか、画面上部の「決算期指定」を切り替えてご確認ください。
         </p>
       ) : (
         <div className="overflow-x-auto table-scroll">

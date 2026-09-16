@@ -132,21 +132,34 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
   // 正しく機能する)、閉じている時はrowSpan=1(2段目自体が存在しないため、1段の通常ヘッダーとして
   // 扱う)にすることで解消した。
 
+  const fiscalYearMonthSet = useMemo(() => new Set(fiscalYearMonths), [fiscalYearMonths]);
+
   // 対象年月ユニークリスト
+  // ★2026-09-20修正(はまさんの指摘「対象年月プルダウンが決算期と連動していない」): 以前は
+  // resultsに含まれる全期間の月をそのまま列挙していたため、データが存在する全期間(何年分も)が
+  // 一つの長いリストになってしまっていた。画面上部の「決算期指定」と同じ範囲(fiscalYearMonths、
+  // App.tsx側でbuildFiscalYearOptions/getFiscalYearMonthsから計算)に絞り込む。
   const availableMonths = useMemo(() => {
     const months = Array.from(new Set(results.map((r) => r.targetMonth))).sort();
-    return months;
-  }, [results]);
+    return months.filter((m) => fiscalYearMonthSet.has(m));
+  }, [results, fiscalYearMonthSet]);
 
-  const fiscalYearMonthSet = useMemo(() => new Set(fiscalYearMonths), [fiscalYearMonths]);
+  // 「全対象年月(この決算期)」選択時の件数表示用。決算期内の月に絞った件数(selectedMonthの
+  // 選択状態には依存しない、「月ごと」プルダウンの選択肢自体の説明のため)。
+  const fiscalYearResultsCount = useMemo(
+    () => results.filter((r) => fiscalYearMonthSet.has(r.targetMonth)).length,
+    [results, fiscalYearMonthSet]
+  );
 
   // フィルタリング処理
   const filteredResults = useMemo(() => {
     return results.filter((item) => {
-      // 表示範囲フィルタ: 月ごと(選択した1ヶ月 or 全期間) / 年間(決算期、選択中の決算期の12ヶ月分)
-      if (viewScope === 'fiscalYear') {
-        if (!fiscalYearMonthSet.has(item.targetMonth)) return false;
-      } else if (selectedMonth !== 'ALL' && item.targetMonth !== selectedMonth) {
+      // 表示範囲フィルタ: 月ごと(選択した1ヶ月 or 決算期内の全月) / 年間(決算期、選択中の決算期の12ヶ月分)
+      // ★2026-09-20修正: 「月ごと」の「全対象年月」も、以前は決算期に関わらずデータが存在する
+      // 全期間を対象にしていたが、「選択中の決算期内の全月」という意味に変更した。そのため
+      // viewScopeによらず、まず選択中の決算期の月かどうかを判定する。
+      if (!fiscalYearMonthSet.has(item.targetMonth)) return false;
+      if (viewScope === 'month' && selectedMonth !== 'ALL' && item.targetMonth !== selectedMonth) {
         return false;
       }
 
@@ -293,7 +306,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               onChange={(e) => onSelectedMonthChange(e.target.value)}
               className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
             >
-              <option value="ALL">全対象年月 ({results.length}件)</option>
+              <option value="ALL">全月(この決算期・{fiscalYearResultsCount}件)</option>
               {availableMonths.map((m) => (
                 <option key={m} value={m}>
                   {m}
