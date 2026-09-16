@@ -55,7 +55,6 @@ import {
   initialAppMonthlyData,
   flattenCompanyMonths,
   mergeGroupedRowsIntoCompanyMonths,
-  clearCompanyMonths,
   groupByTargetMonth,
   hasAnyData,
   addManualEntryRow,
@@ -472,16 +471,12 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   const handleRemovePersonInCharge = (row: PersonInChargeRow) =>
     handleRemoveManualEntry('personInChargeRows', row.targetMonth, row.id);
 
-  const handleClearAll = () => {
-    if (
-      !window.confirm(
-        `${selectedCompany.name}の全月のデータを削除します。この操作は元に戻せません(Supabase上のデータも削除されます)。よろしいですか？`
-      )
-    ) {
-      return;
-    }
-    setMonthlyData((prev) => clearCompanyMonths(prev, selectedCompanyId));
-  };
+  // ★2026-09-16削除(はまさんの指摘): 「データをクリア」ボタン(UIからの全月一括削除)は、
+  // 今後は誤操作防止のためUIから撤去し、一括削除が必要な場合はローカルのClaude Codeが
+  // バックアップ→確認→削除の手順でスクリプト実行する運用に一本化する方針となった。
+  // 元のhandleClearAll関数・CsvUploaderのonClearAllボタンはこの対応で削除済み。
+  // データモデル側のclearCompanyMonths(utils/monthlyData.ts)自体は残しているが、
+  // 現在どこからも呼び出していない。
 
   // プロジェクトデータ(閲覧可能な会社・全月)をJSONファイルに保存/読込する
   // (PCの乗り換え・ブラウザ変更時に、このファイルを新環境へ持ち込んで読み込む運用を想定)
@@ -804,7 +799,6 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
                 onPayrollLoaded={handlePayrollLoaded}
                 onBillingLoaded={handleBillingLoaded}
                 onInvoiceLoaded={handleInvoiceLoaded}
-                onClearAll={handleClearAll}
                 canUndo={!!undoSnapshot && undoSnapshot.companyId === selectedCompanyId}
                 undoLabel={undoSnapshot?.label}
                 onUndo={handleUndoLastCsvUpload}

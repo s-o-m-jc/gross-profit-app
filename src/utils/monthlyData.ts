@@ -201,7 +201,13 @@ export function flattenCompanyMonths(companyMonths: CompanyMonthlyData): Monthly
   return result;
 }
 
-/** 会社の月別データをすべて空にする(データクリア用) */
+/**
+ * 会社の月別データをすべて空にする(データクリア用)。
+ * ★2026-09-16: 呼び出し元だったUIの「データをクリア」ボタン(CsvUploader.tsx)は、誤操作防止の
+ * ため撤去した(はまさんの指摘。今後の一括削除はローカルのClaude Codeがバックアップ→確認→
+ * 削除の手順でスクリプト実行する運用に一本化)。現在どこからも呼び出されていないが、関数自体は
+ * データモデルの一部として残す。
+ */
 export function clearCompanyMonths(app: AppMonthlyData, companyId: CompanyId): AppMonthlyData {
   return { ...app, [companyId]: {} };
 }

@@ -12,7 +12,6 @@ import {
   UploadCloud,
   FileCheck,
   FilePlus,
-  Trash2,
   Download,
   CheckCircle,
   AlertCircle,
@@ -41,7 +40,6 @@ interface CsvUploaderProps {
   onPayrollLoaded: (data: PayrollRow[]) => void;
   onBillingLoaded: (data: BillingRow[]) => void;
   onInvoiceLoaded: (data: InvoicePrintRow[]) => void;
-  onClearAll: () => void;
   /** 直前のCSVアップロードを取り消せるか(1操作分のみ)。App.tsx側でアップロード前の状態を保持している。 */
   canUndo: boolean;
   /** 取り消し対象の操作の説明(ボタンのツールチップ表示用) */
@@ -56,7 +54,6 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
   onPayrollLoaded,
   onBillingLoaded,
   onInvoiceLoaded,
-  onClearAll,
   canUndo,
   undoLabel,
   onUndo,
@@ -219,15 +216,6 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
             >
               <Undo2 className="w-3.5 h-3.5" />
               <span>直前のアップロードを取り消す</span>
-            </button>
-          )}
-          {(payrollRows.length > 0 || billingRows.length > 0) && (
-            <button
-              onClick={onClearAll}
-              className="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200 transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>データをクリア</span>
             </button>
           )}
         </div>
