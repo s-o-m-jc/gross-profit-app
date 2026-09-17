@@ -306,6 +306,11 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   // 線が重なって見づらいとの指摘を受け2グラフに分割した。domainもそれぞれの指標専用に分け、
   // 各グラフのY軸を最大限拡大できるようにする(片方の指標の値に引っ張られて拡大しきれない、
   // という問題を解消)。
+  // ★2026-09-25修正(はまさんの指摘「Y軸の余白が大きく月ごとの差が読み取りにくい」):
+  // 以前はstep=5(スタッフ人数グラフと同じ刻み)を流用していたが、粗利率は実データが数%〜30%
+  // 程度の狭い帯に収まることが多く、5%刻みの丸め+余白では拡大が足りなかった。step=2に
+  // 変更し、より実データの最小値・最大値に近い範囲まで拡大する(丸め自体は0以上のきりのよい
+  // 偶数刻みのまま維持し、目盛りの見た目が崩れないようにしている)。
   const nominalMarginDomain = useMemo(() => {
     const values: number[] = [];
     threePeriodData.forEach((d) => {
@@ -315,7 +320,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
         values.push(d.prevPrevNominalGrossMarginRate);
       }
     });
-    return computeAxisDomain(values, 5);
+    return computeAxisDomain(values, 2);
   }, [threePeriodData, hasPreviousYearMarginData, hasPreviousPreviousYearMarginData]);
 
   const realMarginDomain = useMemo(() => {
@@ -325,7 +330,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
       if (hasPreviousYearMarginData && d.prevGrossMarginRate !== null) values.push(d.prevGrossMarginRate);
       if (hasPreviousPreviousYearMarginData && d.prevPrevGrossMarginRate !== null) values.push(d.prevPrevGrossMarginRate);
     });
-    return computeAxisDomain(values, 5);
+    return computeAxisDomain(values, 2);
   }, [threePeriodData, hasPreviousYearMarginData, hasPreviousPreviousYearMarginData]);
 
   // ★2026-09-22追加(はまさんのご要望「グラフ1の3期比較・右側軸目盛り追加」): 総売上高・
@@ -1203,12 +1208,17 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+              {/* ★2026-09-25修正(はまさんの指摘「今期・前期・前々期が同系色の濃淡で見分けにくい」):
+                  以前は名目粗利率=青系の濃淡3色だったが、線が重なると判別しづらいため、他のグラフ
+                  (グラフ2のスタッフ人数推移)と同じ配色ルール(今期=インディゴ/前期=アンバー/
+                  前々期=エメラルド、色相自体を大きく変える)に統一した。線種(実線/太破線/細点線)
+                  は維持。 */}
               <Line
                 yAxisId="left"
                 type="monotone"
                 dataKey="nominalGrossMarginRate"
                 name="名目粗利率(今期)"
-                stroke="#0ea5e9"
+                stroke="#4f46e5"
                 strokeWidth={2.5}
                 dot={{ r: 4 }}
                 connectNulls
@@ -1219,7 +1229,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                   type="monotone"
                   dataKey="prevNominalGrossMarginRate"
                   name="名目粗利率(前期)"
-                  stroke="#0369a1"
+                  stroke="#f59e0b"
                   strokeWidth={2}
                   strokeDasharray="8 4"
                   dot={{ r: 3 }}
@@ -1232,7 +1242,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                   type="monotone"
                   dataKey="prevPrevNominalGrossMarginRate"
                   name="名目粗利率(前々期)"
-                  stroke="#38bdf8"
+                  stroke="#10b981"
                   strokeWidth={1.75}
                   strokeDasharray="2 3"
                   dot={{ r: 2.5 }}
@@ -1313,12 +1323,14 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+              {/* ★2026-09-25修正(はまさんの指摘): 名目粗利率グラフと同じ配色ルールに統一
+                  (今期=インディゴ/前期=アンバー/前々期=エメラルド)。線種は維持。 */}
               <Line
                 yAxisId="left"
                 type="monotone"
                 dataKey="grossMarginRate"
                 name="実質粗利率(今期)"
-                stroke="#f59e0b"
+                stroke="#4f46e5"
                 strokeWidth={2.5}
                 dot={{ r: 4 }}
               />
@@ -1328,7 +1340,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                   type="monotone"
                   dataKey="prevGrossMarginRate"
                   name="実質粗利率(前期)"
-                  stroke="#b45309"
+                  stroke="#f59e0b"
                   strokeWidth={2}
                   strokeDasharray="8 4"
                   dot={{ r: 3 }}
@@ -1341,7 +1353,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                   type="monotone"
                   dataKey="prevPrevGrossMarginRate"
                   name="実質粗利率(前々期)"
-                  stroke="#fcd34d"
+                  stroke="#10b981"
                   strokeWidth={1.75}
                   strokeDasharray="2 3"
                   dot={{ r: 2.5 }}
