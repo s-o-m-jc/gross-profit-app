@@ -25,6 +25,7 @@ import {
   LineChart,
   Bar,
   Line,
+  ReferenceLine,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -32,6 +33,22 @@ import {
   Legend,
 } from 'recharts';
 import { FiscalYearSummary } from '../types';
+
+/**
+ * ★2026-09-21追加(はまさんのご要望「Y軸の下限を実データに合わせて引き上げて、変化を見やすく
+ * してほしい」): 実データの最小値・最大値からYAxisのdomainを計算する。Rechartsの既定
+ * (domain未指定時は[0, 'auto'])だと、実データが75〜95のような狭い帯に集中していても
+ * 0からの表示になり変化が見えにくいため、実データの範囲にstep刻みで少し余白を持たせた
+ * [下限, 上限]を返す(下限は0未満にはしない)。
+ */
+function computeAxisDomain(values: number[], step: number): [number, number] {
+  if (values.length === 0) return [0, step * 10];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const lower = Math.max(0, Math.floor((min - step) / step) * step);
+  const upper = Math.ceil((max + step) / step) * step;
+  return lower === upper ? [Math.max(0, lower - step), upper + step] : [lower, upper];
+}
 
 interface FiscalYearAnalyticsProps {
   summary: FiscalYearSummary;
@@ -120,8 +137,15 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
       salary: totalSalaryNarrow - summary.totalLeaveAllowance,
       leaveAllowance: summary.totalLeaveAllowance,
       retirementAmount: summary.totalRetirement,
-      billingUnitPriceSum: summary.totalBillingUnitPrice,
-      payUnitPriceSum: summary.totalPayUnitPrice,
+      // ★2026-09-21修正(はまさんの指摘「請求@・支払@の合計欄が意味のない大きな数字になっている」):
+      // 請求＠・支払＠は「1件あたり単価」の列であり、月次サマリ表の各月の値(billingUnitPriceSum等)
+      // 自体が既に「その月の全契約の単価を単純合計した値」(名目粗利率算出用の中間値)である。
+      // これをさらに全期間ぶん合計すると、単価でも合計金額でもない意味を持たない数字になって
+      // しまうため、この列の年間合計欄は表示しない(月次粗利明細一覧の「交通費(税抜)」列が
+      // 常に「不明」表示になっているのと同じ考え方で、算出しても意味の無い値は表示しない)。
+      // 名目粗利率(下記)自体は、この2つの単純合計ではなく、calculator.ts側で全期間の契約データを
+      // 対象に正しく算出済みの値(summary.nominalGrossMarginRate)をそのまま使っており、
+      // 影響を受けない。
       nominalGrossMarginRate: summary.nominalGrossMarginRate,
       nominalGrossMarginRateDataAvailable: summary.billingUnitPriceDataAvailable,
       // 社保他小計(狭義) = 社保(雇用保険込み) + 交通費(自社負担) + 駐車場代 (MonthlyTrend.socialInsuranceOtherと同じ式)
@@ -202,6 +226,56 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   const hasPreviousPreviousYearMarginData = previousPreviousSummary.monthlyTrends.some(
     (m) => m.grossMarginRate !== 0 || m.nominalGrossMarginRateDataAvailable
   );
+
+  // ★2026-09-21追加(はまさんのご要望「スタッフ人数グラフのY軸調整・年間平均の追加」):
+  // Y軸の下限をデータの実際の分布に合わせるため、0(=データが無い月のゼロ埋め)を除いた
+  // 実データのみからdomainを計算する(データが無い期の系列は非表示にしているため、その期の
+  // 値は最初から含まれない)。
+  const staffCountDomain = useMemo(() => {
+    const values: number[] = [];
+    threePeriodData.forEach((d) => {
+      if (d.staffCount > 0) values.push(d.staffCount);
+      if (hasPreviousYearStaffData && d.prevStaffCount) values.push(d.prevStaffCount);
+      if (hasPreviousPreviousYearStaffData && d.prevPrevStaffCount) values.push(d.prevPrevStaffCount);
+    });
+    return computeAxisDomain(values, 5);
+  }, [threePeriodData, hasPreviousYearStaffData, hasPreviousPreviousYearStaffData]);
+
+  // 年間平均スタッフ人数(月次サマリのstaffCountを単純に12ヶ月平均したもの。稼働スタッフ総数
+  // (activeStaffCount、期間中に1度でも在籍した人数を重複排除した値)とは別の指標であることに
+  // 注意。こちらは「月あたり何人体制だったか」の平均値)。
+  const avgMonthlyStaffCount = (trends: FiscalYearSummary['monthlyTrends']) => {
+    if (trends.length === 0) return 0;
+    return Number((trends.reduce((s, m) => s + m.staffCount, 0) / trends.length).toFixed(1));
+  };
+  const avgStaffCountThis = avgMonthlyStaffCount(summary.monthlyTrends);
+  const avgStaffCountPrev = avgMonthlyStaffCount(previousSummary.monthlyTrends);
+  const avgStaffCountPrevPrev = avgMonthlyStaffCount(previousPreviousSummary.monthlyTrends);
+
+  // ★2026-09-21追加(はまさんのご要望「粗利率グラフのY軸範囲も実データに合わせて調整」):
+  // 月次の名目粗利率(3期分)と、下記Dで参考線として表示する実質粗利率の年間平均(3期分)を
+  // 合わせた実データからdomainを計算する。
+  const marginRateDomain = useMemo(() => {
+    const values: number[] = [];
+    threePeriodData.forEach((d) => {
+      if (d.nominalGrossMarginRate !== null) values.push(d.nominalGrossMarginRate);
+      if (hasPreviousYearMarginData && d.prevNominalGrossMarginRate !== null) values.push(d.prevNominalGrossMarginRate);
+      if (hasPreviousPreviousYearMarginData && d.prevPrevNominalGrossMarginRate !== null) {
+        values.push(d.prevPrevNominalGrossMarginRate);
+      }
+    });
+    values.push(summary.overallGrossMarginRate);
+    if (hasPreviousYearMarginData) values.push(previousSummary.overallGrossMarginRate);
+    if (hasPreviousPreviousYearMarginData) values.push(previousPreviousSummary.overallGrossMarginRate);
+    return computeAxisDomain(values, 5);
+  }, [
+    threePeriodData,
+    hasPreviousYearMarginData,
+    hasPreviousPreviousYearMarginData,
+    summary.overallGrossMarginRate,
+    previousSummary.overallGrossMarginRate,
+    previousPreviousSummary.overallGrossMarginRate,
+  ]);
 
   return (
     <div className="space-y-6 mb-8">
@@ -540,8 +614,18 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                     </td>
                   </>
                 )}
-                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.billingUnitPriceSum.toLocaleString()}</td>
-                <td className="py-2 px-3 text-right font-mono bg-indigo-50">¥{monthlyTotals.payUnitPriceSum.toLocaleString()}</td>
+                <td
+                  className="py-2 px-3 text-right font-mono bg-indigo-50 text-slate-300"
+                  title="請求＠は「1件あたり単価」の列のため、年間合計は意味を持ちません"
+                >
+                  -
+                </td>
+                <td
+                  className="py-2 px-3 text-right font-mono bg-indigo-50 text-slate-300"
+                  title="支払＠は「1件あたり単価」の列のため、年間合計は意味を持ちません"
+                >
+                  -
+                </td>
                 <td className="py-2 px-3 text-right font-mono bg-indigo-50">
                   {monthlyTotals.nominalGrossMarginRateDataAvailable ? `${monthlyTotals.nominalGrossMarginRate}%` : 'データなし'}
                 </td>
@@ -647,21 +731,22 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
       </div>
 
       {/* 2. 月次推移 Recharts チャート
-          ★2026-09-20修正(はまさんのご要望): 1.「直接原価」の棒グラフ系列を削除し、代わりに
-          「名目粗利率」の折れ線を追加した(既存の「粗利率」は「実質粗利率」に改称。同じ値・同じ
-          定義で、表示名のみ変更)。2. 前年(前決算期)の同月データを、総売上高・実質粗利益・
-          実質粗利率・名目粗利率それぞれ破線の参考系列として重ねた(前期データが1件も無い場合は
-          誤解を招くため系列自体を表示しない)。3. 前年比較用の破線は、色を濃く・線を太くして
-          視認性を上げた(以前は薄いパステル色・細線で見づらいとの指摘があったため)。
-          ★重要(はまさんへの確認事項): 「粗利益」バーは「名目粗利益」ではなく「実質粗利益」に
-          改称した。このアプリには「名目粗利率」(%)は存在するが「名目粗利益」(金額)に相当する
-          フィールドは存在しない(以前、名目粗利額という列を独自に計算して追加したことがあったが、
-          はまさんが実際のExcelを確認した結果「名目粗利率」のみが実在する項目で「名目粗利額」は
-          存在しないとのご指摘を受けて削除した経緯があるため)。このグラフの「粗利益」バーの実体は
-          実額ベースの粗利益(=月次サマリ表の「実質粗利益」列と同じ値)のため、「名目粗利益」という
-          ラベルを付けると誤ったデータ表示になってしまうと判断し、「実質粗利益」に変更した。
-          もし「名目粗利益」という金額を新たに計算で追加してほしいという意図であれば、算出方法
-          (例: 派遣売上×名目粗利率 等)をご指示いただければ別途対応します。 */}
+          ★2026-09-20修正(はまさんのご要望): 1.「直接原価」の棒グラフ系列を削除。2. 前年
+          (前決算期)の同月データを、総売上高・実質粗利益それぞれ破線の参考系列として重ねた
+          (前期データが1件も無い場合は誤解を招くため系列自体を表示しない)。3. 前年比較用の
+          破線は、色を濃く・線を太くして視認性を上げた。
+          ★2026-09-21修正(はまさんの指摘「粗利率の折れ線と同居してごちゃごちゃする」): 名目
+          粗利率・実質粗利率の折れ線(今期・前年、計4本)を削除し、総売上高・実質粗利益の棒
+          グラフ(と前年比較)だけのシンプルな構成に戻した。粗利率は専用グラフ(決算期月次
+          粗利率推移)で確認する。
+          ★重要(はまさんへの確認事項、前回回答分を再掲): 「粗利益」バーは「名目粗利益」ではなく
+          「実質粗利益」に改称している。このアプリには「名目粗利率」(%)は存在するが「名目粗利益」
+          (金額)に相当するフィールドは存在しない(以前、名目粗利額という列を独自に計算して
+          追加したことがあったが、はまさんが実際のExcelを確認した結果「名目粗利率」のみが実在する
+          項目で「名目粗利額」は存在しないとのご指摘を受けて削除した経緯があるため)。このグラフの
+          「粗利益」バーの実体は実額ベースの粗利益(=月次サマリ表の「実質粗利益」列と同じ値)の
+          ため、「名目粗利益」というラベルを付けると誤ったデータ表示になってしまうと判断し、
+          「実質粗利益」のままにしている。 */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -670,8 +755,9 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
               <span>決算期月次売上・粗利益推移 ({summary.startMonth} 〜 {summary.endMonth})</span>
             </h3>
             <p className="text-xs text-slate-500">
-              月別の総売上高(棒)・実質粗利益(棒)、実質粗利率・名目粗利率(折れ線)の推移
+              月別の総売上高(棒)・実質粗利益(棒)の推移
               {hasPreviousYearSalesData && '。太い破線は前年同月の値'}
+              (粗利率は下の「決算期月次粗利率推移」でご確認ください)
             </p>
           </div>
         </div>
@@ -687,56 +773,20 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
             <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis
-                yAxisId="left"
-                tickFormatter={(val) => `¥${(val / 10000).toLocaleString()}万`}
-                tick={{ fontSize: 11 }}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                unit="%"
-                domain={[0, 40]}
-                tick={{ fontSize: 11 }}
-              />
+              <YAxis tickFormatter={(val) => `¥${(val / 10000).toLocaleString()}万`} tick={{ fontSize: 11 }} />
               <Tooltip
                 formatter={(value: any, name: any) => {
                   if (value === null || value === undefined) return ['データなし', name];
-                  if (typeof name === 'string' && name.includes('粗利率')) return [`${value}%`, name];
                   return [`¥${Number(value).toLocaleString()}`, name];
                 }}
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
-              <Bar yAxisId="left" dataKey="totalSales" name="総売上高" fill="#6366f1" radius={[4, 4, 0, 0]} />
-              <Bar yAxisId="left" dataKey="grossProfit" name="実質粗利益" fill="#10b981" radius={[4, 4, 0, 0]} />
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="grossMarginRate"
-                name="実質粗利率"
-                stroke="#f59e0b"
-                strokeWidth={2.5}
-                dot={{ r: 4 }}
-              />
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="nominalGrossMarginRate"
-                name="名目粗利率"
-                stroke="#0ea5e9"
-                strokeWidth={2}
-                strokeDasharray="4 2"
-                dot={{ r: 3 }}
-                connectNulls
-              />
+              <Bar dataKey="totalSales" name="総売上高" fill="#6366f1" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="grossProfit" name="実質粗利益" fill="#10b981" radius={[4, 4, 0, 0]} />
               {hasPreviousYearSalesData && (
                 <>
-                  {/* ★2026-09-20修正(はまさんの指摘「前年比較の破線が薄くて分かりにくい」):
-                      以前は#a5b4fc/#6ee7b7(パステル調)・strokeWidth 1.5だったが、はっきり濃い色
-                      (indigo-700/emerald-700相当)・strokeWidth 2.5・大きめの破線間隔に変更した。 */}
                   <Line
-                    yAxisId="left"
                     type="monotone"
                     dataKey="prevTotalSales"
                     name="総売上高(前年)"
@@ -747,7 +797,6 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                     connectNulls
                   />
                   <Line
-                    yAxisId="left"
                     type="monotone"
                     dataKey="prevGrossProfit"
                     name="実質粗利益(前年)"
@@ -755,28 +804,6 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                     strokeWidth={2.5}
                     strokeDasharray="8 4"
                     dot={{ r: 3 }}
-                    connectNulls
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="prevGrossMarginRate"
-                    name="実質粗利率(前年)"
-                    stroke="#b45309"
-                    strokeWidth={2}
-                    strokeDasharray="8 4"
-                    dot={{ r: 2.5 }}
-                    connectNulls
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="prevNominalGrossMarginRate"
-                    name="名目粗利率(前年)"
-                    stroke="#0369a1"
-                    strokeWidth={2}
-                    strokeDasharray="2 3"
-                    dot={{ r: 2.5 }}
                     connectNulls
                   />
                 </>
@@ -788,7 +815,10 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
 
       {/* 2.6 スタッフ人数 月次推移 (★2026-09-20新規追加、直近3決算期分の折れ線比較に変更
           (はまさんのご要望「棒グラフ+前年のみ点線比較は見づらいため、今期・前期・前々期を
-          折れ線グラフで並べて表示してほしい」)。データが存在する期の分だけ線を描画する。 */}
+          折れ線グラフで並べて表示してほしい」)。データが存在する期の分だけ線を描画する。
+          ★2026-09-21修正(はまさんのご要望「Y軸調整・年間平均の追加」): Y軸の下限を実データの
+          分布に合わせて引き上げ(computeAxisDomain参照)、各期の年間平均(月次の単純平均)を
+          グラフ上部にバッジ表示した。 */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -802,6 +832,22 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2 mb-3">
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+            月平均(今期): {avgStaffCountThis}名
+          </span>
+          {hasPreviousYearStaffData && (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+              月平均(前期): {avgStaffCountPrev}名
+            </span>
+          )}
+          {hasPreviousPreviousYearStaffData && (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              月平均(前々期): {avgStaffCountPrevPrev}名
+            </span>
+          )}
+        </div>
+
         {!hasPreviousYearStaffData && !hasPreviousPreviousYearStaffData && (
           <p className="text-[11px] text-slate-400 mb-2">
             前期・前々期分のデータが無いため、今期のみ表示しています。
@@ -813,7 +859,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
             <LineChart data={threePeriodData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} domain={staffCountDomain} />
               <Tooltip
                 formatter={(value: any, name: any) => [value === null || value === undefined ? 'データなし' : `${value}名`, name]}
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
@@ -858,7 +904,16 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
 
       {/* 2.7 粗利率 月次推移 (★2026-09-20新規追加。はまさんのご要望「スタッフ人数グラフと同じ
           考え方で、名目粗利率・実質粗利率も直近3決算期分の単独の折れ線グラフを新設してほしい」。
-          既存の月次推移グラフ(総売上高・粗利益の棒グラフ)とは別の独立したグラフとして追加した)。 */}
+          既存の月次推移グラフ(総売上高・粗利益の棒グラフ)とは別の独立したグラフとして追加した)。
+          ★2026-09-21修正(はまさんのご要望「一般従業員向けの見える化の観点で、実質粗利率は
+          月次の上下動ではなく年間平均の水平線に変更してほしい」): 実質粗利率は有給精算等の
+          タイミングで月によって偏りが出やすく、月次の折れ線をそのまま見せると誤解を招くため、
+          各決算期の年間平均(summary.overallGrossMarginRate、月次サマリ表・KPIカードと同じ
+          既存の正しい計算値。A項で「実質粗利益合計÷総売上合計」が正しいと確認済みのものを
+          再利用しており、新しい計算式は追加していない)を示す水平な参考線(ReferenceLine)に
+          変更した。名目粗利率は従来通り月ごとの実際の値を折れ線で表示する。月ごとの正確な
+          実質粗利率は月次サマリ表(数値)で確認できる。あわせてY軸の範囲も実データに合わせて
+          調整した(computeAxisDomain参照)。 */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -867,7 +922,8 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
               <span>決算期月次粗利率推移 (直近3決算期比較、{summary.startMonth} 〜 {summary.endMonth} = 今期)</span>
             </h3>
             <p className="text-xs text-slate-500">
-              月別の実質粗利率・名目粗利率を、今期(実線)・前期(破線)・前々期(点線)の3決算期分並べて比較
+              名目粗利率は月別の実際の値(今期実線・前期破線・前々期点線)、実質粗利率は月によって
+              偏りが出やすいため各決算期の年間平均を水平線で表示
             </p>
           </div>
         </div>
@@ -883,13 +939,12 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
             <LineChart data={threePeriodData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis unit="%" domain={[0, 40]} tick={{ fontSize: 11 }} />
+              <YAxis unit="%" domain={marginRateDomain} tick={{ fontSize: 11 }} />
               <Tooltip
                 formatter={(value: any, name: any) => [value === null || value === undefined ? 'データなし' : `${value}%`, name]}
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
-              <Line type="monotone" dataKey="grossMarginRate" name="実質粗利率(今期)" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 4 }} />
               <Line
                 type="monotone"
                 dataKey="nominalGrossMarginRate"
@@ -900,52 +955,62 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                 connectNulls
               />
               {hasPreviousYearMarginData && (
-                <>
-                  <Line
-                    type="monotone"
-                    dataKey="prevGrossMarginRate"
-                    name="実質粗利率(前期)"
-                    stroke="#d97706"
-                    strokeWidth={2}
-                    strokeDasharray="8 4"
-                    dot={{ r: 3 }}
-                    connectNulls
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="prevNominalGrossMarginRate"
-                    name="名目粗利率(前期)"
-                    stroke="#0369a1"
-                    strokeWidth={2}
-                    strokeDasharray="8 4"
-                    dot={{ r: 3 }}
-                    connectNulls
-                  />
-                </>
+                <Line
+                  type="monotone"
+                  dataKey="prevNominalGrossMarginRate"
+                  name="名目粗利率(前期)"
+                  stroke="#0369a1"
+                  strokeWidth={2}
+                  strokeDasharray="8 4"
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
               )}
               {hasPreviousPreviousYearMarginData && (
-                <>
-                  <Line
-                    type="monotone"
-                    dataKey="prevPrevGrossMarginRate"
-                    name="実質粗利率(前々期)"
-                    stroke="#fbbf24"
-                    strokeWidth={1.75}
-                    strokeDasharray="2 3"
-                    dot={{ r: 2.5 }}
-                    connectNulls
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="prevPrevNominalGrossMarginRate"
-                    name="名目粗利率(前々期)"
-                    stroke="#38bdf8"
-                    strokeWidth={1.75}
-                    strokeDasharray="2 3"
-                    dot={{ r: 2.5 }}
-                    connectNulls
-                  />
-                </>
+                <Line
+                  type="monotone"
+                  dataKey="prevPrevNominalGrossMarginRate"
+                  name="名目粗利率(前々期)"
+                  stroke="#38bdf8"
+                  strokeWidth={1.75}
+                  strokeDasharray="2 3"
+                  dot={{ r: 2.5 }}
+                  connectNulls
+                />
+              )}
+              <ReferenceLine
+                y={summary.overallGrossMarginRate}
+                stroke="#f59e0b"
+                strokeWidth={2.5}
+                label={{ value: `実質粗利率(今期)平均 ${summary.overallGrossMarginRate}%`, position: 'insideTopLeft', fontSize: 11, fill: '#b45309' }}
+              />
+              {hasPreviousYearMarginData && (
+                <ReferenceLine
+                  y={previousSummary.overallGrossMarginRate}
+                  stroke="#d97706"
+                  strokeWidth={2}
+                  strokeDasharray="8 4"
+                  label={{
+                    value: `実質粗利率(前期)平均 ${previousSummary.overallGrossMarginRate}%`,
+                    position: 'insideBottomLeft',
+                    fontSize: 11,
+                    fill: '#d97706',
+                  }}
+                />
+              )}
+              {hasPreviousPreviousYearMarginData && (
+                <ReferenceLine
+                  y={previousPreviousSummary.overallGrossMarginRate}
+                  stroke="#fbbf24"
+                  strokeWidth={1.75}
+                  strokeDasharray="2 3"
+                  label={{
+                    value: `実質粗利率(前々期)平均 ${previousPreviousSummary.overallGrossMarginRate}%`,
+                    position: 'insideTopRight',
+                    fontSize: 11,
+                    fill: '#b45309',
+                  }}
+                />
               )}
             </LineChart>
           </ResponsiveContainer>
