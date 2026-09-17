@@ -270,12 +270,20 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
     return computeAxisDomain(values, 5);
   }, [threePeriodData, hasPreviousYearStaffData, hasPreviousPreviousYearStaffData]);
 
-  // 年間平均スタッフ人数(月次サマリのstaffCountを単純に12ヶ月平均したもの。稼働スタッフ総数
+  // 年間平均スタッフ人数(月次サマリのstaffCountを月平均したもの。稼働スタッフ総数
   // (activeStaffCount、期間中に1度でも在籍した人数を重複排除した値)とは別の指標であることに
   // 注意。こちらは「月あたり何人体制だったか」の平均値)。
+  // ★2026-09-24修正(はまさんの指摘「決算期の途中(例: 2ヶ月分しかデータが無い状態)で見ると、
+  // 平均値が決算期の全12ヶ月固定で割られており不当に小さく出る」): trends(monthlyTrends)は
+  // calculateFiscalYearSummaryの実装上、決算期の全12ヶ月ぶんゼロ埋め済みの固定長配列のため、
+  // 単純にtrends.length(常に12)で割ると、データが無い月が多いほど平均が不当に薄まってしまう
+  // バグがあった。データが実際に存在する月(staffCount > 0の月。給与CSVが1件でも取り込まれて
+  // いれば通常0人にはならないため、「その月にデータがあるか」の判定に使えるhasPreviousYear
+  // StaffData等と同じ考え方)だけを対象に平均を取るよう修正した。
   const avgMonthlyStaffCount = (trends: FiscalYearSummary['monthlyTrends']) => {
-    if (trends.length === 0) return 0;
-    return Number((trends.reduce((s, m) => s + m.staffCount, 0) / trends.length).toFixed(1));
+    const monthsWithData = trends.filter((m) => m.staffCount > 0);
+    if (monthsWithData.length === 0) return 0;
+    return Number((monthsWithData.reduce((s, m) => s + m.staffCount, 0) / monthsWithData.length).toFixed(1));
   };
   const avgStaffCountThis = avgMonthlyStaffCount(summary.monthlyTrends);
   const avgStaffCountPrev = avgMonthlyStaffCount(previousSummary.monthlyTrends);
@@ -918,15 +926,29 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                 tickFormatter={(val) => `¥${(val / 10000).toLocaleString()}万`}
                 tick={{ fontSize: 11 }}
               />
-              {/* ★2026-09-23追加: このYAxis(right)にはBar/Lineが1つも紐付いていないため、
-                  Recharts v3の内部実装によっては軸自体が描画されない可能性がある(実データ検証済み
-                  の確実な原因とまでは特定できていないが、念のための保険)。dataKeyが常にnullを
-                  返す不可視のLineを紐付け、右軸に確実にグラフィック要素が存在する状態にする。
-                  値が常にnullのためTooltip(既定のfilterNull=trueにより自動除外)・Legend
-                  (legendType="none")のどちらにも表示されない。 */}
-              <Line yAxisId="right" dataKey={() => null} name="" legendType="none" stroke="transparent" dot={false} activeDot={false} isAnimationActive={false} />
+              {/* ★2026-09-24修正(はまさんの指摘「右側Y軸が依然表示されない」を実機検証):
+                  前回はdataKeyが常にnullを返す不可視Lineで対策したが、実際にheadless Chromeで
+                  スクリーンショット検証した結果、「値が常にnullの系列」を紐付けても右軸自体が
+                  描画されないことが判明した(Recharts v3では、軸に紐づく系列の値が全てnullだと
+                  その軸ごと非表示になる模様)。実在するdataKey(totalSales、他の系列と同じ値)を
+                  そのまま使い、見た目だけtransparent化することで右軸を確実に描画させる方式に
+                  変更した(この方式で実機検証済み)。Tooltipには本来同じ値が二重に出てしまうため、
+                  formatter側でname===''(このダミー系列だけがnameを空にしている)の場合は
+                  nullを返して行ごと除外する(Recharts側の仕様: formatterがnullを返すとその
+                  Tooltip行は表示されない)。 */}
+              <Line
+                yAxisId="right"
+                dataKey="totalSales"
+                name=""
+                legendType="none"
+                stroke="transparent"
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+              />
               <Tooltip
                 formatter={(value: any, name: any) => {
+                  if (name === '') return null;
                   if (value === null || value === undefined) return ['データなし', name];
                   return [`¥${Number(value).toLocaleString()}`, name];
                 }}
@@ -1052,10 +1074,24 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                 domain={staffCountDomain}
                 tickCount={5}
               />
-              {/* 右軸にグラフィック要素を確実に紐付けるための不可視Line(chart1と同じ対策) */}
-              <Line yAxisId="right" dataKey={() => null} name="" legendType="none" stroke="transparent" dot={false} activeDot={false} isAnimationActive={false} />
+              {/* ★2026-09-24修正: 実機検証の結果、dataKeyが常にnullの不可視Lineでは右軸が
+                  描画されないことが判明したため、実在するdataKey(chart1と同じ対策、詳細は
+                  そちらのコメント参照)を使う方式に変更した。 */}
+              <Line
+                yAxisId="right"
+                dataKey="staffCount"
+                name=""
+                legendType="none"
+                stroke="transparent"
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+              />
               <Tooltip
-                formatter={(value: any, name: any) => [value === null || value === undefined ? 'データなし' : `${value}名`, name]}
+                formatter={(value: any, name: any) => {
+                  if (name === '') return null;
+                  return [value === null || value === undefined ? 'データなし' : `${value}名`, name];
+                }}
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
@@ -1146,9 +1182,24 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               <YAxis yAxisId="left" unit="%" domain={nominalMarginDomain} tickCount={5} tick={{ fontSize: 11 }} />
               <YAxis yAxisId="right" orientation="right" unit="%" domain={nominalMarginDomain} tickCount={5} tick={{ fontSize: 11 }} />
-              <Line yAxisId="right" dataKey={() => null} name="" legendType="none" stroke="transparent" dot={false} activeDot={false} isAnimationActive={false} />
+              {/* ★2026-09-24修正: 実機検証の結果、dataKeyが常にnullの不可視Lineでは右軸が
+                  描画されないことが判明したため、実在するdataKey(chart1と同じ対策)を使う
+                  方式に変更した。 */}
+              <Line
+                yAxisId="right"
+                dataKey="nominalGrossMarginRate"
+                name=""
+                legendType="none"
+                stroke="transparent"
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+              />
               <Tooltip
-                formatter={(value: any, name: any) => [value === null || value === undefined ? 'データなし' : `${value}%`, name]}
+                formatter={(value: any, name: any) => {
+                  if (name === '') return null;
+                  return [value === null || value === undefined ? 'データなし' : `${value}%`, name];
+                }}
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
@@ -1241,9 +1292,24 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               <YAxis yAxisId="left" unit="%" domain={realMarginDomain} tickCount={5} tick={{ fontSize: 11 }} />
               <YAxis yAxisId="right" orientation="right" unit="%" domain={realMarginDomain} tickCount={5} tick={{ fontSize: 11 }} />
-              <Line yAxisId="right" dataKey={() => null} name="" legendType="none" stroke="transparent" dot={false} activeDot={false} isAnimationActive={false} />
+              {/* ★2026-09-24修正: 実機検証の結果、dataKeyが常にnullの不可視Lineでは右軸が
+                  描画されないことが判明したため、実在するdataKey(chart1と同じ対策)を使う
+                  方式に変更した。 */}
+              <Line
+                yAxisId="right"
+                dataKey="grossMarginRate"
+                name=""
+                legendType="none"
+                stroke="transparent"
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+              />
               <Tooltip
-                formatter={(value: any, name: any) => [value === null || value === undefined ? 'データなし' : `${value}%`, name]}
+                formatter={(value: any, name: any) => {
+                  if (name === '') return null;
+                  return [value === null || value === undefined ? 'データなし' : `${value}%`, name];
+                }}
                 contentStyle={{ borderRadius: '8px', fontSize: '12px' }}
               />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
