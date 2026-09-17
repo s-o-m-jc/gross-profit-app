@@ -329,11 +329,43 @@ export function extractShikokuPastData(
  *   候補名側は減算記号「−」(U+2212)。csvParser.ts側に候補を追加済み)。
  */
 const OSAKA_PAYROLL_SHEET = '給与一覧（スタナビ）';
+// ★2026-09-26追加(はまさんが実ファイルを直接確認して判明): 2024-09・2025-02の2ヶ月分のみ、
+// ファイル作成側の命名ミスでこのシートが「請求一覧（スタナビ）」という名前になっていた
+// (中身の列構成(ｽﾀｯﾌ番号/ｽﾀｯﾌ氏名/出勤日数/有給日数/支払額等)は他の月の「給与一覧
+// （スタナビ）」と完全に一致しており、紛れもなく給与データだった)。この結果、
+// 「給与一覧（スタナビ）」シートが見つからず給与データが1件も取り込まれない不具合が起きていた。
+// 今後また同様の命名ミスが起きても給与データを取り込めるよう、代替シート名として許容する。
+const OSAKA_PAYROLL_SHEET_ALT_NAMES = ['請求一覧（スタナビ）'];
 const OSAKA_PAYROLL_HEADER_ROW = 1;
 const OSAKA_BILLING_SHEET = '請求支払（スタナビ）';
 const OSAKA_BILLING_HEADER_ROW = 1;
 const OSAKA_INVOICE_SHEET = '請求書（スタナビ）';
 const OSAKA_INVOICE_HEADER_ROW = 1;
+// 給与シート固有の列名(csvParser.tsのparsePayrollCsvが「出勤日数」列を給与データの目印として
+// 使っている。請求・請求書シートにはこの列名は登場しないため、シート名の候補一致にも失敗した
+// 場合の最終手段として、ヘッダー行の中身でシートを特定するのに使う)。
+const OSAKA_PAYROLL_HEADER_SIGNATURE = '出勤日数';
+
+/**
+ * 大阪の給与シートを名前で探す。まず正式名称「給与一覧（スタナビ）」、次に既知の命名ミスの
+ * 代替名(OSAKA_PAYROLL_SHEET_ALT_NAMES)を順に試す。いずれの名前にも一致しない場合の最終手段
+ * として、請求・請求書シート以外の全シートのヘッダー行を確認し、給与シート固有の列
+ * (出勤日数)を含むシートを給与シートとみなす(未知の命名ミスに対する保険)。
+ */
+function findOsakaPayrollSheetName(wb: XLSX.WorkBook): string | null {
+  const candidates = [OSAKA_PAYROLL_SHEET, ...OSAKA_PAYROLL_SHEET_ALT_NAMES];
+  for (const name of candidates) {
+    if (wb.Sheets[name]) return name;
+  }
+  for (const name of wb.SheetNames) {
+    if (name === OSAKA_BILLING_SHEET || name === OSAKA_INVOICE_SHEET) continue;
+    const header = sheetToAoaFromRow(wb.Sheets[name], OSAKA_PAYROLL_HEADER_ROW)[0] || [];
+    if (header.some((cell) => String(cell ?? '').includes(OSAKA_PAYROLL_HEADER_SIGNATURE))) {
+      return name;
+    }
+  }
+  return null;
+}
 
 export function extractOsakaPastData(
   wb: XLSX.WorkBook,
@@ -342,11 +374,17 @@ export function extractOsakaPastData(
 ): PastImportResult {
   const warnings: string[] = [];
 
-  const payrollSheet = wb.Sheets[OSAKA_PAYROLL_SHEET];
+  const payrollSheetName = findOsakaPayrollSheetName(wb);
+  const payrollSheet = payrollSheetName ? wb.Sheets[payrollSheetName] : undefined;
   let payrollRows: PayrollRow[] = [];
   if (!payrollSheet) {
     warnings.push(`「${OSAKA_PAYROLL_SHEET}」シートが見つかりませんでした。給与データは取り込まれません。`);
   } else {
+    if (payrollSheetName !== OSAKA_PAYROLL_SHEET) {
+      warnings.push(
+        `給与シートが正式名称「${OSAKA_PAYROLL_SHEET}」ではなく「${payrollSheetName}」という名前で見つかりました(ファイル作成側の命名ミスの可能性があります)。列構成から給与データと判断して取り込みましたが、念のため内容をご確認ください。`
+      );
+    }
     const csv = payrollSheetToCsv(payrollSheet, OSAKA_PAYROLL_HEADER_ROW);
     payrollRows = parsePayrollCsv(csv, fileName)
       .filter((r) => r.staffNo)
