@@ -60,6 +60,7 @@ import {
   addManualEntryRow,
   removeManualEntryRow,
   upsertPersonInChargeRow,
+  deleteCompanyMonth,
 } from './utils/monthlyData';
 import { loadAppState, saveAppState } from './utils/persistence';
 import { fetchMonthlyDataForCompanies, replaceCompanyMonthlyData } from './utils/supabaseSync';
@@ -483,6 +484,20 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // データモデル側のclearCompanyMonths(utils/monthlyData.ts)自体は残しているが、
   // 現在どこからも呼び出していない。
 
+  // ★2026-09-27追加(はまさんのご要望「1ヶ月単位の削除機能」): 取込みミスがあった際に管理者
+  // 自身がその都度対応できるよう、データ管理画面(MonthlyDataPanel)から1ヶ月分だけを削除できる
+  // 機能を追加した。上記の「データをクリア」(全月一括)とは異なり、こちらはUIからの削除を
+  // 前提とした機能のため、型-to-confirm・自動バックアップ等の安全策をDeleteMonthModal側に
+  // 実装した上で復活させている(方針の後退ではなく、安全策付きの限定的な復活)。
+  // 削除自体はローカルのmonthlyData状態から該当月のキーを取り除くだけで、実際のSupabase上の
+  // 削除は下の自動保存effect(replaceCompanyMonthlyData、既存の差分同期ロジック)が担う。
+  const handleDeleteMonth = (month: string) => {
+    setMonthlyData((prev) => ({
+      ...prev,
+      [selectedCompanyId]: deleteCompanyMonth(prev[selectedCompanyId], month),
+    }));
+  };
+
   // プロジェクトデータ(閲覧可能な会社・全月)をJSONファイルに保存/読込する
   // (PCの乗り換え・ブラウザ変更時に、このファイルを新環境へ持ち込んで読み込む運用を想定)
   const handleSaveToFile = () => {
@@ -837,6 +852,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             )}
 
             <MonthlyDataPanel
+              companyId={selectedCompanyId}
               companyName={selectedCompany.name}
               companyMonths={selectedCompanyMonths}
               onSaveToFile={handleSaveToFile}
@@ -844,6 +860,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               canEdit={canEdit}
               fiscalYearMonths={fiscalYearMonths}
               fiscalYearLabel={fiscalYearLabel}
+              onDeleteMonth={handleDeleteMonth}
             />
             {canEdit && !isOffline && (
               <ChangeHistoryPanel companyId={selectedCompanyId} companyName={selectedCompany.name} />

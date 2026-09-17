@@ -4,11 +4,13 @@
  * プロジェクトデータ(全社・全月)のファイル保存/読込を行う。
  */
 
-import React, { useRef } from 'react';
-import { Database, Save, Upload, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Database, Save, Upload, CheckCircle2, XCircle, AlertTriangle, Trash2 } from 'lucide-react';
 import { CompanyMonthlyData, listRealMonths, hasLegacyPayrollRows } from '../utils/monthlyData';
+import { DeleteMonthModal } from './DeleteMonthModal';
 
 interface MonthlyDataPanelProps {
+  companyId: string;
   companyName: string;
   companyMonths: CompanyMonthlyData;
   onSaveToFile: () => void;
@@ -21,6 +23,9 @@ interface MonthlyDataPanelProps {
   fiscalYearMonths: string[];
   /** 選択中の決算期のラベル(月一覧の見出し脇に「◯◯年◯月期の月のみ表示中」等の説明表示用) */
   fiscalYearLabel: string;
+  /** ★2026-09-27追加(はまさんのご要望「1ヶ月単位の削除機能」): 指定した対象月のデータのみを
+   * 削除する(App.tsx側でdeleteCompanyMonthを呼び出す)。 */
+  onDeleteMonth: (month: string) => void;
 }
 
 const CATEGORY_COLUMNS: {
@@ -67,6 +72,7 @@ const CountBadge: React.FC<{ count: number }> = ({ count }) =>
   );
 
 export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
+  companyId,
   companyName,
   companyMonths,
   onSaveToFile,
@@ -74,8 +80,12 @@ export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
   canEdit,
   fiscalYearMonths,
   fiscalYearLabel,
+  onDeleteMonth,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // ★2026-09-27追加(はまさんのご要望「1ヶ月単位の削除機能」): 削除モーダルで対象にしている月
+  // (nullの間はモーダル非表示)。
+  const [deleteTargetMonth, setDeleteTargetMonth] = useState<string | null>(null);
   // ★2026-09-20修正(はまさんの指摘「月一覧が決算期と連動していない」): 以前はこの会社に
   // 存在する全期間の月をそのまま列挙していたため、データが存在する全期間(何年分も)が
   // 一つの長い一覧になってしまっていた。画面上部の「決算期指定」と同じ範囲(fiscalYearMonths)
@@ -147,6 +157,9 @@ export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
                     {c.label}
                   </th>
                 ))}
+                {/* ★2026-09-27追加(はまさんのご要望「1ヶ月単位の削除機能」): 管理者のみ、
+                    月ごとの削除ボタン列を表示する。 */}
+                {canEdit && <th className="w-8" />}
               </tr>
             </thead>
             <tbody>
@@ -171,12 +184,35 @@ export const MonthlyDataPanel: React.FC<MonthlyDataPanelProps> = ({
                         </div>
                       </td>
                     ))}
+                    {canEdit && (
+                      <td className="py-1.5 text-right">
+                        <button
+                          onClick={() => setDeleteTargetMonth(month)}
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                          title={`${month}分のデータのみを削除する(他の月・他社には影響しません)`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
+      )}
+
+      {deleteTargetMonth && (
+        <DeleteMonthModal
+          isOpen
+          onClose={() => setDeleteTargetMonth(null)}
+          companyId={companyId}
+          companyName={companyName}
+          targetMonth={deleteTargetMonth}
+          monthData={companyMonths[deleteTargetMonth]}
+          onConfirmDelete={onDeleteMonth}
+        />
       )}
     </div>
   );

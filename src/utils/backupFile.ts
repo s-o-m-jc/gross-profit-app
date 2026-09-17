@@ -7,7 +7,7 @@
  * 機能を別途用意する。
  */
 
-import { AppMonthlyData } from './monthlyData';
+import { AppMonthlyData, MonthlyDataState } from './monthlyData';
 
 const FORMAT_VERSION = 1;
 
@@ -37,6 +37,50 @@ export function downloadBackupFile(data: AppMonthlyData): void {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   a.href = url;
   a.download = `派遣事業粗利経理システム_バックアップ_${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * ★2026-09-27追加(はまさんのご要望「1ヶ月単位の削除機能」の安全策): 削除実行の直前に、
+ * 対象(会社×対象月)1件分のデータだけをJSONファイルとしてダウンロードする。
+ * downloadBackupFile(全社・全月)と同じ「ブラウザのファイルダウンロード」方式のため、
+ * 保存先は常にはまさんのPCのダウンロードフォルダ等(=リポジトリ外)になる。
+ */
+interface MonthBackupFile {
+  formatVersion: number;
+  exportedAt: string;
+  appName: string;
+  companyId: string;
+  companyName: string;
+  targetMonth: string;
+  data: MonthlyDataState;
+}
+
+export function downloadMonthBackupFile(
+  companyId: string,
+  companyName: string,
+  targetMonth: string,
+  data: MonthlyDataState
+): void {
+  const backup: MonthBackupFile = {
+    formatVersion: FORMAT_VERSION,
+    exportedAt: new Date().toISOString(),
+    appName: '派遣事業-粗利・経理管理システム',
+    companyId,
+    companyName,
+    targetMonth,
+    data,
+  };
+  const json = JSON.stringify(backup, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  a.href = url;
+  a.download = `派遣事業粗利経理システム_削除前バックアップ_${companyName}_${targetMonth}_${stamp}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

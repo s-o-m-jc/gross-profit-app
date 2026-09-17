@@ -212,6 +212,19 @@ export function clearCompanyMonths(app: AppMonthlyData, companyId: CompanyId): A
   return { ...app, [companyId]: {} };
 }
 
+/**
+ * ★2026-09-27追加(はまさんのご要望「データ管理画面に1ヶ月単位の削除機能を追加してほしい」):
+ * 会社の月別データから、指定した1ヶ月分だけを削除する(他の月・他社のデータには一切触れない)。
+ * この関数自体はローカルのmonthlyData状態を更新するだけで、実際のSupabase上の削除は
+ * App.tsx側の自動保存effect(replaceCompanyMonthlyData)が「ローカルに存在しない月は削除する」
+ * という既存の差分同期ロジックで行う(新しい削除専用のSupabase呼び出しを追加する必要はない)。
+ */
+export function deleteCompanyMonth(companyMonths: CompanyMonthlyData, month: string): CompanyMonthlyData {
+  const next = { ...companyMonths };
+  delete next[month];
+  return next;
+}
+
 /** アプリ全体(全社・全月)にデータが1件でも存在するか (IndexedDB復元時、サンプル自動読込の要否判定に使用) */
 export function hasAnyData(app: AppMonthlyData): boolean {
   return Object.values(app).some((companyMonths) =>
