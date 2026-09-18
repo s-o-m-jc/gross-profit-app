@@ -263,12 +263,19 @@ const SHIKOKU_SUMMARY_HEADER_MARKER = '企業名';
 // ヘッダーのテキスト候補(表記ゆれ含む、はまさん確認済み)。定義順が列特定の優先順位になる
 // (「支払」より前に「支払の内交通費」を確定させることで、部分一致フォールバック時に
 // 「支払」候補が「支払の内交通費」列を誤って拾わないようにしている。findShikokuSummaryColumns参照)。
+//
+// ★2026-09-30修正(はまさんの指摘・実データ確認で判明した不具合): 「請求＠」「支払＠」列の
+// 「＠」は全角(U+FF20)だが、normalizeShikokuHeader()内のNFKC正規化が全角＠を半角の「@」
+// (U+0040)に変換してしまうため、候補側に全角の「＠」を書いていると正規化後のヘッダー文字列と
+// 一律に不一致になり、この2列だけが常に列特定に失敗していた(その結果、請求＠・支払＠が
+// 全行0円になり、名目粗利率もbillingUnitPrice>0の判定に失敗して「データなし」になっていた)。
+// 候補文字列自体をNFKC正規化後の半角「@」で書くことで一致させる。
 const SHIKOKU_SUMMARY_FIELD_CANDIDATES: [string, string[]][] = [
   ['clientName', ['企業名', 'クライアント名', '得意先名']],
   ['staffNo', ['スタッフ番号', 'ｽﾀｯﾌ番号', 'スタッフNo']],
   ['staffName', ['氏名', 'スタッフ氏名', 'スタッフ名']],
-  ['billingUnitPrice', ['請求＠', '請求単価']],
-  ['payUnitPrice', ['支払＠', '支払単価']],
+  ['billingUnitPrice', ['請求@', '請求単価']],
+  ['payUnitPrice', ['支払@', '支払単価']],
   ['marginRate', ['粗利率']],
   ['billingAmount', ['売上']],
   ['transport', ['支払の内交通費']],
@@ -412,6 +419,16 @@ export function extractShikokuSalesSummarySheet(
   }
 
   const aoa: any[][] = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, blankrows: false, defval: '', raw: true });
+  // ★2026-09-30修正(はまさんの指摘・実データ確認で判明した不具合): このシートには「企業名」
+  // セルを含む行が2回出現する。1回目はスタッフ単位の明細表のヘッダー(本来読みたいデータ)だが、
+  // 2回目はその下に続く「クライアント単位の集計表」(列構成が全く異なる: 企業名/担当/売上/
+  // 売上比率/支払/社保他/粗利益/人数/出勤日数)のヘッダーで、実データ全33ヶ月で必ず存在することを
+  // 確認済み。従来は最初の「企業名」出現行だけをヘッダーとして検出し、そこからシート末尾までを
+  // 全てスタッフ明細行として読んでいたため、2番目の集計表の行までスタッフ明細表の列位置で
+  // 誤読していた(例: 集計表の「売上」列の値がスタッフ明細表の「スタッフ番号」列として読まれる等)。
+  // 集計表の各行は売上・支払等の値が数十円程度と極端に小さいため合計金額への影響は軽微だったが、
+  // 支払だけが数百円計上される行として大量の「赤字」誤検知(LOW_MARGIN)を生んでいた。
+  // 2回目の「企業名」出現行をスタッフ明細表の終端とし、そこより後ろは読み込み対象から除外する。
   const headerRowIdx = aoa.findIndex((row) =>
     row.some((cell) => normalizeShikokuHeader(cell) === SHIKOKU_SUMMARY_HEADER_MARKER)
   );
@@ -424,6 +441,13 @@ export function extractShikokuSalesSummarySheet(
       warnings: [`シート「${sheetName}」内に「${SHIKOKU_SUMMARY_HEADER_MARKER}」列を含むヘッダー行が見つかりませんでした(ファイル: ${fileName})。`],
       referralFeeRows,
     };
+  }
+  let dataEndRowIdx = aoa.length;
+  for (let i = headerRowIdx + 1; i < aoa.length; i++) {
+    if (aoa[i].some((cell) => normalizeShikokuHeader(cell) === SHIKOKU_SUMMARY_HEADER_MARKER)) {
+      dataEndRowIdx = i;
+      break;
+    }
   }
 
   const { columns, missingRequired } = findShikokuSummaryColumns(aoa[headerRowIdx]);
@@ -442,7 +466,7 @@ export function extractShikokuSalesSummarySheet(
   const payrollRowMap = new Map<string, PayrollRow>();
 
   let rowSeq = 0;
-  for (let i = headerRowIdx + 1; i < aoa.length; i++) {
+  for (let i = headerRowIdx + 1; i < dataEndRowIdx; i++) {
     const row = aoa[i];
     const get = (field: string) => (columns[field] !== undefined ? row[columns[field]] : '');
 
