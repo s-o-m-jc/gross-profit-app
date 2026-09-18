@@ -412,9 +412,15 @@ export function extractOsakaPastData(
     );
   } else {
     const csv = plainSheetToCsv(invoiceSheet, OSAKA_INVOICE_HEADER_ROW);
-    invoiceRows = parseInvoicePrintCsv(csv, fileName)
-      .filter((r) => r.billingNo)
-      .map((r) => ({ ...r, targetMonth }));
+    // ★2026-09-29修正(はまさんの指摘・大阪2025-04の実データで確定): 以前はここで
+    // 「請求Noが空欄の行を無効行として除外する」ガード条件(.filter((r) => r.billingNo))を
+    // 重ねてかけていたが、これがまさに「請求No(管理用の参照番号)が空欄なだけで、請求額・
+    // 支払額とも正常な行」を丸ごと除外してしまっていた真の原因だった(株式会社ブンカの契約
+    // 9件、うち8件は請求額も正常にあったにもかかわらず除外され、結果として支払＠だけが
+    // 名目粗利率の分子に非対称に加算される不具合(6e137edで対処済み)の一因にもなっていた)。
+    // parseInvoicePrintCsv側で既に「請求No・受注番号のどちらも無い行のみ除外」という
+    // 緩和済みの判定を行っているため、ここでの重複filterは撤去した。
+    invoiceRows = parseInvoicePrintCsv(csv, fileName).map((r) => ({ ...r, targetMonth }));
   }
 
   return { payrollRows, billingRows, invoiceRows, targetMonth, warnings };

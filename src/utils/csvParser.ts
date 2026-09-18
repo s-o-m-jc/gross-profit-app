@@ -537,6 +537,9 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
       // NFKC正規化でASCIIハイフン"-"になる)であり、既存候補のU+2212(NFKC正規化されない)とは
       // 一致しないため、正規化後の形("時間内-単価")を候補に追加する(実データ確認済み)。
       const unitPriceKey = findColumnKey(row, ['時間内−単価', '時間内-単価', '請求単価']);
+      // ★2026-09-29追加(はまさんの指摘・大阪2025-04の実データで確定): 請求Noが空欄の行でも
+      // 契約単価データを活かせるよう、受注番号も取得しておく(types.ts InvoicePrintRow.orderNo参照)。
+      const orderNoKey = findColumnKey(row, ['受注番号']);
 
       const printVal = getStr(row, printKey);
       let printStatus: InvoicePrintRow['printStatus'] = '印刷済';
@@ -556,9 +559,14 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
         printStatus,
         sentStatus,
         unitPrice: getNum(row, unitPriceKey),
+        orderNo: getStr(row, orderNoKey) || undefined,
       };
     })
-    .filter((r) => r.billingNo);
+    // ★2026-09-29修正(はまさんの指摘): 以前は請求No(billingNo)が無い行を丸ごと除外していたが、
+    // 請求Noは金額データとは無関係な管理用の参照番号に過ぎず、空欄でも受注番号があれば
+    // 契約単価データとして有効に使える(calculator.ts側で受注番号によるフォールバック結合を行う)。
+    // どちらの識別子も無い行のみ除外する。
+    .filter((r) => r.billingNo || r.orderNo);
 }
 
 // ★2026-08-26: 退職金は実運用上CSVでの取込対象ではなく手入力すべき項目のため、

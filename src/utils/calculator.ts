@@ -192,9 +192,19 @@ export function calculateGrossProfit(
   // 他のMap(retirementMap・payrollMap等)と同じくtargetMonthを含むキーに統一して、
   // 月をまたいだ誤結合を防ぐ。
   const invoiceMap = new Map<string, InvoicePrintRow>();
+  // ★2026-09-29追加(はまさんの指摘・大阪2025-04の実データで確定): 請求No(billingNo)は、
+  // 大阪の実データでは(1)複数スタッフの契約が1つの請求Noにまとめて紐づく合算請求のケースが
+  // あり契約単位で一意とは限らない、(2)請求No自体が空欄のまま計上される行が実在する
+  // (株式会社ブンカの契約8件で確認、金額データ自体は正常)、という2つの理由で、契約
+  // (スタッフ)単位の結合キーとして必ずしも信頼できない。受注番号(orderNo)は契約単位で
+  // 一意なため、billingNoでの結合に失敗した場合のフォールバックとして別マップを用意する。
+  const invoiceMapByOrderNo = new Map<string, InvoicePrintRow>();
   invoices.forEach((inv) => {
     if (inv.billingNo) {
       invoiceMap.set(`${inv.targetMonth}_${inv.billingNo}`, inv);
+    }
+    if (inv.orderNo) {
+      invoiceMapByOrderNo.set(`${inv.targetMonth}_${inv.orderNo}`, inv);
     }
   });
 
@@ -261,7 +271,12 @@ export function calculateGrossProfit(
     // ★2026-09-19追加(はまさんの指摘)。retirementAmountと同じ組み立て方(取り込み元の値に
     // 手入力分を加算するだけで、新しい計算ロジックではない)。
     const referralFee = (billing.referralFee || 0) + (referralFeeMap.get(key) || 0);
-    const invoicePrint = invoiceMap.get(`${billing.targetMonth}_${billing.billingNo}`);
+    // ★2026-09-29修正(はまさんの指摘・大阪2025-04の実データで確定): billingNoでの結合に
+    // 失敗した場合(billing.billingNoが空欄、または請求書印刷データ側に一致するbillingNoが
+    // 無い場合)、受注番号(orderNo)での結合をフォールバックとして試す(invoiceMapByOrderNo参照)。
+    const invoicePrint =
+      invoiceMap.get(`${billing.targetMonth}_${billing.billingNo}`) ||
+      invoiceMapByOrderNo.get(`${billing.targetMonth}_${billing.orderNo}`);
     // 請求＠算出用の契約単価。請求書印刷CSV由来(未読込 or 未紐付けの場合はbilling.unitPriceに
     // フォールバックする。★2026-09-15追加: 四国の過去実績Excel(実績加工シートP列「請求単価」)は
     // BillingRow.unitPriceに契約単価を持っているが、従来はinvoicePrintしか参照しておらずこの値が
