@@ -88,6 +88,18 @@ function excelSerialDateToIsoString(serial: number): string {
 
 export type PastImportCompany = 'matsuyama' | 'shikoku' | 'osaka';
 
+// ★2026-09-29追加(四国「売上実績一覧表」形式の取込み対応): 紹介手数料パターン(支払＝0、
+// 社保他＝0、出勤日数＝0、粗利率＝100%、かつ売上が0でない)に該当した行。通常のbillingRows/
+// payrollRowsには含めず、確認用にここへ退避する。はまさんが今後この紹介手数料を毎月手動入力する
+// 運用のため、この配列からReferralFeeRowへ自動登録することはしない(二重登録防止)。
+export interface ShikokuReferralFeeCandidateRow {
+  targetMonth: string;
+  clientName: string;
+  staffName: string;
+  staffNo: string;
+  amount: number;
+}
+
 export interface PastImportResult {
   payrollRows: PayrollRow[];
   billingRows: BillingRow[];
@@ -100,6 +112,8 @@ export interface PastImportResult {
   targetMonth: string;
   /** シートが見つからない等、部分的に取り込めなかった場合の警告(取り込み自体は続行) */
   warnings: string[];
+  // ★2026-09-29追加: 四国「売上実績一覧表」形式のみ使用。他社では常に空配列。
+  referralFeeRows?: ShikokuReferralFeeCandidateRow[];
 }
 
 /**
@@ -215,90 +229,363 @@ export function extractMatsuyamaPastData(
 // ---------------------------------------------------------------------------
 // 四国人材
 // ---------------------------------------------------------------------------
+//
+// ★2026-09-29全面改訂(はまさんと事前に対象ファイル・列構成を確認済み): 従来は
+// 「未払計上表」(給与、生CSV相当)+「実績加工」(請求、列位置固定)の2シート構成を前提に
+// していたが、はまさんのパソコン上の実際の過去実績ファイル(2023-10〜2026-06分)は
+// 「売上実績一覧表」という1ファイル完結型の書式(1シート=基本1ヶ月分)で、この2シート構成の
+// 前提とは異なることが判明した。この形式は既に「請求額・支払額(＝給与総額、有給手当込み)・
+// 社保他・粗利益(＝売上−支払−社保他、計算済み)」が1行に揃っているため、旧方式のように
+// 給与側・請求側の生データを個別に読み取って結合する必要が無い。以下、この新形式専用の
+// 抽出処理に置き換える(関数名extractShikokuPastDataは維持し、PastExcelImportPanel/
+// extractPastDataからの呼び出し口を変更せずに済むようにしている)。
+//
+// 【列構成】ヘッダー行(「企業名」というセルがある行)から下がデータ。列の並びはファイルにより
+// 1列ずれる・列が増える等の揺れがあるため、固定の列位置ではなくヘッダーのテキストで列を
+// 特定する(findShikokuSummaryColumns参照。2025年2月以降のファイルで実際に列ずれを確認済み)。
+//
+// 【行の除外ルール】(1)企業名列が「合計」の行、シート末尾の「一致」等のチェック行はスキップ。
+// (2)スタッフ氏名が空欄かつ売上も0/空欄の行(空の予備行)はスキップ。
+//
+// 【紹介手数料行の判定】支払＝0、社保他＝0、出勤日数＝0、粗利率＝100%(1.0)、かつ売上が0でない
+// 行は、通常の派遣請求ではなく紹介手数料のみの行。billingRows/payrollRowsには含めず、
+// referralFeeRows(確認用、自動登録はしない)へ退避する。
+//
+// 【粗利計算式の再現】このシートの「粗利益＝売上−支払−社保他」を、calculator.tsの既存の式
+// (grossProfitExTax = billingAmountExTax − BillingRow.paymentAmount − BillingRow.
+// socialInsuranceBilling − PayrollRow.parkingFee − retirementAmount)でそのまま再現できるよう、
+// 「売上」→billingAmountExTax、「支払」→BillingRow.paymentAmount、「社保他」→BillingRow.
+// socialInsuranceBilling にマッピングし、parkingFee・retirementAmountは0(このシートにはその
+// ような内訳列が無く、粗利益の計算式自体にも含まれていないため)とする。
 
-const SHIKOKU_PAYROLL_SHEET = '未払計上表';
-const SHIKOKU_PAYROLL_HEADER_ROW = 10;
-const SHIKOKU_PERFORMANCE_SHEET = '実績加工';
-const SHIKOKU_PERFORMANCE_HEADER_ROW = 25;
+const SHIKOKU_SUMMARY_HEADER_MARKER = '企業名';
 
-// 実績加工シートの列位置(0始まり)。ヘッダー文字列が同一シート内に複数ブロック
-// 重複しているため、列名ではなく実データ検証済みの列位置で直接読む。
-const SHIKOKU_COL = {
-  clientNo: 7, // H列: 取引先番号
-  clientName: 8, // I列: 取引先名
-  staffNo: 9, // J列: スタッフ番号
-  staffName: 10, // K列: スタッフ氏名
-  billingAmount: 11, // L列: 請求額
-  paymentAmount: 12, // M列: 支給額
-  socialInsurance: 13, // N列: 社保負担額
-  workDays: 14, // O列: 出勤日数
-  billingUnitPrice: 15, // P列: 請求単価
-  paymentUnitPrice: 16, // Q列: 支給単価
-  transport: 17, // R列: 支給交通費
-};
+// ヘッダーのテキスト候補(表記ゆれ含む、はまさん確認済み)。定義順が列特定の優先順位になる
+// (「支払」より前に「支払の内交通費」を確定させることで、部分一致フォールバック時に
+// 「支払」候補が「支払の内交通費」列を誤って拾わないようにしている。findShikokuSummaryColumns参照)。
+const SHIKOKU_SUMMARY_FIELD_CANDIDATES: [string, string[]][] = [
+  ['clientName', ['企業名', 'クライアント名', '得意先名']],
+  ['staffNo', ['スタッフ番号', 'ｽﾀｯﾌ番号', 'スタッフNo']],
+  ['staffName', ['氏名', 'スタッフ氏名', 'スタッフ名']],
+  ['billingUnitPrice', ['請求＠', '請求単価']],
+  ['payUnitPrice', ['支払＠', '支払単価']],
+  ['marginRate', ['粗利率']],
+  ['billingAmount', ['売上']],
+  ['transport', ['支払の内交通費']],
+  ['paymentAmount', ['支払']],
+  ['socialInsuranceOther', ['社保他']],
+  ['grossProfit', ['粗利益']],
+  ['workDays', ['出勤日数']],
+];
+
+// 検算(月次売上合計の突合)・除外判定に必須な項目。これらが1つでも見つからない場合は
+// 警告を出す(取り込み自体は続行し、見つからなかった項目は0/空欄として扱う)。
+const SHIKOKU_SUMMARY_REQUIRED_FIELDS = [
+  'clientName',
+  'staffName',
+  'staffNo',
+  'billingAmount',
+  'paymentAmount',
+  'socialInsuranceOther',
+  'workDays',
+  'marginRate',
+];
+
+function parseShikokuNum(val: any): number {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const s = String(val).replace(/,/g, '').trim();
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+function parseShikokuStr(val: any): string {
+  if (val === null || val === undefined) return '';
+  return String(val).normalize('NFKC').trim();
+}
+
+/**
+ * ヘッダーセルのテキスト正規化(項目特定専用)。実データ確認済み: このシートのヘッダー行は
+ * セル内で折り返して入力されている列がある(例: "スタッフ\n番号"、"支払の内\n交通費")ため、
+ * NFKC正規化・trimだけでは候補名「スタッフ番号」「支払の内交通費」と一致しない。改行を含む
+ * 空白文字をすべて除去することで、見た目上1つの単語であるヘッダーを正しく1つの文字列として
+ * 比較できるようにする(データ値側のparseShikokuStrは、氏名等の正当な空白を壊さないよう
+ * この空白除去は行わない)。
+ */
+function normalizeShikokuHeader(val: any): string {
+  return String(val ?? '').normalize('NFKC').replace(/\s+/g, '').trim();
+}
+
+/**
+ * ヘッダー行(セルのテキスト配列)から、SHIKOKU_SUMMARY_FIELD_CANDIDATESの各項目に対応する
+ * 列インデックスを特定する。csvParser.ts findColumnKeyと同じ考え方(NFKC正規化、完全一致優先
+ * →部分一致フォールバック)だが、複数項目を同時に1つのヘッダー行から特定する必要があるため、
+ * 一度使った列インデックスは他の項目が再利用しない(used集合で管理)。これにより、例えば
+ * 「支払の内交通費」列が先に確定していれば、「支払」候補の部分一致フォールバックがその列を
+ * 誤って拾うことはない。
+ */
+function findShikokuSummaryColumns(headerRow: any[]): { columns: Record<string, number>; missingRequired: string[] } {
+  const normalized = headerRow.map((c) => normalizeShikokuHeader(c));
+  const used = new Set<number>();
+  const columns: Record<string, number> = {};
+
+  // フェーズ1: 完全一致(衝突しやすい項目を先に定義しているSHIKOKU_SUMMARY_FIELD_CANDIDATESの
+  // 順序どおりに処理することで、後続の項目が既に確定済みの列を再利用しないようにする)
+  SHIKOKU_SUMMARY_FIELD_CANDIDATES.forEach(([field, candidates]) => {
+    for (const candidate of candidates) {
+      const idx = normalized.findIndex((h, i) => h === candidate && !used.has(i));
+      if (idx !== -1) {
+        columns[field] = idx;
+        used.add(idx);
+        return;
+      }
+    }
+  });
+  // フェーズ2: 部分一致フォールバック(フェーズ1で確定できなかった項目のみ。列名が1列ずれる等の
+  // 揺れがあるファイル向け)
+  SHIKOKU_SUMMARY_FIELD_CANDIDATES.forEach(([field, candidates]) => {
+    if (columns[field] !== undefined) return;
+    for (const candidate of candidates) {
+      const idx = normalized.findIndex((h, i) => h.includes(candidate) && !used.has(i));
+      if (idx !== -1) {
+        columns[field] = idx;
+        used.add(idx);
+        return;
+      }
+    }
+  });
+
+  const missingRequired = SHIKOKU_SUMMARY_REQUIRED_FIELDS.filter((f) => columns[f] === undefined);
+  return { columns, missingRequired };
+}
+
+/**
+ * 対象年月("YYYY-MM")から、四国「売上実績一覧表」形式の典型的なシート名("YYYY年M月"、
+ * 月は0埋めなし)を組み立て、ワークブック内で一致するシートを探す。完全一致が無い場合、
+ * この文字列で始まるシート名(例: "2023年10月（21日～30日差引）")を探すが、該当が複数ある
+ * 場合はどちらが正しいか自動判定できないため、諦めてnullを返す(呼び出し元でシート名を
+ * 明示的に指定してもらう必要がある。実際、はまさんとの事前確認でも複数月・複数候補が
+ * 同じファイルに混在するケースがあったため、この自動判定はあくまで簡易月1ファイルのケース
+ * 向けの補助であり、過去分の一括取込みではシート名を明示指定する運用としている)。
+ */
+export function guessShikokuSheetName(wb: XLSX.WorkBook, targetMonth: string): string | null {
+  const [y, m] = targetMonth.split('-');
+  if (!y || !m) return null;
+  const base = `${y}年${parseInt(m, 10)}月`;
+  if (wb.Sheets[base]) return base;
+  const candidates = wb.SheetNames.filter((n) => n.startsWith(base));
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+/**
+ * 四国「売上実績一覧表」形式の1シートを読み取り、PayrollRow[]/BillingRow[]を組み立てる。
+ * シート名を明示的に指定する版(過去分の一括取込み・シート名が自動判定できない場合に使用)。
+ */
+export function extractShikokuSalesSummarySheet(
+  wb: XLSX.WorkBook,
+  sheetName: string,
+  targetMonth: string,
+  fileName: string,
+  // ★2026-09-29追加(過去分一括取込みでの実データ確認・はまさんの判断結果): 紹介手数料パターン
+  // (支払＝0・社保他＝0・出勤日数＝0・粗利率＝100%)に機械的には該当するが、実際には紹介手数料
+  // ではなく通常の派遣請求(部分月の精算等)である行が実データで5件見つかった(2024年7月 今治造船
+  // 安井楓・須田恵理、2024年8月 今治造船 佐竹明子、2025年9月 今治造船 堀田由紀、2025年10月
+  // 今治造船 渋谷桂。いずれも金額が450,000円等の丸い数字ではなく半端な小額だった)。はまさんに
+  // 実データを確認いただいた結果「通常の派遣請求として取り込む」との判断だったため、
+  // targetMonth+staffNoで指定した行は紹介手数料パターンに一致しても通常のbillingRows/
+  // payrollRowsとして取り込む(既定は空配列。この一覧は今回判明した過去分の既知の例外であり、
+  // 汎用の判定ロジック自体(isReferralFeeRow)は変更しない)。
+  forceNormalBillingKeys: Set<string> = new Set()
+): PastImportResult {
+  const warnings: string[] = [];
+  const referralFeeRows: ShikokuReferralFeeCandidateRow[] = [];
+
+  const ws = wb.Sheets[sheetName];
+  if (!ws) {
+    return {
+      payrollRows: [],
+      billingRows: [],
+      invoiceRows: [],
+      targetMonth,
+      warnings: [`シート「${sheetName}」が見つかりませんでした(ファイル: ${fileName})。`],
+      referralFeeRows,
+    };
+  }
+
+  const aoa: any[][] = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, blankrows: false, defval: '', raw: true });
+  const headerRowIdx = aoa.findIndex((row) =>
+    row.some((cell) => normalizeShikokuHeader(cell) === SHIKOKU_SUMMARY_HEADER_MARKER)
+  );
+  if (headerRowIdx === -1) {
+    return {
+      payrollRows: [],
+      billingRows: [],
+      invoiceRows: [],
+      targetMonth,
+      warnings: [`シート「${sheetName}」内に「${SHIKOKU_SUMMARY_HEADER_MARKER}」列を含むヘッダー行が見つかりませんでした(ファイル: ${fileName})。`],
+      referralFeeRows,
+    };
+  }
+
+  const { columns, missingRequired } = findShikokuSummaryColumns(aoa[headerRowIdx]);
+  if (missingRequired.length > 0) {
+    warnings.push(
+      `シート「${sheetName}」のヘッダー行から次の列を特定できませんでした: ${missingRequired.join(' / ')}。該当項目は0または空欄として扱われます。`
+    );
+  }
+
+  const billingRowsRaw: BillingRow[] = [];
+  // 同一対象月・同一スタッフ番号のPayrollRowが複数生成されうる(1人が同月に複数クライアントへ
+  // 派遣されているケース)。calculator.tsのpayrollMapは`${targetMonth}_${staffNo}`キーで
+  // 最後の1件のみを採用する仕様(同一スタッフの支払単価は契約単位ではなくスタッフ単位の値として
+  // 扱う、calculator.ts既存コメント参照)のため、ここでも同じキーで重複を排除してから返す
+  // (件数表示・FiscalYearSummaryの有給集計等での重複計上を防ぐため)。
+  const payrollRowMap = new Map<string, PayrollRow>();
+
+  let rowSeq = 0;
+  for (let i = headerRowIdx + 1; i < aoa.length; i++) {
+    const row = aoa[i];
+    const get = (field: string) => (columns[field] !== undefined ? row[columns[field]] : '');
+
+    const clientNameRaw = parseShikokuStr(get('clientName'));
+    // 「合計」行(集計行)・シート末尾の「一致」等のチェック行は無視する
+    if (clientNameRaw === '合計' || clientNameRaw === '一致') continue;
+
+    const staffName = parseShikokuStr(get('staffName'));
+    const billingAmount = parseShikokuNum(get('billingAmount'));
+    // スタッフ氏名が空欄で売上も0/空欄の行は、空の予備行としてスキップ
+    if (!staffName && billingAmount === 0) continue;
+
+    const staffNo = parseShikokuStr(get('staffNo'));
+    if (!staffNo) continue; // スタッフ番号が無い行は取込み対象外(安全策)
+
+    const paymentAmount = parseShikokuNum(get('paymentAmount'));
+    const socialInsuranceOther = parseShikokuNum(get('socialInsuranceOther'));
+    const workDays = parseShikokuNum(get('workDays'));
+    const marginRate = parseShikokuNum(get('marginRate'));
+    const billingUnitPrice = parseShikokuNum(get('billingUnitPrice'));
+    const payUnitPrice = parseShikokuNum(get('payUnitPrice'));
+    const transport = parseShikokuNum(get('transport'));
+    const clientName = clientNameRaw || '派遣先企業';
+
+    // 紹介手数料行の判定(はまさん確認済みのパターン): 支払＝0、社保他＝0、出勤日数＝0、
+    // 粗利率＝100%(1.0)、かつ売上が0でない。通常の派遣請求行としては取り込まず、確認用に
+    // referralFeeRowsへ退避する(紹介手数料カテゴリへの自動登録はしない。はまさんが毎月
+    // 手動入力する運用のため、二重登録を避ける)。
+    const isReferralFeeRow =
+      paymentAmount === 0 &&
+      socialInsuranceOther === 0 &&
+      workDays === 0 &&
+      Math.abs(marginRate - 1) < 0.001 &&
+      billingAmount !== 0 &&
+      !forceNormalBillingKeys.has(`${targetMonth}_${staffNo}`);
+    if (isReferralFeeRow) {
+      referralFeeRows.push({ targetMonth, clientName, staffName, staffNo, amount: billingAmount });
+      continue;
+    }
+
+    rowSeq++;
+    // このシートには請求No・受注番号が無いため、行ごとに一意なIDを合成する
+    // (過去実績は既に確定済みの1契約1行のため、今後の月のような20日締め統合は不要)。
+    const syntheticId = `SHIKOKU_${targetMonth}_${rowSeq}`;
+
+    billingRowsRaw.push({
+      billingNo: syntheticId,
+      targetMonth,
+      staffNo,
+      staffName,
+      // 取引先コード相当の列がこのシートには無いため、企業名をそのままコードとして使う
+      // (同一企業名であれば月をまたいで同じclientCodeになり、クライアント別集計が正しく
+      // グルーピングされる。LeaveCompensationRow等、既存の手入力機能でも同じ考え方を採用している)。
+      clientCode: clientName,
+      clientName,
+      orderNo: syntheticId,
+      orderName: '',
+      billingAmountExTax: billingAmount,
+      // 支払(＝給与総額、有給手当込み)はBillingRow.paymentAmountに入れる。calculator.tsの
+      // grossProfitExTax計算式が参照するのはこちら(請求CSV由来の値)であり、このシートの
+      // 「粗利益＝売上−支払−社保他」をそのまま再現できる。
+      paymentAmount,
+      socialInsuranceBilling: socialInsuranceOther,
+      // 有給使用日数はこのシートに列が無いため0(このシートには有給日数・有給手当の内訳列
+      // 自体が存在しない。「支払」列の説明どおり、有給手当は既に支払額に合算済みだが、
+      // 内訳として取り出すことはできない)。
+      paidLeaveDaysUsed: 0,
+      // 請求側交通費の列はこのシートには無い(「支払の内交通費」は給与側の内訳のため
+      // PayrollRow.salaryTransportに反映する)。
+      billingTransport: 0,
+      referralFee: 0,
+      workHours: 0,
+      // 請求＠(契約単価)。calculator.tsのbillingUnitPrice算出で、請求書印刷CSV未読込時の
+      // フォールバックとして参照される(四国は請求書印刷CSV相当のシートが無いため常にこちらを使う)。
+      unitPrice: billingUnitPrice,
+    });
+
+    const payrollKey = `${targetMonth}_${staffNo}`;
+    payrollRowMap.set(payrollKey, {
+      targetMonth,
+      staffNo,
+      staffName,
+      // スタッフ給与明細画面での参考表示専用(grossProfitExTaxの算出には使われない。
+      // 上のBillingRow.paymentAmountが実際の控除対象)。
+      paymentAmount,
+      // 社保他はBillingRow.socialInsuranceBilling(粗利計算の実際の控除対象)にも同じ値を
+      // 設定済み。PayrollRow側にも同値を入れることで、calculator.tsの社保負担額突合
+      // (SOCIAL_INSURANCE_MISMATCH、参考ログ)で無用な差異アラートが出ないようにする。
+      socialInsurance: socialInsuranceOther,
+      employmentInsurance: 0,
+      // このシートには駐車場代・退職金配賦に相当する列が無く、粗利益の計算式自体
+      // (売上−支払−社保他)にもこれらの控除項目が含まれていない。0のまま(=無し)として扱うことで、
+      // 粗利計算がシート側の「粗利益」列と一致するようにする。
+      parkingFee: 0,
+      salaryTransport: transport,
+      // 有給関連の内訳列がこのシートには無いため0(「支払」列の説明どおり有給手当は既に
+      // 支払額に合算済みだが、内訳としては取り出せない。FiscalYearSummaryの有給金額・
+      // 有給日数の合計には、四国のこの期間分は反映されない制約として残る)。
+      paidLeaveAllowance: 0,
+      paidLeaveDays: 0,
+      // 支払＠(このシートの参考単価列)を、calculator.tsのpayUnitPrice算出式
+      // (regularAmount ÷ regularHours)でそのまま再現するための変換。regularHours=1に
+      // 固定することで、regularAmount(=支払＠)がそのままpayUnitPriceとして使われる
+      // (このシートには実際の稼働時間の内訳が無いため、単価を単価のまま伝えるための
+      // 割り切った処理。「時間内時間」としての実際の意味は持たない)。
+      regularAmount: payUnitPrice,
+      regularHours: payUnitPrice > 0 ? 1 : 0,
+      remarks: '過去実績Excel(売上実績一覧表)取込み: 給与の時間内訳データなし(支払＠を単価として直接反映)',
+    });
+  }
+
+  return {
+    payrollRows: Array.from(payrollRowMap.values()),
+    billingRows: billingRowsRaw,
+    invoiceRows: [],
+    targetMonth,
+    warnings,
+    referralFeeRows,
+  };
+}
 
 export function extractShikokuPastData(
   wb: XLSX.WorkBook,
   targetMonth: string,
   fileName: string
 ): PastImportResult {
-  const warnings: string[] = [];
-
-  const payrollSheet = wb.Sheets[SHIKOKU_PAYROLL_SHEET];
-  let payrollRows: PayrollRow[] = [];
-  if (!payrollSheet) {
-    warnings.push(`「${SHIKOKU_PAYROLL_SHEET}」シートが見つかりませんでした。給与データは取り込まれません。`);
-  } else {
-    const csv = payrollSheetToCsv(payrollSheet, SHIKOKU_PAYROLL_HEADER_ROW);
-    payrollRows = parsePayrollCsv(csv, fileName)
-      .filter((r) => r.staffNo)
-      .map((r) => ({ ...r, targetMonth }));
+  const sheetName = guessShikokuSheetName(wb, targetMonth);
+  if (!sheetName) {
+    return {
+      payrollRows: [],
+      billingRows: [],
+      invoiceRows: [],
+      targetMonth,
+      warnings: [
+        `対象年月(${targetMonth})に対応するシートを自動判定できませんでした(「${targetMonth.split('-')[0]}年${parseInt(
+          targetMonth.split('-')[1],
+          10
+        )}月」で始まるシートが無い、または複数存在し曖昧なため)。extractShikokuSalesSummarySheetでシート名を明示的に指定して取り込んでください。`,
+      ],
+      referralFeeRows: [],
+    };
   }
-
-  const perfSheet = wb.Sheets[SHIKOKU_PERFORMANCE_SHEET];
-  const billingRows: BillingRow[] = [];
-  if (!perfSheet) {
-    warnings.push(`「${SHIKOKU_PERFORMANCE_SHEET}」シートが見つかりませんでした。請求データは取り込まれません。`);
-  } else {
-    // ヘッダー行(25行目)自体はスキップし、データ行だけをそのまま配列で読む。
-    const aoa = sheetToAoaFromRow(perfSheet, SHIKOKU_PERFORMANCE_HEADER_ROW + 1);
-    aoa.forEach((row, idx) => {
-      const staffNo = String(row[SHIKOKU_COL.staffNo] ?? '').trim();
-      const clientName = String(row[SHIKOKU_COL.clientName] ?? '').trim();
-      // 空行・プレースホルダー行(スタッフ番号=0等)をスキップ
-      if (!staffNo || staffNo === '0' || !clientName || clientName === '0') return;
-
-      billingRows.push({
-        // 実績加工シートには請求No・受注番号が無いため、行ごとに一意なIDを合成する。
-        // (過去実績は既に確定済みの1契約1行のため、今後の月のような20日締め統合は不要)
-        billingNo: `SHIKOKU_${targetMonth}_${idx}`,
-        targetMonth,
-        staffNo,
-        staffName: String(row[SHIKOKU_COL.staffName] ?? '').trim(),
-        clientCode: String(row[SHIKOKU_COL.clientNo] ?? '').trim() || 'CLIENT_DEF',
-        clientName: clientName || '派遣先企業',
-        orderNo: `SHIKOKU_${targetMonth}_${idx}`,
-        orderName: '',
-        billingAmountExTax: Number(row[SHIKOKU_COL.billingAmount]) || 0,
-        paymentAmount: Number(row[SHIKOKU_COL.paymentAmount]) || 0,
-        socialInsuranceBilling: Number(row[SHIKOKU_COL.socialInsurance]) || 0,
-        // 有給使用日数はこのシートに列が無い。未払計上表シート由来のPayrollRow.paidLeaveDaysで
-        // 給与側からは参照できるため、請求側はやむを得ず0とする(16-5章で確認済みの方針)。
-        paidLeaveDaysUsed: 0,
-        // 請求側交通費の列がこのシートには無い(16-4章で確認済み)。支給交通費(給与側)は
-        // PayrollRow.salaryTransportに別途反映される。
-        billingTransport: 0,
-        referralFee: 0,
-        workHours: 0,
-        // ★2026-09-15追加: このunitPrice(P列「請求単価」)はcalculator.tsのbillingUnitPrice算出で
-        // 請求書印刷CSV未読込時のフォールバックとして参照されるようになった(23章参照)。
-        // 別シートに独立した契約単価データ(InvoicePrintRow相当)は無いため、invoiceRowsは空のまま。
-        unitPrice: Number(row[SHIKOKU_COL.billingUnitPrice]) || 0,
-      });
-    });
-  }
-
-  return { payrollRows, billingRows, invoiceRows: [], targetMonth, warnings };
+  return extractShikokuSalesSummarySheet(wb, sheetName, targetMonth, fileName);
 }
 
 // ---------------------------------------------------------------------------
