@@ -39,13 +39,20 @@ import { FiscalYearSummary } from '../types';
  * (domain未指定時は[0, 'auto'])だと、実データが75〜95のような狭い帯に集中していても
  * 0からの表示になり変化が見えにくいため、実データの範囲にstep刻みで少し余白を持たせた
  * [下限, 上限]を返す(下限は0未満にはしない)。
+ * ★2026-09-29修正(はまさんの指摘「名目粗利率・実質粗利率グラフの余白がまだ大きい」):
+ * 従来はstep(目盛りの丸め単位)をそのまま余白(パディング)としても使っていたため、
+ * 丸め単位を細かくすると同時に余白まで小さくすることができなかった(例: step=1にすると
+ * 目盛りは1%刻みで細かくなるが、余白も1%分しか確保できず今度は目盛りの丸め処理自体で
+ * さらに余白が生まれてしまう場合があった)。第3引数paddingを追加し、目盛りの丸め単位(step)と
+ * 余白の大きさ(padding)を独立して指定できるようにした(省略時はpadding=stepで従来どおりの
+ * 挙動を維持し、スタッフ人数グラフ等の呼び出し元には影響しない)。
  */
-function computeAxisDomain(values: number[], step: number): [number, number] {
+function computeAxisDomain(values: number[], step: number, padding: number = step): [number, number] {
   if (values.length === 0) return [0, step * 10];
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const lower = Math.max(0, Math.floor((min - step) / step) * step);
-  const upper = Math.ceil((max + step) / step) * step;
+  const lower = Math.max(0, Math.floor((min - padding) / step) * step);
+  const upper = Math.ceil((max + padding) / step) * step;
   return lower === upper ? [Math.max(0, lower - step), upper + step] : [lower, upper];
 }
 
@@ -333,6 +340,12 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   // 程度の狭い帯に収まることが多く、5%刻みの丸め+余白では拡大が足りなかった。step=2に
   // 変更し、より実データの最小値・最大値に近い範囲まで拡大する(丸め自体は0以上のきりのよい
   // 偶数刻みのまま維持し、目盛りの見た目が崩れないようにしている)。
+  // ★2026-09-29再修正(はまさんの指摘「まだ上下に余白があり、もっと拡大してほしい」
+  // 実データ例: 名目粗利率29%〜32.5%に対しY軸26%〜36%、実質粗利率12%〜20%に対しY軸8%〜22%):
+  // 以前はstep=2を目盛りの丸め単位・余白の両方に使っていたため、余白を削ろうとstepを
+  // 小さくすると目盛りの刻みまで細かくなりすぎてしまい、両立できなかった。
+  // computeAxisDomainに独立したpadding引数を追加したことで、目盛りの丸め単位はstep=1
+  // (1%刻み、細かすぎず見た目も崩れない)のまま、余白だけpadding=0.5(0.5%)まで縮小した。
   const nominalMarginDomain = useMemo(() => {
     const values: number[] = [];
     threePeriodData.forEach((d) => {
@@ -342,12 +355,13 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
         values.push(d.prevPrevNominalGrossMarginRate);
       }
     });
-    return computeAxisDomain(values, 2);
+    return computeAxisDomain(values, 1, 0.5);
   }, [threePeriodData, hasPreviousYearMarginData, hasPreviousPreviousYearMarginData]);
 
   // ★2026-09-29修正(はまさんの指摘): 以前はd.grossMarginRateを無条件でpushしていたため、
   // データが無い月(まだ到来していない月を含む)の0がそのままY軸レンジ計算に混ざり、実データの
   // 変化が不必要に圧縮されて見える不具合があった。他の値と同様、nullの月は除外する。
+  // ★2026-09-29再修正(上のnominalMarginDomainと同じ理由): 余白をpadding=0.5(0.5%)まで縮小。
   const realMarginDomain = useMemo(() => {
     const values: number[] = [];
     threePeriodData.forEach((d) => {
@@ -355,7 +369,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
       if (hasPreviousYearMarginData && d.prevGrossMarginRate !== null) values.push(d.prevGrossMarginRate);
       if (hasPreviousPreviousYearMarginData && d.prevPrevGrossMarginRate !== null) values.push(d.prevPrevGrossMarginRate);
     });
-    return computeAxisDomain(values, 2);
+    return computeAxisDomain(values, 1, 0.5);
   }, [threePeriodData, hasPreviousYearMarginData, hasPreviousPreviousYearMarginData]);
 
   // ★2026-09-22追加(はまさんのご要望「グラフ1の3期比較・右側軸目盛り追加」): 総売上高・
