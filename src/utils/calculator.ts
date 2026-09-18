@@ -780,10 +780,22 @@ export function calculateFiscalYearSummary(
     totalRevenueIncTax += r.billingAmountIncTax;
     totalTransportSalary += r.salaryTransport;
     totalTransportBilling += r.billingTransport;
+    // ★2026-09-28修正(はまさんの指摘・大阪2025-04の実データで確定): 請求＠(billingUnitPrice)が
+    // 0の行(請求書印刷CSV/請求書スタナビシートとの紐付けに失敗し契約単価が取得できない行。
+    // 行レベルのnominalGrossMarginRateDataAvailableもfalseになる行)は、支払＠(payUnitPrice)を
+    // 求める側の計算(給与データの時間内(金額)÷時間内時間)には無関係に成立してしまうため、
+    // 従来は「請求＠は0(寄与なし)だが支払＠だけは実額が合計に加算される」という非対称な集計に
+    // なっていた。この結果、分子(支払＠合計)だけが実態より大きくなり、名目粗利率が不当に
+    // 低く算出される不具合があった(実データ検証: 大阪2025-04、請求No欠落で請求書スタナビと
+    // 結合できなかった株式会社ブンカの契約8件により、名目粗利率が本来の29.65%相当から
+    // 15.67%まで押し下げられていたことを確認)。請求＠が無い行は支払＠も合計に含めないことで、
+    // 分子・分母を常に同じ行の集合から算出するようにした(=請求＠が無い行はこの指標の計算対象
+    // から完全に除外する)。
+    const hasUnitPriceData = r.billingUnitPrice > 0;
     // 請求＠ (大阪人材集計シート方式: 契約ごとの請求単価の単純合計。重み付けしない)
     totalBillingUnitPrice += r.billingUnitPrice;
-    // 支払＠ (同じく単純合計。時間内時間0の行は0が入っているため自動的に寄与しない)
-    totalPayUnitPrice += r.payUnitPrice;
+    // 支払＠ (同じく単純合計。請求＠が無い行はこの合計にも含めない)
+    if (hasUnitPriceData) totalPayUnitPrice += r.payUnitPrice;
     // ★2026-08-26修正: info severity(社保負担額の差異検出など、参考ログ)を除いた
     // warning/error件数のみを「要確認アラート数」としてカウントする(hasActionableAlerts参照)
     alertCount += countActionableAlerts(r.alerts);
@@ -816,16 +828,17 @@ export function calculateFiscalYearSummary(
           : 0;
       clientMap.set(r.clientCode, existing);
 
-      // 名目粗利率(契約単価の単純合計ベース)算出用の請求＠・支払＠集計(全期間・月次の両方)
+      // 名目粗利率(契約単価の単純合計ベース)算出用の請求＠・支払＠集計(全期間・月次の両方)。
+      // 上記と同じ理由(請求＠が無い行は支払＠も合計に含めない)。
       const unitTotals = clientUnitPriceTotals.get(r.clientCode) || { billingUnitPriceSum: 0, payUnitPriceSum: 0 };
       unitTotals.billingUnitPriceSum += r.billingUnitPrice;
-      unitTotals.payUnitPriceSum += r.payUnitPrice;
+      if (hasUnitPriceData) unitTotals.payUnitPriceSum += r.payUnitPrice;
       clientUnitPriceTotals.set(r.clientCode, unitTotals);
 
       const monthlyForClient = clientMonthlyUnitPrice.get(r.clientCode) || new Map();
       const monthTotals = monthlyForClient.get(r.targetMonth) || { billingUnitPriceSum: 0, payUnitPriceSum: 0 };
       monthTotals.billingUnitPriceSum += r.billingUnitPrice;
-      monthTotals.payUnitPriceSum += r.payUnitPrice;
+      if (hasUnitPriceData) monthTotals.payUnitPriceSum += r.payUnitPrice;
       monthlyForClient.set(r.targetMonth, monthTotals);
       clientMonthlyUnitPrice.set(r.clientCode, monthlyForClient);
     }
@@ -839,8 +852,9 @@ export function calculateFiscalYearSummary(
       mTrend.cost += r.totalCostExTax;
       mTrend.grossProfit += r.grossProfitExTax;
       mTrend.transportDiff += r.transportDiff;
+      // 請求＠が無い行は支払＠も合計に含めない(上記と同じ理由)。
       mTrend.billingUnitPriceSum += r.billingUnitPrice;
-      mTrend.payUnitPriceSum += r.payUnitPrice;
+      if (hasUnitPriceData) mTrend.payUnitPriceSum += r.payUnitPrice;
       mTrend.alertCount += countActionableAlerts(r.alerts);
       // ★2026-08-27追加(22章タスク2): 自社負担コスト(雇用保険・社会保険・交通費)の月次内訳
       mTrend.socialInsurance += r.socialInsurance;
