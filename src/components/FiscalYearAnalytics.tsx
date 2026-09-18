@@ -195,24 +195,38 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   // 粗利率2種もあわせて持たせる。
   // ★2026-09-22修正(はまさんのご要望「グラフ1も3期比較にしてほしい」): 前々期のtotalSales・
   // grossProfitもあわせて持たせる(スタッフ人数・粗利率のグラフと同じ3期比較の考え方)。
+  // ★2026-09-29修正(はまさんの指摘「未到来の月が0として描画され、実データの変化がY軸レンジの
+  // 圧縮で見えにくくなっている」): calculateFiscalYearSummaryのmonthlyTrendsは決算期の全12ヶ月分を
+  // 必ずゼロ埋めした固定長配列で返るため(まだ到来していない月・データ未取込の月も含む)、
+  // これまでtotalSales/grossProfit/grossMarginRate/staffCountは「その月にデータが無くても常に
+  // 実際の値(0)」をそのまま描画に使っていた。名目粗利率は既にnominalGrossMarginRateDataAvailable
+  // でnull化されていたが、他の指標には同様のガードが無かった。給与CSVが1件も取り込まれていない月は
+  // staffCount(重複排除済みスタッフ人数)が必ず0になる(=「その月にデータがあるか」の判定に使える、
+  // 上のavgMonthlyStaffCount等と同じ考え方)ため、これをhasData判定に流用し、データが無い月は
+  // 該当する値をnullにする(0を描画しない・線を繋げない・Y軸レンジ計算からも除外する)。
+  // 前期・前々期についても、念のため同じ考え方でhasData判定してnull化する(通常は12ヶ月分
+  // 揃っているはずだが、会社設立初年度等で前期がまだ全月揃っていないケースへの安全策)。
   const chartData = useMemo(() => {
     return summary.monthlyTrends.map((m, i) => {
       const prev = previousSummary.monthlyTrends[i];
       const prevPrev = previousPreviousSummary.monthlyTrends[i];
+      const hasData = m.staffCount > 0;
+      const prevHasData = !!prev && prev.staffCount > 0;
+      const prevPrevHasData = !!prevPrev && prevPrev.staffCount > 0;
       return {
         month: m.month,
-        totalSales: m.totalSales,
-        grossProfit: m.grossProfit,
-        grossMarginRate: m.grossMarginRate,
+        totalSales: hasData ? m.totalSales : null,
+        grossProfit: hasData ? m.grossProfit : null,
+        grossMarginRate: hasData ? m.grossMarginRate : null,
         nominalGrossMarginRate: m.nominalGrossMarginRateDataAvailable ? m.nominalGrossMarginRate : null,
-        staffCount: m.staffCount,
-        prevTotalSales: prev ? prev.totalSales : null,
-        prevGrossProfit: prev ? prev.grossProfit : null,
-        prevGrossMarginRate: prev ? prev.grossMarginRate : null,
+        staffCount: hasData ? m.staffCount : null,
+        prevTotalSales: prevHasData ? prev.totalSales : null,
+        prevGrossProfit: prevHasData ? prev.grossProfit : null,
+        prevGrossMarginRate: prevHasData ? prev.grossMarginRate : null,
         prevNominalGrossMarginRate: prev && prev.nominalGrossMarginRateDataAvailable ? prev.nominalGrossMarginRate : null,
-        prevStaffCount: prev ? prev.staffCount : null,
-        prevPrevTotalSales: prevPrev ? prevPrev.totalSales : null,
-        prevPrevGrossProfit: prevPrev ? prevPrev.grossProfit : null,
+        prevStaffCount: prevHasData ? prev.staffCount : null,
+        prevPrevTotalSales: prevPrevHasData ? prevPrev.totalSales : null,
+        prevPrevGrossProfit: prevPrevHasData ? prevPrev.grossProfit : null,
       };
     });
   }, [summary.monthlyTrends, previousSummary.monthlyTrends, previousPreviousSummary.monthlyTrends]);
@@ -229,20 +243,26 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   // 比較できるようにしてほしい」): 今期・前期・前々期を同じ相対月位置で1本にまとめたデータ。
   // X軸ラベルは今期の実際の対象年月("2024-10"等)を使う(前期・前々期は同じ相対位置=ちょうど
   // 1年前・2年前の同月に対応する)。
+  // ★2026-09-29修正(はまさんの指摘、上のchartDataと同じ理由): staffCount・grossMarginRateは
+  // データが無い月(まだ到来していない月を含む)でも常に実際の値(0)がそのまま入っていたため、
+  // hasData判定(staffCount > 0、上のchartDataと同じ考え方)でnull化した。
   const threePeriodData = useMemo(() => {
     return summary.monthlyTrends.map((m, i) => {
       const prev = previousSummary.monthlyTrends[i];
       const prevPrev = previousPreviousSummary.monthlyTrends[i];
+      const hasData = m.staffCount > 0;
+      const prevHasData = !!prev && prev.staffCount > 0;
+      const prevPrevHasData = !!prevPrev && prevPrev.staffCount > 0;
       return {
         month: m.month,
-        staffCount: m.staffCount,
-        prevStaffCount: prev ? prev.staffCount : null,
-        prevPrevStaffCount: prevPrev ? prevPrev.staffCount : null,
-        grossMarginRate: m.grossMarginRate,
+        staffCount: hasData ? m.staffCount : null,
+        prevStaffCount: prevHasData ? prev.staffCount : null,
+        prevPrevStaffCount: prevPrevHasData ? prevPrev.staffCount : null,
+        grossMarginRate: hasData ? m.grossMarginRate : null,
         nominalGrossMarginRate: m.nominalGrossMarginRateDataAvailable ? m.nominalGrossMarginRate : null,
-        prevGrossMarginRate: prev ? prev.grossMarginRate : null,
+        prevGrossMarginRate: prevHasData ? prev.grossMarginRate : null,
         prevNominalGrossMarginRate: prev && prev.nominalGrossMarginRateDataAvailable ? prev.nominalGrossMarginRate : null,
-        prevPrevGrossMarginRate: prevPrev ? prevPrev.grossMarginRate : null,
+        prevPrevGrossMarginRate: prevPrevHasData ? prevPrev.grossMarginRate : null,
         prevPrevNominalGrossMarginRate:
           prevPrev && prevPrev.nominalGrossMarginRateDataAvailable ? prevPrev.nominalGrossMarginRate : null,
       };
@@ -263,9 +283,11 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   const staffCountDomain = useMemo(() => {
     const values: number[] = [];
     threePeriodData.forEach((d) => {
-      if (d.staffCount > 0) values.push(d.staffCount);
-      if (hasPreviousYearStaffData && d.prevStaffCount) values.push(d.prevStaffCount);
-      if (hasPreviousPreviousYearStaffData && d.prevPrevStaffCount) values.push(d.prevPrevStaffCount);
+      if (d.staffCount !== null && d.staffCount > 0) values.push(d.staffCount);
+      if (hasPreviousYearStaffData && d.prevStaffCount !== null && d.prevStaffCount > 0) values.push(d.prevStaffCount);
+      if (hasPreviousPreviousYearStaffData && d.prevPrevStaffCount !== null && d.prevPrevStaffCount > 0) {
+        values.push(d.prevPrevStaffCount);
+      }
     });
     return computeAxisDomain(values, 5);
   }, [threePeriodData, hasPreviousYearStaffData, hasPreviousPreviousYearStaffData]);
@@ -323,10 +345,13 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
     return computeAxisDomain(values, 2);
   }, [threePeriodData, hasPreviousYearMarginData, hasPreviousPreviousYearMarginData]);
 
+  // ★2026-09-29修正(はまさんの指摘): 以前はd.grossMarginRateを無条件でpushしていたため、
+  // データが無い月(まだ到来していない月を含む)の0がそのままY軸レンジ計算に混ざり、実データの
+  // 変化が不必要に圧縮されて見える不具合があった。他の値と同様、nullの月は除外する。
   const realMarginDomain = useMemo(() => {
     const values: number[] = [];
     threePeriodData.forEach((d) => {
-      values.push(d.grossMarginRate);
+      if (d.grossMarginRate !== null) values.push(d.grossMarginRate);
       if (hasPreviousYearMarginData && d.prevGrossMarginRate !== null) values.push(d.prevGrossMarginRate);
       if (hasPreviousPreviousYearMarginData && d.prevPrevGrossMarginRate !== null) values.push(d.prevPrevGrossMarginRate);
     });
@@ -336,12 +361,23 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   // ★2026-09-22追加(はまさんのご要望「グラフ1の3期比較・右側軸目盛り追加」): 総売上高・
   // 実質粗利益(3期分)の棒グラフ用に、0を起点とするきりのよい上限値のdomainを計算する
   // (左右2本のY軸に同じdomainを渡し、目盛りを完全に一致させるため)。
+  // ★2026-09-29修正(はまさんの指摘): totalSales/grossProfit等がデータの無い月(まだ到来していない
+  // 月を含む)でnullになるよう変更したため、nullをそのままpushしないよう除外する(この棒グラフの
+  // domainは下限が常に0固定のため、以前0を含めていたこと自体は上限値には影響していなかったが、
+  // 他のグラフと同じ「データが無い月は計算対象から完全に除外する」考え方に統一する)。
   const salesChartDomain = useMemo(() => {
     const values: number[] = [];
     chartData.forEach((d) => {
-      values.push(d.totalSales, d.grossProfit);
-      if (hasPreviousYearSalesData) values.push(d.prevTotalSales ?? 0, d.prevGrossProfit ?? 0);
-      if (hasPreviousPreviousYearSalesData) values.push(d.prevPrevTotalSales ?? 0, d.prevPrevGrossProfit ?? 0);
+      if (d.totalSales !== null) values.push(d.totalSales);
+      if (d.grossProfit !== null) values.push(d.grossProfit);
+      if (hasPreviousYearSalesData) {
+        if (d.prevTotalSales !== null) values.push(d.prevTotalSales);
+        if (d.prevGrossProfit !== null) values.push(d.prevGrossProfit);
+      }
+      if (hasPreviousPreviousYearSalesData) {
+        if (d.prevPrevTotalSales !== null) values.push(d.prevPrevTotalSales);
+        if (d.prevPrevGrossProfit !== null) values.push(d.prevPrevGrossProfit);
+      }
     });
     const max = Math.max(0, ...values);
     return [0, computeNiceUpperBound(max)] as [number, number];
