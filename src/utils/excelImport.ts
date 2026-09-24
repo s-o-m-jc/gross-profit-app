@@ -488,7 +488,10 @@ export function extractShikokuSalesSummarySheet(
     const marginRate = parseShikokuNum(get('marginRate'));
     const billingUnitPrice = parseShikokuNum(get('billingUnitPrice'));
     const payUnitPrice = parseShikokuNum(get('payUnitPrice'));
-    const transport = parseShikokuNum(get('transport'));
+    // ★2026-09-30修正: 「支払の内交通費」列の値自体はもう使わない(下のsalaryTransport参照)。
+    // 列マッピング(COLUMN_CANDIDATES の'transport'エントリ)自体は、「支払」列の部分一致
+    // フォールバックがこの列を誤って拾わないようにする列特定の目印として引き続き必要なため、
+    // 定義は残している(findShikokuSummaryColumns参照)。
     const clientName = clientNameRaw || '派遣先企業';
 
     // 紹介手数料行の判定(はまさん確認済みのパターン): 支払＝0、社保他＝0、出勤日数＝0、
@@ -561,7 +564,24 @@ export function extractShikokuSalesSummarySheet(
       // (売上−支払−社保他)にもこれらの控除項目が含まれていない。0のまま(=無し)として扱うことで、
       // 粗利計算がシート側の「粗利益」列と一致するようにする。
       parkingFee: 0,
-      salaryTransport: transport,
+      // ★2026-09-30修正(はまさんの実データ確認・スタッフ給与実額チェックで発覚): 以前は
+      // ここに「支払の内交通費」の値(=transport)をそのまま入れていたが、これは誤りだった。
+      // PayrollRow.salaryTransportは、通常の給与CSV(大阪等)では「総支給額に内包されている
+      // 会社負担の交通費」を意味し、月次サマリ表示(MonthlyCalculationTable/
+      // FiscalYearAnalytics)側で「給与総額(狭義)=paymentAmount−salaryTransport」
+      // 「社保他小計=socialInsurance+salaryTransport+parkingFee」という、総額から交通費を
+      // 分離して社保他側へ付け替える表示用の分解式に使われる(大阪の実データで検算・確定済み
+      // の設計、types.ts参照)。
+      // 一方、このシート(売上実績一覧表)の「支払の内交通費」は名前どおり「支払の内訳」の
+      // 参考情報でしかなく、請求側にも対応する交通費列が無い(billingTransportは常に0、上記
+      // 参照)。transportをsalaryTransportにそのまま入れると、上記の分解式が誤って適用され、
+      // 実際には支払・社保他とも元ファイルの値そのままで正しいにもかかわらず、表示上の
+      // 「給与総額」が支払より交通費分だけ少なく、「社保他小計」が社保他より交通費分だけ
+      // 多く表示される不具合が生じていた(実質粗利益・実質粗利率自体はsalaryTransportを
+      // 参照しないため影響を受けない)。paymentAmount・socialInsuranceOtherは元ファイルの
+      // 値のまま(=修正不要)、salaryTransportを0にすることで、この表示専用の分解を
+      // 適用させないようにする。
+      salaryTransport: 0,
       // 有給関連の内訳列がこのシートには無いため0(「支払」列の説明どおり有給手当は既に
       // 支払額に合算済みだが、内訳としては取り出せない。FiscalYearSummaryの有給金額・
       // 有給日数の合計には、四国のこの期間分は反映されない制約として残る)。
