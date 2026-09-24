@@ -668,6 +668,26 @@ export function calculateGrossProfit(
     });
   });
 
+  // ★2026-09-30追加(本番障害対応): 同一スタッフが同月に複数の未紐付け給与行を持つ場合など
+  // (例: 上のUNMATCHED_P_行は`${targetMonth}_${staffNo}`のみでidを組み立てており、この組が
+  // 一致する給与行が複数あっても区別できなかった)、何らかの理由でresultsに同じidのエントリが
+  // 複数入ると、React側の`key={row.id}`(MonthlyCalculationTable)が重複し、リストの差分更新時に
+  // "NotFoundError: Failed to execute 'removeChild'"という致命的な描画エラー(画面が真っ白になり
+  // 復旧できない)を引き起こす。四国人材の過去実績データ(33ヶ月分)取込み後に本番で実際に発生した。
+  // 実データのどのケースが重複を生んでいるかに関わらず、この関数の出口で必ずidの一意性を保証する
+  // (重複が無い通常ケースはidを一切変更しない。重複時のみ2件目以降に連番を付与する)。
+  const seenResultIds = new Set<string>();
+  results.forEach((r) => {
+    if (!seenResultIds.has(r.id)) {
+      seenResultIds.add(r.id);
+      return;
+    }
+    let suffix = 2;
+    while (seenResultIds.has(`${r.id}_${suffix}`)) suffix += 1;
+    r.id = `${r.id}_${suffix}`;
+    seenResultIds.add(r.id);
+  });
+
   return results.sort((a, b) => {
     if (a.targetMonth !== b.targetMonth) return a.targetMonth.localeCompare(b.targetMonth);
     return a.staffNo.localeCompare(b.staffNo);

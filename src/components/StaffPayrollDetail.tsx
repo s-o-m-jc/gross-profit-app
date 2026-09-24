@@ -601,14 +601,26 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
   // 表示行 + 一覧列の値をあらかじめまとめて計算しておき、ソート・描画の両方で使い回す。
   // ★2026-09-02修正: 有給(手入力)の追加日数・金額を、一覧の「有給日数」「総支給額」
   // 「差引支給額」列・合計行にも反映させるため、override全体をcomputeSummaryに渡す。
-  const displayRows = useMemo(
-    () =>
-      filteredRows.map((p) => ({
+  // ★2026-09-30追加(本番障害対応): 同一スタッフが同月に複数の給与行を持つ場合(例: 同月内で
+  // 就業先を掛け持ちしている等)、`${targetMonth}_${staffNo}`だけでは一覧行のReact key・
+  // 展開状態キーが重複してしまい、"NotFoundError: Failed to execute 'removeChild'"という
+  // 致命的な描画エラー(画面が真っ白になり復旧できない)を引き起こす。四国人材の過去実績
+  // データ(33ヶ月分)取込み後に本番で実際に発生した(calculator.tsの同種の修正も参照)。
+  // 同じ組が複数回現れた場合のみ、2件目以降のkeyに連番を付与して一意にする
+  // (通常ケース(1組1件)は従来どおりのkeyのまま)。
+  const displayRows = useMemo(() => {
+    const occurrence = new Map<string, number>();
+    return filteredRows.map((p) => {
+      const baseKey = `${p.targetMonth}_${p.staffNo}`;
+      const n = (occurrence.get(baseKey) || 0) + 1;
+      occurrence.set(baseKey, n);
+      return {
         p,
         s: computeSummary(p, getOverrideTotal(p.targetMonth, p.staffNo)),
-      })),
-    [filteredRows, overridesByKey]
-  );
+        uiKey: n > 1 ? `${baseKey}_${n}` : baseKey,
+      };
+    });
+  }, [filteredRows, overridesByKey]);
 
   const sortedRows = useMemo(() => {
     const withIndex = displayRows.map((row, idx) => ({ row, idx }));
@@ -819,11 +831,10 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
-              {sortedRows.map(({ p, s }) => {
-                const id = `${p.targetMonth}_${p.staffNo}`;
-                const expanded = expandedIds.has(id);
+              {sortedRows.map(({ p, s, uiKey }) => {
+                const expanded = expandedIds.has(uiKey);
                 return (
-                    <tr key={id} onClick={() => toggleExpand(id)} className="hover:bg-slate-50 cursor-pointer transition-colors">
+                    <tr key={uiKey} onClick={() => toggleExpand(uiKey)} className="hover:bg-slate-50 cursor-pointer transition-colors">
                       <td className="py-2.5 px-3 text-slate-400">
                         {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </td>
@@ -875,14 +886,13 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
           従来通り有効)。position: fixedのため、DOM上どこにレンダリングしても画面全体を覆う形で
           表示される。 */}
       {sortedRows
-        .filter(({ p }) => expandedIds.has(`${p.targetMonth}_${p.staffNo}`))
-        .map(({ p }) => {
-          const id = `${p.targetMonth}_${p.staffNo}`;
+        .filter(({ uiKey }) => expandedIds.has(uiKey))
+        .map(({ p, uiKey }) => {
           return (
             <div
-              key={id}
+              key={uiKey}
               className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:p-8"
-              onClick={() => toggleExpand(id)}
+              onClick={() => toggleExpand(uiKey)}
             >
               <div
                 className="my-4 w-full max-w-5xl rounded-xl bg-white shadow-xl"
@@ -897,7 +907,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={() => toggleExpand(id)}
+                    onClick={() => toggleExpand(uiKey)}
                     className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
                     aria-label="閉じる"
                   >
