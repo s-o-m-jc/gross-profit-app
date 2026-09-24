@@ -56,14 +56,13 @@ import {
   flattenCompanyMonths,
   mergeGroupedRowsIntoCompanyMonths,
   groupByTargetMonth,
-  hasAnyData,
   addManualEntryRow,
   removeManualEntryRow,
   upsertPersonInChargeRow,
   deleteCompanyMonth,
 } from './utils/monthlyData';
 import { loadAppState, saveAppState } from './utils/persistence';
-import { fetchMonthlyDataForCompanies, replaceCompanyMonthlyData } from './utils/supabaseSync';
+import { fetchMonthlyDataForCompany, replaceCompanyMonthlyData } from './utils/supabaseSync';
 import { downloadBackupFile, parseBackupFile } from './utils/backupFile';
 import { useAuth, Profile } from './lib/AuthContext';
 
@@ -311,37 +310,58 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     const allowedCompanyIds = visibleCompanies.map((c) => c.id);
 
     (async () => {
-      try {
-        const remote = await fetchMonthlyDataForCompanies(allowedCompanyIds);
-        if (cancelled) return;
-        setMonthlyData(remote);
-        prevMonthlyDataRef.current = remote;
+      // ★2026-09-30変更(本番障害対応): 以前は3社まとめて1クエリで取得しており、四国人材の
+      // データ量増加でそのクエリがSupabase側のstatement timeoutに達すると、全社まとめて
+      // 読込失敗(画面が真っ白)になっていた。会社ごとに独立したクエリにし、失敗した会社
+      // だけをローカルキャッシュにフォールバックすることで、1社の不調が他社の表示を
+      // 巻き込まないようにする(supabaseSync.ts参照)。
+      const settled = await Promise.allSettled(
+        allowedCompanyIds.map((id) => fetchMonthlyDataForCompany(id))
+      );
+      if (cancelled) return;
+
+      const remote = initialAppMonthlyData();
+      const failedCompanyIds: CompanyId[] = [];
+      let firstError: unknown = null;
+      settled.forEach((result, i) => {
+        const id = allowedCompanyIds[i];
+        if (result.status === 'fulfilled') {
+          remote[id] = result.value;
+        } else {
+          failedCompanyIds.push(id);
+          firstError = firstError ?? result.reason;
+          console.warn(`Supabaseからの読込に失敗しました(${id})。ローカルキャッシュを表示します:`, result.reason);
+        }
+      });
+
+      if (failedCompanyIds.length > 0) {
+        const cached = await loadAppState();
+        failedCompanyIds.forEach((id) => {
+          remote[id] = cached?.monthlyData[id] || {};
+        });
+        const failedNames = failedCompanyIds
+          .map((id) => COMPANIES.find((c) => c.id === id)?.name || id)
+          .join('、');
+        setIsOffline(true);
+        setSyncError(
+          `${failedNames}: ${firstError instanceof Error ? firstError.message : String(firstError)}`
+        );
+      } else {
         setIsOffline(false);
         setSyncError(null);
-        // ★2026-09-19削除(はまさんの指摘「サンプルデータを読み込む運用は今後一切行わない」):
-        // 以前はここで、管理者かつ本当にデータが1件も無い(初回利用)場合のみ四国人材へ
-        // サンプルデータを自動投入していた(従来のIndexedDB単体運用時の挙動を踏襲した初回
-        // オンボーディング用)。この方針転換に伴い撤去。データベースが空の状態でアプリを
-        // 開いた場合は、単純にデータ無しの空の画面になる。
-        // ローカルキャッシュも最新化しておく(次回オフライン時のフォールバック用)
-        await saveAppState({ monthlyData: remote, selectedCompanyId });
-      } catch (e) {
-        console.warn('Supabaseからの読込に失敗しました。ローカルキャッシュを表示します:', e);
-        if (cancelled) return;
-        const cached = await loadAppState();
-        if (cached && hasAnyData(cached.monthlyData)) {
-          const merged = initialAppMonthlyData();
-          allowedCompanyIds.forEach((id) => {
-            merged[id] = cached.monthlyData[id] || {};
-          });
-          setMonthlyData(merged);
-          prevMonthlyDataRef.current = merged;
-        }
-        setIsOffline(true);
-        setSyncError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!cancelled) setIsDataLoaded(true);
       }
+
+      setMonthlyData(remote);
+      prevMonthlyDataRef.current = remote;
+      // ★2026-09-19削除(はまさんの指摘「サンプルデータを読み込む運用は今後一切行わない」):
+      // 以前はここで、管理者かつ本当にデータが1件も無い(初回利用)場合のみ四国人材へ
+      // サンプルデータを自動投入していた(従来のIndexedDB単体運用時の挙動を踏襲した初回
+      // オンボーディング用)。この方針転換に伴い撤去。データベースが空の状態でアプリを
+      // 開いた場合は、単純にデータ無しの空の画面になる。
+      // ローカルキャッシュも最新化しておく(次回オフライン時のフォールバック用。失敗した会社は
+      // 直前のキャッシュ内容のまま=悪化させない)
+      await saveAppState({ monthlyData: remote, selectedCompanyId });
+      if (!cancelled) setIsDataLoaded(true);
     })();
 
     return () => {
@@ -628,7 +648,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
               {isOffline
-                ? 'Supabaseに接続できないため、ローカルキャッシュのデータを表示しています(閲覧のみ・最新の変更が反映されていない可能性があります)。'
+                ? `Supabaseからのデータ読込に失敗した会社があるため、該当会社のみローカルキャッシュを表示しています(閲覧のみ・最新の変更が反映されていない可能性があります)。${syncError ? ` [${syncError}]` : ''}`
                 : `Supabaseへの保存でエラーが発生しました: ${syncError}`}
             </span>
           </div>

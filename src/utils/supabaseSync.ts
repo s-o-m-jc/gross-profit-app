@@ -12,17 +12,10 @@
  */
 
 import { supabase } from '../lib/supabaseClient';
-import { CompanyId, COMPANIES } from '../config/companies';
-import {
-  AppMonthlyData,
-  CompanyMonthlyData,
-  MonthlyDataState,
-  emptyMonthlyDataState,
-  initialAppMonthlyData,
-} from './monthlyData';
+import { CompanyId } from '../config/companies';
+import { CompanyMonthlyData, MonthlyDataState, emptyMonthlyDataState } from './monthlyData';
 
 interface MonthlyDataRow {
-  company_id: string;
   target_month: string;
   state: Partial<MonthlyDataState> | null;
 }
@@ -46,32 +39,31 @@ function normalizeState(state: Partial<MonthlyDataState> | null | undefined): Mo
 }
 
 /**
- * 指定した会社群(admin: 全社 / viewer: 自社のみ)のmonthly_dataを全件取得し、
- * AppMonthlyData形式(会社ID→対象月→MonthlyDataState)に組み立てる。
- * 未指定の会社(viewerから見た他社)はキーごと空のまま返す。
+ * 1社分のmonthly_dataを全件取得し、CompanyMonthlyData形式(対象月→MonthlyDataState)に
+ * 組み立てる。
+ *
+ * ★2026-09-30変更(本番障害対応): 以前は複数社をまとめて`company_id in (...)`で1クエリで
+ * 取得していたが、四国人材の過去実績データ(33ヶ月分・12,000件超)を取り込んだ結果、
+ * 3社分のJSONBを一括取得するクエリがSupabase側のstatement timeoutに達し、全社まとめて
+ * 読込失敗(画面が真っ白)になる障害が発生した。会社ごとに独立したクエリに分割することで、
+ * 1社分のデータ量が大きくても他社の表示に影響しない(その社だけローカルキャッシュに
+ * フォールグレードする)ようにした。呼び出し側(App.tsx)でPromise.allSettledを使い、
+ * 会社ごとに成功/失敗を判定する。
  */
-export async function fetchMonthlyDataForCompanies(companyIds: CompanyId[]): Promise<AppMonthlyData> {
-  const result = initialAppMonthlyData();
-  if (companyIds.length === 0) return result;
-
+export async function fetchMonthlyDataForCompany(companyId: CompanyId): Promise<CompanyMonthlyData> {
   const { data, error } = await supabase
     .from('monthly_data')
-    .select('company_id, target_month, state')
-    .in('company_id', companyIds);
+    .select('target_month, state')
+    .eq('company_id', companyId);
 
   if (error) {
-    throw new Error(`Supabaseからのデータ読込に失敗しました: ${error.message}`);
+    throw new Error(`Supabaseからのデータ読込に失敗しました(${companyId}): ${error.message}`);
   }
 
+  const result: CompanyMonthlyData = {};
   (data as MonthlyDataRow[] | null)?.forEach((row) => {
-    const companyId = row.company_id as CompanyId;
-    if (!COMPANIES.some((c) => c.id === companyId)) return;
-    result[companyId] = {
-      ...result[companyId],
-      [row.target_month]: normalizeState(row.state),
-    };
+    result[row.target_month] = normalizeState(row.state);
   });
-
   return result;
 }
 
