@@ -187,6 +187,10 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
       grossMarginRate: summary.overallGrossMarginRate,
       paidLeaveDays: summary.totalPaidLeaveDays,
       avgPaidLeaveDaysPerStaff: summary.avgPaidLeaveDaysPerStaff,
+      // ★2026-09-25追加: 交通費(税抜、大阪専用の手入力上書き値)。値がある月だけを合算した
+      // 決算期合計(summary.totalTransportExTax参照)。データが1件も無い期間は「不明」表示のまま。
+      transportExTax: summary.totalTransportExTax,
+      transportExTaxDataAvailable: summary.transportExTaxDataAvailable,
     };
   }, [summary]);
 
@@ -654,14 +658,16 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                 <th className="py-2 px-3 text-right bg-slate-100" rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}>名目粗利率</th>
                 {/* ★2026-09-16追加(はまさんの指摘・「集計」シートヘッダー行との突合): 「交通費(税抜)」列。
                     はまさんが元Excelのセルを直接確認した結果、数式ではなく手入力の固定値であり、
-                    このアプリが持つどのデータからも導出できない外部データと判明した(値が交通費
-                    (自社負担)と一致する月としない月がある理由もこれで説明がつく)。データの出所が
-                    判明するまでは、誤った値を計算して表示するよりも「不明」と明示する方が安全なため、
-                    列自体は「集計」シートとの項目一致のため用意しつつ、値は表示しない。 */}
+                    このアプリが持つどのデータからも算出できない外部データと判明した(値が交通費
+                    (自社負担)と一致する月としない月がある理由もこれで説明がつく)。
+                    ★2026-09-25追加: 大阪に限り、はまさんが個別ファイル(契約別売上実績表)から
+                    確定させた月次の値をTransportExTaxOverrideRow(手入力上書き)として保持できる
+                    ようになった(monthlyData.ts参照)。値がある月はその値を表示し、無い月
+                    (四国・松山、および大阪でも未取込の月)は引き続き「不明」を表示する。 */}
                 <th
                   className="py-2 px-3 text-right"
                   rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
-                  title="元Excelでは手入力の固定値(このアプリのデータからは導出不可)。データの出所判明まで「不明」表示にしています"
+                  title="大阪のみ、はまさんが個別ファイルから確定させた値を手入力で保持しています。値が無い月(四国・松山、大阪の未取込月)は「不明」と表示します"
                 >
                   交通費(税抜) <span className="text-amber-500">ⓘ</span>
                 </th>
@@ -785,7 +791,13 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                 <td className="py-2 px-3 text-right font-mono bg-indigo-50">
                   {monthlyTotals.nominalGrossMarginRateDataAvailable ? `${monthlyTotals.nominalGrossMarginRate}%` : 'データなし'}
                 </td>
-                <td className="py-2 px-3 text-right font-mono bg-indigo-50 text-slate-400">不明</td>
+                <td className="py-2 px-3 text-right font-mono bg-indigo-50">
+                  {monthlyTotals.transportExTaxDataAvailable ? (
+                    `¥${monthlyTotals.transportExTax.toLocaleString()}`
+                  ) : (
+                    <span className="text-slate-400">不明</span>
+                  )}
+                </td>
                 <td
                   className="py-2 px-3 text-right font-mono bg-indigo-50"
                   title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代"
@@ -853,7 +865,13 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                   <td className="py-2 px-3 text-right font-mono">
                     {m.nominalGrossMarginRateDataAvailable ? `${m.nominalGrossMarginRate}%` : 'データなし'}
                   </td>
-                  <td className="py-2 px-3 text-right font-mono text-slate-300">不明</td>
+                  <td className="py-2 px-3 text-right font-mono">
+                    {m.transportExTax !== undefined ? (
+                      `¥${m.transportExTax.toLocaleString()}`
+                    ) : (
+                      <span className="text-slate-300">不明</span>
+                    )}
+                  </td>
                   <td className="py-2 px-3 text-right font-mono" title="社保(雇用保険込み) + 交通費(自社負担) + 駐車場代">
                     ¥{m.socialInsuranceOther.toLocaleString()}
                   </td>

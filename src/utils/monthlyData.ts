@@ -28,6 +28,7 @@ import {
   NextMonthAdjustmentRow,
   PaidLeaveOverrideRow,
   PersonInChargeRow,
+  TransportExTaxOverrideRow,
 } from '../types';
 import { CompanyId, COMPANIES } from '../config/companies';
 
@@ -52,6 +53,9 @@ export interface MonthlyDataState {
   // ★2026-09-19追加(はまさんの指摘): 紹介手数料(手入力)。retirementRowsと全く同じ設計
   // (対象月・スタッフNoで1件ずつ追加/削除)。
   referralFeeRows: ReferralFeeRow[];
+  // ★2026-09-25追加(はまさんの確認済み定義、大阪専用): 交通費(税抜)の月次手入力上書き値。
+  // personInChargeRowsと同じく、対象月ごとに常に1件だけを保つ(upsertTransportExTaxOverrideRow参照)。
+  transportExTaxOverrideRows: TransportExTaxOverrideRow[];
 }
 
 export type MonthlyCategory = keyof MonthlyDataState;
@@ -67,7 +71,8 @@ export type ManualEntryCategory =
   | 'retirementRows'
   | 'paidLeaveOverrideRows'
   | 'personInChargeRows'
-  | 'referralFeeRows';
+  | 'referralFeeRows'
+  | 'transportExTaxOverrideRows';
 
 /** 対象月が空/判定不能だった行の格納先 (実際のYYYY-MM形式とは衝突しない固定文字列) */
 export const UNKNOWN_MONTH_KEY = '対象月不明';
@@ -93,6 +98,7 @@ export function emptyMonthlyDataState(): MonthlyDataState {
     paidLeaveOverrideRows: [],
     personInChargeRows: [],
     referralFeeRows: [],
+    transportExTaxOverrideRows: [],
   };
 }
 
@@ -181,6 +187,22 @@ export function upsertPersonInChargeRow(
   return { ...companyMonths, [month]: { ...existing, personInChargeRows: [...others, row] } };
 }
 
+/**
+ * 交通費(税抜)の手入力上書き値を1件、対象月のバケツにupsertする(★2026-09-25追加、大阪専用)。
+ * upsertPersonInChargeRowと全く同じ考え方(対象月ごとに常に1件だけを保ち、再保存は上書き)。
+ * rowのidは呼び出し側で`targetMonth`と同じ値に統一しているため、同一idの既存行を
+ * 取り除いてから追加するだけで上書きを実現できる。
+ */
+export function upsertTransportExTaxOverrideRow(
+  companyMonths: CompanyMonthlyData,
+  month: string,
+  row: TransportExTaxOverrideRow
+): CompanyMonthlyData {
+  const existing = companyMonths[month] || emptyMonthlyDataState();
+  const others = (existing.transportExTaxOverrideRows || []).filter((r) => r.id !== row.id);
+  return { ...companyMonths, [month]: { ...existing, transportExTaxOverrideRows: [...others, row] } };
+}
+
 /** 会社の全月のデータを1つのフラットなデータ束にまとめる(粗利計算エンジンへの入力用) */
 export function flattenCompanyMonths(companyMonths: CompanyMonthlyData): MonthlyDataState {
   const result = emptyMonthlyDataState();
@@ -197,6 +219,7 @@ export function flattenCompanyMonths(companyMonths: CompanyMonthlyData): Monthly
     result.paidLeaveOverrideRows.push(...(m.paidLeaveOverrideRows || []));
     result.personInChargeRows.push(...(m.personInChargeRows || []));
     result.referralFeeRows.push(...(m.referralFeeRows || []));
+    result.transportExTaxOverrideRows.push(...(m.transportExTaxOverrideRows || []));
   });
   return result;
 }

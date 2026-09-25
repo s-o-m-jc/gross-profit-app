@@ -19,8 +19,14 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { Handshake, Umbrella, Wallet, ArrowLeftRight, PlusCircle, Trash2 } from 'lucide-react';
-import { ReferralFeeRow, LeaveCompensationRow, LeaveAllowanceRow, NextMonthAdjustmentRow } from '../types';
+import { Handshake, Umbrella, Wallet, ArrowLeftRight, Bus, PlusCircle, Trash2 } from 'lucide-react';
+import {
+  ReferralFeeRow,
+  LeaveCompensationRow,
+  LeaveAllowanceRow,
+  NextMonthAdjustmentRow,
+  TransportExTaxOverrideRow,
+} from '../types';
 import { CompanyMonthlyData, MonthlyDataState, listRealMonths } from '../utils/monthlyData';
 
 interface ReferralFeePanelProps {
@@ -34,11 +40,16 @@ interface ReferralFeePanelProps {
   onRemoveLeaveAllowance: (row: LeaveAllowanceRow) => void;
   onAddNextMonthAdjustment: (row: NextMonthAdjustmentRow) => void;
   onRemoveNextMonthAdjustment: (row: NextMonthAdjustmentRow) => void;
+  /** ★2026-09-25追加(はまさんの確認済み定義): 交通費(税抜)の月次手入力上書き(大阪専用)。
+   * falseの場合(大阪以外)はサブタブ自体を表示しない。 */
+  showTransportExTaxOverride: boolean;
+  onUpsertTransportExTaxOverride: (row: TransportExTaxOverrideRow) => void;
+  onRemoveTransportExTaxOverride: (row: TransportExTaxOverrideRow) => void;
   /** falseの場合(viewer)は入力フォーム・削除ボタンを非表示にし、一覧の閲覧のみ可能にする */
   canEdit: boolean;
 }
 
-type SubTabKey = 'referralFee' | 'leaveCompensation' | 'leaveAllowance' | 'nextMonthAdjustment';
+type SubTabKey = 'referralFee' | 'leaveCompensation' | 'leaveAllowance' | 'nextMonthAdjustment' | 'transportExTax';
 
 function generateId(prefix: string): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -63,6 +74,9 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
   onRemoveLeaveAllowance,
   onAddNextMonthAdjustment,
   onRemoveNextMonthAdjustment,
+  showTransportExTaxOverride,
+  onUpsertTransportExTaxOverride,
+  onRemoveTransportExTaxOverride,
   canEdit,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<SubTabKey>('referralFee');
@@ -98,6 +112,14 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
       [...months]
         .reverse()
         .flatMap((m) => companyMonths[m]?.nextMonthAdjustmentRows || [])
+        .sort((a, b) => b.targetMonth.localeCompare(a.targetMonth)),
+    [companyMonths, months]
+  );
+  const transportExTaxOverrideRows = useMemo(
+    () =>
+      [...months]
+        .reverse()
+        .flatMap((m) => companyMonths[m]?.transportExTaxOverrideRows || [])
         .sort((a, b) => b.targetMonth.localeCompare(a.targetMonth)),
     [companyMonths, months]
   );
@@ -270,6 +292,35 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
     setNjMemo('');
   };
 
+  // ---- 交通費(税抜)上書き フォーム状態 (★2026-09-25追加、大阪専用) ----
+  // 対象月ごとに1件のみ(upsert)のため、他の手入力カテゴリと異なりスタッフNo入力欄は無い。
+  const [teMonth, setTeMonth] = useState('');
+  const [teAmount, setTeAmount] = useState('');
+  const [teMemo, setTeMemo] = useState('');
+  const [teError, setTeError] = useState('');
+
+  const handleUpsertTransportExTaxSubmit = () => {
+    const amountNum = Number(teAmount);
+    if (!MONTH_PATTERN.test(teMonth)) {
+      setTeError('対象月を入力してください(例: 2026-04)。');
+      return;
+    }
+    if (teAmount.trim() === '' || Number.isNaN(amountNum)) {
+      setTeError('交通費(税抜)額を数値で入力してください。');
+      return;
+    }
+    setTeError('');
+    onUpsertTransportExTaxOverride({
+      id: teMonth,
+      targetMonth: teMonth,
+      amount: amountNum,
+      memo: teMemo.trim() || undefined,
+    });
+    setTeMonth('');
+    setTeAmount('');
+    setTeMemo('');
+  };
+
   const subTabs: { key: SubTabKey; label: string; icon: React.ReactNode; count: number }[] = [
     { key: 'referralFee', label: '紹介手数料', icon: <Handshake className="w-3.5 h-3.5" />, count: referralFeeRows.length },
     {
@@ -290,6 +341,18 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
       icon: <ArrowLeftRight className="w-3.5 h-3.5" />,
       count: nextMonthAdjustmentRows.length,
     },
+    // ★2026-09-25追加(大阪専用): showTransportExTaxOverrideがfalse(大阪以外)の場合は
+    // サブタブ自体を出さない。
+    ...(showTransportExTaxOverride
+      ? [
+          {
+            key: 'transportExTax' as SubTabKey,
+            label: '交通費(税抜)',
+            icon: <Bus className="w-3.5 h-3.5" />,
+            count: transportExTaxOverrideRows.length,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -661,6 +724,75 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
               onRemove: canEdit ? () => onRemoveNextMonthAdjustment(r) : undefined,
             }))}
             emptyMessage="まだ次月調整の手入力データはありません。"
+          />
+        </div>
+      )}
+
+      {/* 5. 交通費(税抜) (★2026-09-25追加、大阪専用)。showTransportExTaxOverride===trueの時のみ
+          サブタブ自体が存在するため、activeSubTabがこの値になるのは大阪選択中のみ。 */}
+      {showTransportExTaxOverride && activeSubTab === 'transportExTax' && (
+        <div>
+          <p className="text-xs text-slate-500 mb-3">
+            派遣先企業へ交通費を請求する際の税抜金額(大阪専用)。個別ファイル(契約別売上実績表)の
+            スタッフ別「交通費（税抜）」列の対象月合計を入力してください
+            (「月別総合計」の「集計」タブは一部月で誤入力が確認されているため参照しないこと)。
+            対象月ごとに1件のみ保持され、同じ対象月へ再登録すると上書きされます。
+          </p>
+          {canEdit && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-2">
+                <div>
+                  <label className={labelClass}>対象月</label>
+                  <input
+                    type="month"
+                    data-testid="te-month"
+                    value={teMonth}
+                    onChange={(e) => setTeMonth(e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>交通費(税抜)額</label>
+                  <input
+                    type="number"
+                    data-testid="te-amount"
+                    value={teAmount}
+                    onChange={(e) => setTeAmount(e.target.value)}
+                    placeholder="例: 215343"
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>備考(任意)</label>
+                  <input
+                    type="text"
+                    data-testid="te-memo"
+                    value={teMemo}
+                    onChange={(e) => setTeMemo(e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+              {teError && <p className="text-[11px] text-rose-600 mb-2">{teError}</p>}
+              <button
+                data-testid="te-add"
+                onClick={handleUpsertTransportExTaxSubmit}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm transition-colors mb-4"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>交通費(税抜)を登録(同じ対象月は上書き)</span>
+              </button>
+            </>
+          )}
+
+          <ManualEntryTable
+            columns={['対象月', '交通費(税抜)額', '備考']}
+            rows={transportExTaxOverrideRows.map((r) => ({
+              key: r.id,
+              cells: [r.targetMonth, `¥${r.amount.toLocaleString()}`, r.memo || '-'],
+              onRemove: canEdit ? () => onRemoveTransportExTaxOverride(r) : undefined,
+            }))}
+            emptyMessage="まだ交通費(税抜)の手入力データはありません。"
           />
         </div>
       )}

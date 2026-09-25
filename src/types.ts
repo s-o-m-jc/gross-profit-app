@@ -235,6 +235,29 @@ export interface PersonInChargeRow {
   personInCharge: string;      // 担当者名
 }
 
+// 交通費(税抜)の手入力・上書きデータレコード (★2026-09-25追加、大阪専用)。
+// 定義(はまさんの確認済み): 派遣先企業へ交通費を請求する際、税抜きで計算してから請求小計に
+// 合算し消費税を乗せて請求する、という運用上の金額。必ずどちらかのスタッフ別実額
+// (相手企業負担額そのもの、自社負担額そのもの、またはそのいずれかを1.1で割った額。四捨五入に
+// より1円の誤差が生じることがある)と一致するが、このアプリが持つどのデータからも算出できない
+// 外部由来の値のため、月単位の手入力上書き値として保持する。
+// ★注意(はまさんの確認済み): 「月別総合計」ファイルの「集計」タブにも同名の列があるが、
+// 2024-07/08/09・2024-12・2025-04・2025-06の6ヶ月は誤入力(自社負担額を代わりに入力)されており
+// 信頼できないことが判明している。正しい値は各月の個別ファイル(契約別売上実績表)内の対象月
+// シートで、スタッフごとの「交通費（税抜）」列を合計した値。今後この値を追加・修正する場合は、
+// 必ず個別ファイル側を参照すること(「集計」タブの値をそのまま転記しないこと)。
+// 対象は大阪のみ(四国・松山は交通費の管理方法が異なるため対象外。四国は勤怠明細の
+// 「交通費チェック」シート、松山は非課税扱いとのことで、別途検討が必要)。
+// PersonInChargeRowと同じくクライアント×対象月ではなく対象月単位で1件のみ存在する
+// (idは常に`targetMonth`と同じ値にし、monthlyData.tsのupsertTransportExTaxOverrideRowが
+// 既存行を置き換える形でupsertする)。
+export interface TransportExTaxOverrideRow {
+  id: string;                  // = targetMonth
+  targetMonth: string;         // 対象年月
+  amount: number;              // 交通費(税抜)の確定値
+  memo?: string;                // 備考
+}
+
 // 粗利計算結果レコード (1請求/1スタッフ行単位)
 export interface GrossProfitResult {
   id: string;                  // ユニーク識別子
@@ -380,6 +403,12 @@ export interface FiscalYearSummary {
   totalTransportSalary: number;   // 給与交通費総額
   totalTransportBilling: number;  // 請求交通費総額
   totalTransportDiff: number;     // 交通費差額
+
+  // ★2026-09-25追加: 交通費(税抜)の決算期合計。値がある月(MonthlyTrend.transportExTax参照)
+  // だけを合算し、値の無い月は合計から除外する(0として合算すると過小表示になるため)。
+  // 対象期間の全月が「不明」の場合は0・falseになる。
+  totalTransportExTax: number;
+  transportExTaxDataAvailable: boolean;
 
   totalPaidLeaveAmount: number;   // 有給金額合計 (スタッフ×月で重複排除して集計)
   totalPaidLeaveDays: number;     // 有給日数合計 (同上)
@@ -536,6 +565,18 @@ export interface MonthlyTrend {
   // 1人当たり有給日数(当月) = paidLeaveDays ÷ staffCount。FiscalYearSummary.avgPaidLeaveDaysPerStaff
   // (全期間版)の月次分解。スタッフ人数が0の月は0とする。
   avgPaidLeaveDaysPerStaff: number;
+
+  // ★2026-09-25追加(はまさんの確認済み定義): 交通費(税抜)。派遣先企業へ交通費を請求する際、
+  // 税抜きで計算してから請求小計に合算し消費税を乗せて請求する、という運用上の金額。
+  // 必ずどちらかのスタッフ別実額(相手企業負担額そのもの、自社負担額そのもの、またはそのいずれかを
+  // 1.1で割った額。四捨五入により1円の誤差が生じることがある)と一致するが、このアプリが持つ
+  // どのデータからも算出できない外部由来の値のため(上記コメント・MonthlyCalculationTable.tsx/
+  // FiscalYearAnalytics.tsxの既存コメント参照)、TransportExTaxOverrideRow(大阪専用の月次手入力
+  // 上書き値、monthlyData.ts参照)がある月のみ値を持つ。無い月はundefined(=「不明」表示)。
+  // ★対象は大阪のみ(2026-09-25時点。四国・松山は交通費の管理方法が異なるため未対応、
+  // CLAUDE.md参照)。月次粗利明細一覧(個別契約行)の同名列には反映しない(月単位の値のため、
+  // 決算期集計の月次サマリ・年間合計にのみ反映するスコープとした)。
+  transportExTax?: number;
 }
 
 // 得意先別順位

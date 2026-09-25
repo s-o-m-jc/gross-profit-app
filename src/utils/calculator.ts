@@ -19,6 +19,7 @@ import {
   LeaveAllowanceRow,
   NextMonthAdjustmentRow,
   PersonInChargeRow,
+  TransportExTaxOverrideRow,
   GrossProfitResult,
   AuditAlert,
   FiscalYearSummary,
@@ -777,11 +778,20 @@ export function calculateFiscalYearSummary(
   results: GrossProfitResult[],
   payrolls: PayrollRow[] = [],
   startFiscalMonth: string = getDefaultFiscalYearStart(),
-  monthsCount: number = 12
+  monthsCount: number = 12,
+  // ★2026-09-25追加(はまさんの確認済み定義、大阪専用): 交通費(税抜)の月次手入力上書き値。
+  // 対象月ごとに1件のみ(monthlyData.tsのupsertTransportExTaxOverrideRow参照)。
+  transportExTaxOverrides: TransportExTaxOverrideRow[] = []
 ): FiscalYearSummary {
   // 年月リストを生成 (例: 2026-04 から 12か月分)
   const targetMonths = getFiscalYearMonths(startFiscalMonth, monthsCount);
   const [startYearStr] = startFiscalMonth.split('-');
+
+  // 交通費(税抜)のマップ作成 キー: targetMonth (対象月ごとに1件のみのため単純なMapでよい)
+  const transportExTaxMap = new Map<string, number>();
+  transportExTaxOverrides.forEach((r) => {
+    transportExTaxMap.set(r.targetMonth, r.amount);
+  });
 
   // 対象期間にフィルタリング
   const periodResults = results.filter((r) => targetMonths.includes(r.targetMonth));
@@ -862,6 +872,9 @@ export function calculateFiscalYearSummary(
       nominalGrossMarginRateDataAvailable: false,
       // ★2026-09-16追加(はまさんの指摘・「集計」シートヘッダー行との突合)。詳細はtypes.ts参照。
       avgPaidLeaveDaysPerStaff: 0,
+      // ★2026-09-25追加: 交通費(税抜)。手入力上書き値(transportExTaxMap)がある月のみ値を持つ。
+      // 無い月はundefinedのまま(=「不明」表示、types.ts参照)。
+      transportExTax: transportExTaxMap.get(m),
     });
   });
 
@@ -1205,6 +1218,10 @@ export function calculateFiscalYearSummary(
     totalTransportSalary,
     totalTransportBilling,
     totalTransportDiff: totalTransportSalary - totalTransportBilling,
+    // ★2026-09-25追加: 値がある月(transportExTaxMap)だけを合算する(無い月を0として合算すると
+    // 過小表示になるため)。対象期間の全月が「不明」の場合は0・falseになる。
+    totalTransportExTax: targetMonths.reduce((sum, m) => sum + (transportExTaxMap.get(m) || 0), 0),
+    transportExTaxDataAvailable: targetMonths.some((m) => transportExTaxMap.has(m)),
     totalPaidLeaveAmount,
     totalPaidLeaveDays,
     avgPaidLeaveDaysPerStaff,

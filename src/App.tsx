@@ -44,6 +44,7 @@ import {
   NextMonthAdjustmentRow,
   PaidLeaveOverrideRow,
   PersonInChargeRow,
+  TransportExTaxOverrideRow,
 } from './types';
 import { calculateGrossProfit, calculateFiscalYearSummary, getFiscalYearMonths } from './utils/calculator';
 import { COMPANIES, DEFAULT_COMPANY_ID, getCompanyConfig, CompanyId } from './config/companies';
@@ -59,6 +60,7 @@ import {
   addManualEntryRow,
   removeManualEntryRow,
   upsertPersonInChargeRow,
+  upsertTransportExTaxOverrideRow,
   deleteCompanyMonth,
 } from './utils/monthlyData';
 import { loadAppState, saveAppState } from './utils/persistence';
@@ -247,6 +249,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     paidLeaveOverrideRows,
     personInChargeRows,
     referralFeeRows,
+    transportExTaxOverrideRows,
   } = flattened;
 
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
@@ -496,6 +499,16 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   };
   const handleRemovePersonInCharge = (row: PersonInChargeRow) =>
     handleRemoveManualEntry('personInChargeRows', row.targetMonth, row.id);
+  // ★2026-09-25追加(はまさんの確認済み定義、大阪専用): 交通費(税抜)の月次手入力上書き値。
+  // personInChargeRowsと全く同じ扱い(対象月ごとに1件のみ、upsert専用関数+共通の削除関数)。
+  const handleUpsertTransportExTaxOverride = (row: TransportExTaxOverrideRow) => {
+    setMonthlyData((prev) => ({
+      ...prev,
+      [selectedCompanyId]: upsertTransportExTaxOverrideRow(prev[selectedCompanyId], row.targetMonth, row),
+    }));
+  };
+  const handleRemoveTransportExTaxOverride = (row: TransportExTaxOverrideRow) =>
+    handleRemoveManualEntry('transportExTaxOverrideRows', row.targetMonth, row.id);
 
   // ★2026-09-16削除(はまさんの指摘): 「データをクリア」ボタン(UIからの全月一括削除)は、
   // 今後は誤操作防止のためUIから撤去し、一括削除が必要な場合はローカルのClaude Codeが
@@ -581,8 +594,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // 決算期サマリー計算 (calculateFiscalYearSummary自身が、渡された全月のデータの中から
   // 選択中の決算期の12ヶ月分だけをtargetMonthで絞り込む。計算ロジック自体は変更していない)
   const fiscalSummary = useMemo(() => {
-    return calculateFiscalYearSummary(calculatedResults, payrollRows, fiscalYear, 12);
-  }, [calculatedResults, payrollRows, fiscalYear]);
+    return calculateFiscalYearSummary(calculatedResults, payrollRows, fiscalYear, 12, transportExTaxOverrideRows);
+  }, [calculatedResults, payrollRows, fiscalYear, transportExTaxOverrideRows]);
 
   // ★2026-09-20追加(はまさんのご要望「決算期グラフに前年対比を追加」): 選択中の決算期の
   // 1年前(開始年月の年だけ-1した決算期)のサマリーを、前年対比グラフ用に同じ関数
@@ -595,8 +608,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     return `${parseInt(y, 10) - 1}-${m}`;
   }, [fiscalYear]);
   const previousFiscalSummary = useMemo(() => {
-    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousFiscalYearStart, 12);
-  }, [calculatedResults, payrollRows, previousFiscalYearStart]);
+    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousFiscalYearStart, 12, transportExTaxOverrideRows);
+  }, [calculatedResults, payrollRows, previousFiscalYearStart, transportExTaxOverrideRows]);
 
   // ★2026-09-20追加(はまさんのご要望「スタッフ人数・粗利率のグラフを直近3決算期分の折れ線で
   // 比較できるようにしてほしい」): 前々期(2年前)のサマリーも同じ考え方(既存関数の開始年月を
@@ -606,8 +619,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     return `${parseInt(y, 10) - 2}-${m}`;
   }, [fiscalYear]);
   const previousPreviousFiscalSummary = useMemo(() => {
-    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousPreviousFiscalYearStart, 12);
-  }, [calculatedResults, payrollRows, previousPreviousFiscalYearStart]);
+    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousPreviousFiscalYearStart, 12, transportExTaxOverrideRows);
+  }, [calculatedResults, payrollRows, previousPreviousFiscalYearStart, transportExTaxOverrideRows]);
 
   if (!isDataLoaded) {
     return (
@@ -836,6 +849,11 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             onRemoveLeaveAllowance={handleRemoveLeaveAllowance}
             onAddNextMonthAdjustment={handleAddNextMonthAdjustment}
             onRemoveNextMonthAdjustment={handleRemoveNextMonthAdjustment}
+            // ★2026-09-25追加(はまさんの確認済み定義): 交通費(税抜)の月次手入力上書き(大阪専用)。
+            // 対象月ごとに1件のみのためupsert専用ハンドラを渡す(personInChargeと同じ扱い)。
+            showTransportExTaxOverride={selectedCompanyId === 'osaka'}
+            onUpsertTransportExTaxOverride={handleUpsertTransportExTaxOverride}
+            onRemoveTransportExTaxOverride={handleRemoveTransportExTaxOverride}
             canEdit={canEdit}
           />
         )}
