@@ -9,10 +9,17 @@
  * が起きると、Reactがツリー全体をアンマウントし画面が真っ白になったまま復旧手段が無かった。
  * これを防ぐため、アプリ全体を囲むErrorBoundaryを追加し、描画中の例外を捕捉して
  * 再読み込みを促す画面を表示するようにした。
+ *
+ * ★2026-09-26追加(removeChildクラッシュの原因追跡用): 次に同種のエラーが起きたときに原因を
+ * 追えるよう、発生時刻・直前の認証イベント名・URLもconsole.errorに出力する。
+ * あわせて、認証状態の不整合が疑われるケースから確実に復帰できるよう、エラー画面に
+ * 「ログインし直す」ボタン(signOut後に再読み込み)を追加した。
  */
 
 import { Component, ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
+import { getLastAuthEventInfo } from '../lib/AuthContext';
 
 interface Props {
   children: ReactNode;
@@ -33,8 +40,35 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: unknown, info: { componentStack?: string | null }) {
-    console.error('アプリの描画中に予期しないエラーが発生しました:', error, info.componentStack);
+    // ★診断情報: 発生時刻・直前の認証イベント・URLを併せて出力する。
+    // (removeChildクラッシュは「AppShellがアンマウントされる瞬間」に起きており、その引き金が
+    //  認証イベントだったため、どのイベント直後に起きたかが原因切り分けの決め手になる)
+    const authInfo = getLastAuthEventInfo();
+    console.error(
+      'アプリの描画中に予期しないエラーが発生しました:',
+      error,
+      {
+        発生時刻: new Date().toISOString(),
+        直前の認証イベント: authInfo.event,
+        認証イベント受信時刻: authInfo.at,
+        URL: typeof window !== 'undefined' ? window.location.href : '(不明)',
+      },
+      info.componentStack
+    );
   }
+
+  private handleReload = () => {
+    window.location.reload();
+  };
+
+  private handleSignOutAndReload = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('ログアウト処理に失敗しましたが、再読み込みを続行します:', e);
+    }
+    window.location.reload();
+  };
 
   render() {
     if (this.state.hasError) {
@@ -46,12 +80,24 @@ export class ErrorBoundary extends Component<Props, State> {
             <br />
             お手数ですが再読み込みをお試しください。
           </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700"
-          >
-            再読み込み
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              onClick={this.handleReload}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700"
+            >
+              再読み込み
+            </button>
+            {/* 再読み込みでも直らない場合(認証状態の不整合が疑われる場合)の復帰手段 */}
+            <button
+              onClick={this.handleSignOutAndReload}
+              className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-50"
+            >
+              ログインし直す
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            再読み込みでも直らない場合は「ログインし直す」をお試しください。
+          </p>
         </div>
       );
     }

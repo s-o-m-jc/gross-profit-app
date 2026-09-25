@@ -173,6 +173,46 @@ CsvUploader.tsxの「ひな形CSVダウンロード」機能専用で、画面�
 
 以上をもって、四国の過去実績データ取込み対応は完了。
 
+## 本番の「removeChild」クラッシュの原因と対策 (★重要・毎回確認しない)
+
+(2026-09-26対応、commit `1a3b1ac`。調査は2026-09-24〜26)
+
+**症状**: 本番URLを開くと、ErrorBoundaryの「画面の表示中に予期しないエラーが発生しました」画面に
+なり、リロードしても100%再現してアプリの中身が一切表示されない。コンソールには
+`NotFoundError: Failed to execute 'removeChild' on 'Node'` が出る(スタックはReact内部の
+`commitDeletionEffectsOnFiber` / `commitMutationEffectsOnFiber` のみで、アプリ側のコードは出ない)。
+
+**真の原因**: Reactのコンポーネントスタック(`div → AppShell → App → AuthProvider → ErrorBoundary`)の
+照合により、削除に失敗しているのが**AppShellの一番外側のdiv**=「AppShellがアンマウントされる瞬間」の
+クラッシュと判明した。引き金は`src/lib/AuthContext.tsx`の旧実装の以下2点:
+1. `onAuthStateChange`が`TOKEN_REFRESHED`・`SIGNED_IN`(タブ復帰時)を含む**全イベント**で
+   profilesを再取得しており、一時的な取得失敗(ネットワーク瞬断、DB高負荷時のstatement timeout等)で
+   `setProfile(null)`となる。App.tsxは`profile===null`でAppShellを外して別画面
+   (「アカウント設定が未完了です」)へ切り替えるため、ここでAppShellごとアンマウントされていた。
+2. `onAuthStateChange`のコールバック内で他のSupabase呼び出し(profilesのselect)を直接awaitして
+   いた(Supabase公式が避けるよう推奨。認証ロックを保持したまま待つためデッドロック・
+   タイムアウトを招きうる)。
+
+**対策(実装済み)**: (a)同じユーザーのままのイベントではプロフィールを読み直さない、
+(b)取得失敗時も取得済みのプロフィールをnullに戻さない、(c)コールバック内のSupabase呼び出しは
+`setTimeout(…, 0)`で後回し、(d)初回読み込み完了後は`loading`をtrueに戻さない、
+(e)`index.html`を`lang="ja" translate="no"`+`notranslate`にしてブラウザ翻訳による外部からの
+DOM書き換え(同種エラーの代表的原因)を予防、(f)ErrorBoundaryに発生時刻・直前の認証イベント名・
+URLのログ出力と「ログインし直す」ボタンを追加、(g)`vite.config.ts`で`build.sourcemap: true`を常設。
+
+**★今後の調査で回り道しないための記録(外れた仮説)**: 当初「Reactのリストkeyの重複」を疑い、
+`calculator.ts`のUNMATCHED_P_行のid重複(commit `764c2b3`)と`StaffPayrollDetail.tsx`の
+`${targetMonth}_${staffNo}`重複を修正したが、**このクラッシュは直らなかった**(いずれも実在した
+不具合ではあるため修正自体は有効なので残してある)。このエラーのスタックはReact内部しか出ないため、
+**原因特定にはReactの「コンポーネントスタック」(ErrorBoundaryの`componentDidCatch`の第2引数
+`info.componentStack`)が決め手になる**。JSの例外スタックだけを見ても特定できない。
+
+**圧縮後の座標から元コードを特定する方法**: 本番バンドルと同じコミットをローカルで`npm run build`し
+(ハッシュが一致することを確認)、生成された`.map`を`source-map-js`の`SourceMapConsumer`で
+`originalPositionFor({line, column})`に掛ければ、元のファイル・行・関数名が得られる。
+Vercelは`/*.map`への直接アクセスを403で拒否するため、ブラウザのDevToolsからは解決できないことがある
+(`sourcemap: 'inline'`にすればブラウザでも解決できるが、JSバンドルが約10MBに膨らむ)。
+
 ## 大阪の交通費(税抜)について (★重要・毎回確認しない)
 
 (2026-09-25実施、commit `c3cf3f0`)
