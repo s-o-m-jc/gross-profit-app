@@ -318,7 +318,10 @@ export interface GrossProfitResult {
     | 'LEAVE_COMPENSATION'            // 休業分補償 (売上側)
     | 'LEAVE_ALLOWANCE'                // 休業手当 (原価側)
     | 'NEXT_MONTH_ADJUSTMENT_SALES'    // 次月調整・売上側
-    | 'NEXT_MONTH_ADJUSTMENT_COST';    // 次月調整・原価側
+    | 'NEXT_MONTH_ADJUSTMENT_COST'     // 次月調整・原価側
+    // ★2026-09-25追加: どの請求行・給与行にも紐付かなかった紹介手数料(ReferralFeeRow)の合成行。
+    // 粗利計算には含めず、総売上(referralFee経由)のみに算入する(calculator.ts参照)。
+    | 'REFERRAL_FEE';
   manualEntryMemo?: string;    // 手入力行の備考 (入力時に任意入力した内容)
 
   // ★2026-09-11追加(23章タスクB「担当者」列復活): クライアント×対象月単位の営業担当者名。

@@ -218,6 +218,15 @@ export function calculateGrossProfit(
   // 処理された給与キー追跡用
   const processedPayrollKeys = new Set<string>();
 
+  // ★2026-09-25追加(はまさんの指摘「決算期集計に紹介手数料が反映されていない」): 処理された
+  // 紹介手数料キー追跡用。processedPayrollKeysと同じ考え方で、referralFeeMapの値がどこかの
+  // 請求行・給与行に実際に加算された(=下記1./2.のreferralFeeMap.get(key)参照箇所を通過した)
+  // キーを記録する。大阪では「スタッフNo」欄に紹介先クライアント名(例:「フェザー株式会社」)を
+  // 入力する運用のため、その月にその名前と一致する請求行・給与行が存在せず、referralFeeMapに
+  // 値があるのにもかかわらずどの結果行にも加算されない(=決算期集計から漏れる)ケースが
+  // 実データで確認された。処理されなかったキーは、下記4.で独立した合成行として追加する。
+  const processedReferralFeeKeys = new Set<string>();
+
   // スタッフNo → 氏名の逆引き(手入力調整行の表示名解決用。月をまたいで最後に見つかった氏名を採用する簡易実装)
   const staffNameLookup = new Map<string, string>();
   payrolls.forEach((p) => {
@@ -271,6 +280,7 @@ export function calculateGrossProfit(
     // ★2026-09-19追加(はまさんの指摘)。retirementAmountと同じ組み立て方(取り込み元の値に
     // 手入力分を加算するだけで、新しい計算ロジックではない)。
     const referralFee = (billing.referralFee || 0) + (referralFeeMap.get(key) || 0);
+    if (referralFeeMap.has(key)) processedReferralFeeKeys.add(key);
     // ★2026-09-29修正(はまさんの指摘・大阪2025-04の実データで確定): billingNoでの結合に
     // 失敗した場合(billing.billingNoが空欄、または請求書印刷データ側に一致するbillingNoが
     // 無い場合)、受注番号(orderNo)での結合をフォールバックとして試す(invoiceMapByOrderNo参照)。
@@ -472,6 +482,7 @@ export function calculateGrossProfit(
       // ★2026-09-19追加: 請求データが無い(給与のみ存在)行でも、紹介手数料の手入力は
       // targetMonth_staffNo単位のため引き当て可能。retirementAmountと同じ扱い。
       const referralFee = referralFeeMap.get(key) || 0;
+      if (referralFeeMap.has(key)) processedReferralFeeKeys.add(key);
       const totalCostExTax = payroll.paymentAmount + payroll.socialInsurance + payroll.parkingFee + retirementAmount;
 
       results.push({
@@ -668,6 +679,70 @@ export function calculateGrossProfit(
     });
   });
 
+  // 4. 紹介手数料のうち、どの請求行・給与行にも紐付かなかったものを独立した合成行として追加する。
+  // ★2026-09-25追加(はまさんの指摘「決算期(年間)集計・グラフに紹介手数料が反映されていない」):
+  // 上記1./2.のreferralFeeMap参照は、その月に同じ`targetMonth_staffNo`キーを持つ請求行・給与行が
+  // 実在する場合にしか紹介手数料を加算できない。しかし大阪では「スタッフNo」欄に紹介先の
+  // クライアント名(例:「フェザー株式会社」)をそのまま入力する運用になっており、それと一致する
+  // 請求行・給与行はそもそも存在しないため、referralFeeMapに値があっても加算先が無く、決算期集計
+  // (calculateFiscalYearSummary)から完全に漏れていた。四国のように実在のスタッフNoを使う場合でも、
+  // その月にそのスタッフの請求行・給与行が存在しなければ同じ理由で漏れうる。
+  // processedReferralFeeKeysに記録されなかった(=上記1./2.のどちらにも加算されなかった)キーだけを
+  // 対象に、他の手入力調整項目(上記3.)と同じ「独立行」方式で合成行を追加する。
+  // ★重要: 「紹介手数料は粗利計算に含めず、総売上のみに算入する」という既存ルール(types.ts、
+  // GrossProfitResult.referralFeeのコメント参照)を厳密に守るため、billingAmountExTax・
+  // paymentAmount・grossProfitExTax・grossProfitIncTaxはいずれも0にする(referralFeeフィールドのみに
+  // 金額を持たせる)。これにより、totalSalesExTax(派遣売上)・totalGrossProfit(粗利益)には一切
+  // 影響を与えず、totalReferralFee(→totalRevenueExTax=総売上高)にのみ加算される
+  // (calculateFiscalYearSummaryのperiodResults.forEach参照)。
+  // なお、staffNoに実在しないクライアント名等が入る運用のため、この合成行がスタッフ人数集計
+  // (staffSet/monthlyStaffSets)を汚染しないよう、calculateFiscalYearSummary側で
+  // manualEntryType==='REFERRAL_FEE'の行を明示的に除外している(下記参照)。
+  referralFeeMap.forEach((amount, key) => {
+    if (processedReferralFeeKeys.has(key)) return;
+    const source = referralFees.find((r) => `${r.targetMonth}_${r.staffNo}` === key);
+    if (!source) return; // 到達しない想定(referralFeeMapはreferralFeesから組み立てているため)
+    const staffName = staffNameLookup.get(source.staffNo) || source.staffNo || '（スタッフ未特定）';
+    results.push({
+      id: `REFERRAL_FEE_${key}`,
+      targetMonth: source.targetMonth,
+      billingNo: '手入力（紹介手数料）',
+      staffNo: source.staffNo,
+      staffName,
+      clientCode: 'N/A',
+      clientName: '（手入力：紹介手数料）',
+      billingAmountExTax: 0,
+      billingAmountIncTax: 0,
+      billingTransport: 0,
+      referralFee: amount,
+      paymentAmount: 0,
+      socialInsurance: 0,
+      employmentInsurance: 0,
+      parkingFee: 0,
+      retirementAmount: 0,
+      salaryTransport: 0,
+      totalCostExTax: 0,
+      paidLeaveAllowance: 0,
+      paidLeaveDays: 0,
+      mergedRowCount: 0,
+      mergedOrderNos: [],
+      grossProfitExTax: 0,
+      grossProfitIncTax: 0,
+      grossProfitRate: 0,
+      transportDiff: 0,
+      transportStatus: 'MATCH',
+      transportDataAvailable,
+      alerts: [],
+      billingUnitPrice: 0,
+      payUnitPrice: 0,
+      // 手入力の合成行のため請求＠が無く、名目粗利率は算出不可
+      nominalGrossMarginRateDataAvailable: false,
+      nominalGrossMarginRate: 0,
+      manualEntryType: 'REFERRAL_FEE',
+      manualEntryMemo: source.memo,
+    });
+  });
+
   // ★2026-09-30追加(本番障害対応): 同一スタッフが同月に複数の未紐付け給与行を持つ場合など
   // (例: 上のUNMATCHED_P_行は`${targetMonth}_${staffNo}`のみでidを組み立てており、この組が
   // 一致する給与行が複数あっても区別できなかった)、何らかの理由でresultsに同じidのエントリが
@@ -835,7 +910,11 @@ export function calculateFiscalYearSummary(
     // warning/error件数のみを「要確認アラート数」としてカウントする(hasActionableAlerts参照)
     alertCount += countActionableAlerts(r.alerts);
 
-    if (r.staffNo && r.staffNo !== 'N/A') {
+    // ★2026-09-25追加(はまさんの指摘・紹介手数料の決算期集計対応): 紹介手数料の合成行
+    // (manualEntryType==='REFERRAL_FEE')は、staffNoに実在のスタッフではなく紹介先クライアント名
+    // (大阪の運用)等が入りうるため、スタッフ人数集計(activeStaffCount・月次staffCount)からは
+    // 除外する(含めると「稼働スタッフ人数」がクライアント名の分だけ水増しされてしまう)。
+    if (r.staffNo && r.staffNo !== 'N/A' && r.manualEntryType !== 'REFERRAL_FEE') {
       staffSet.add(r.staffNo);
       // ★2026-09-11追加(23章タスクA): 月次スタッフ人数(staffCount)集計用
       monthlyStaffSets.get(r.targetMonth)?.add(r.staffNo);
