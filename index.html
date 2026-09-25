@@ -1,10 +1,6 @@
 <!doctype html>
-<!-- ★2026-09-26修正(本番のremoveChildクラッシュ対策): lang="en"のままだと、日本語のページを
-     ブラウザ(Chrome等)が「翻訳しますか?」と判断して自動翻訳し、Reactの管理下にあるDOMを
-     外部から書き換えてしまう。これはReactが把握しているツリーと実DOMの不一致を生み、
-     "NotFoundError: Failed to execute 'removeChild'" と全く同じ種類のエラーを引き起こす
-     代表的な原因として知られている。lang="ja"の明示とtranslate="no"・notranslateで、
-     この経路でのDOM書き換えを予防する。 -->
+<!-- translate="no" / notranslate は、ブラウザ翻訳がReact管理下のDOMを書き換えることによる
+     removeChildクラッシュの予防(経緯はCLAUDE.md参照)。 -->
 <html lang="ja" translate="no">
   <head>
     <meta charset="UTF-8" />
