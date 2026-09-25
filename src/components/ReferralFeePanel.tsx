@@ -161,7 +161,7 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
       return;
     }
     if (!refStaffNo.trim()) {
-      setRefError('スタッフNoを入力してください。');
+      setRefError('スタッフNoまたは企業名を入力してください。');
       return;
     }
     if (refAmount.trim() === '' || Number.isNaN(amountNum)) {
@@ -413,15 +413,24 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>スタッフNo</label>
+                  {/* ★2026-09-26修正(はまさんの指摘「これスタッフNo.ではなく、企業名にしないと
+                      だめですね」): 大阪では企業名一括の紹介手数料を登録する際、この欄に企業名を
+                      そのまま入力する運用になっている(calculator.tsが、既存の請求/給与行と
+                      一致しないstaffNoを紹介手数料単独の合成行として扱う仕組みで対応済み)。
+                      ロジック(ReferralFeeRow.staffNo自体・referralFeeMapのキー生成)は変更せず、
+                      表示ラベル・ヘルプテキストのみ調整した。 */}
+                  <label className={labelClass}>対象(スタッフNo/企業名)</label>
                   <input
                     type="text"
                     data-testid="ref-staff"
                     value={refStaffNo}
                     onChange={(e) => setRefStaffNo(e.target.value)}
-                    placeholder="例: S1001"
+                    placeholder="例: S1001 または 荒井商事株式会社"
                     className={inputClass}
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    企業名一括の場合はここに企業名を入力してください
+                  </p>
                 </div>
                 <div>
                   <label className={labelClass}>紹介手数料額</label>
@@ -459,7 +468,7 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
           )}
 
           <ManualEntryTable
-            columns={['対象月', 'スタッフNo', '紹介手数料額', '備考']}
+            columns={['対象月', '対象(スタッフNo/企業名)', '紹介手数料額', '備考']}
             rows={referralFeeRows.map((r) => ({
               key: r.id,
               cells: [r.targetMonth, r.staffNo, `¥${r.amount.toLocaleString()}`, r.memo || '-'],
