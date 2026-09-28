@@ -53,7 +53,9 @@ export class ErrorBoundary extends Component<Props, State> {
         認証イベント受信時刻: authInfo.at,
         URL: typeof window !== 'undefined' ? window.location.href : '(不明)',
       },
-      info.componentStack
+      // ブラウザによってはerrorオブジェクトを展開しないとstackが見えないため明示的に出力する
+      '\n[error.stack]\n' + (error instanceof Error ? error.stack : String(error)),
+      '\n[componentStack]' + (info.componentStack ?? '(なし)')
     );
   }
 
