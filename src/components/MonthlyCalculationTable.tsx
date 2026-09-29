@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import { GrossProfitResult, TransportExTaxOverrideRow } from '../types';
 import { computeTransportExTaxTotal, formatTransportExTaxTotal } from '../utils/transportExTaxDisplay';
+import { CompanyId } from '../config/companies';
+import { TRANSPORT_EX_TAX_DEFINITIONS } from '../config/transportExTax';
 import { hasActionableAlerts, countActionableAlerts } from '../utils/calculator';
 
 /**
@@ -98,8 +100,10 @@ interface MonthlyCalculationTableProps {
    * 1ヶ月を指す(App.tsx側で常に有効な値を保つよう自動選択される)。 */
   selectedMonth: string;
   onSelectedMonthChange: (month: string) => void;
-  /** ★2026-09-29追加: 選択中の会社の交通費(税抜)の月次登録値。合計行に表示する(transportExTaxDisplay.ts参照) */
-  transportExTaxOverrides: TransportExTaxOverrideRow[];
+  /** ★2026-09-29追加: 選択中の会社の交通費(税抜)の月次値(自動集計+手入力の上書き)。合計行に表示する(transportExTaxDisplay.ts参照) */
+  transportExTaxOverrides: (TransportExTaxOverrideRow & { source?: 'manual' | 'auto' })[];
+  /** 交通費(税抜)の列見出しの説明を会社の定義に合わせるため */
+  companyId: CompanyId;
 }
 
 type ViewScope = 'month' | 'fiscalYear';
@@ -116,6 +120,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
   selectedMonth,
   onSelectedMonthChange,
   transportExTaxOverrides,
+  companyId,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewScope, setViewScope] = useState<ViewScope>('month');
@@ -190,15 +195,17 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
   }, [results, searchQuery, viewScope, selectedMonth, fiscalYearMonthSet, filterType, lowMarginThreshold]);
 
   // ★2026-09-29追加: 「交通費(税抜)」合計行。以前は個別行・合計行とも「不明」固定の文字列で、
-  // 登録済みの月次値(TransportExTaxOverrideRow)をまったく参照していなかった。
+  // 登録済みの月次値(TransportExTaxOverrideRow)をまったく参照していなかった。絞り込み中は表示中の行の合計。
   const transportExTaxTotal = useMemo(
     () =>
       computeTransportExTaxTotal(
         transportExTaxOverrides,
         viewScope === 'month' ? [selectedMonth] : fiscalYearMonths,
         searchQuery.trim() !== '' || filterType !== 'ALL'
+          ? filteredResults.reduce((sum, r) => sum + (r.transportExTax || 0), 0)
+          : null
       ),
-    [transportExTaxOverrides, viewScope, selectedMonth, fiscalYearMonths, searchQuery, filterType]
+    [transportExTaxOverrides, viewScope, selectedMonth, fiscalYearMonths, searchQuery, filterType, filteredResults]
   );
 
   // ★2026-09-18修正(はまさんのご要望「月次サマリ表と同じ項目名にしてほしい」):
@@ -502,7 +509,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               <th
                 className="py-3 px-3 whitespace-nowrap text-right bg-slate-100"
                 rowSpan={anyBreakdownOpen ? 2 : 1}
-                title="交通費(税抜)は月単位の登録値(「紹介手数料・その他調整」タブで入力、定義は会社ごとに異なる)のため、合計行にのみ表示します(個別行は「—」)。登録値の無い月は「不明」、検索・絞り込み中は表示中の行と合わないため「—」です"
+                title={TRANSPORT_EX_TAX_DEFINITIONS[companyId].tooltip}
               >
                 交通費(税抜) <span className="text-amber-500">ⓘ</span>
               </th>
@@ -510,7 +517,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                 className="py-3 px-3 whitespace-nowrap text-right cursor-pointer bg-slate-100 hover:bg-slate-200 select-none"
                 rowSpan={anyBreakdownOpen ? 2 : 1}
                 onClick={() => setShowSocialBreakdown((v) => !v)}
-                title="クリックして内訳(雇保・社保・交通費(自社負担)・駐車場代)の表示/非表示を切り替え。雇保は社保に含まれる参考値のため、社保+交通費(自社負担)+駐車場代の3項目が社保他小計と一致します"
+                title="クリックして内訳(雇保・社保・交通費(自社負担)・駐車場代)の表示/非表示を切り替え。雇保+社保+交通費(自社負担)+駐車場代の4項目が社保他小計と一致します"
               >
                 <span className="inline-flex items-center justify-end gap-1 w-full">
                   <span>社保他小計</span>
@@ -521,7 +528,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                 <th
                   className="py-1.5 px-3 text-center bg-violet-50 border-l border-r border-violet-200 text-violet-800 font-extrabold"
                   colSpan={4}
-                  title="社保他小計 = 社保(雇用保険込み) + 交通費(自社負担) + 駐車場代(雇保は社保に含まれる参考列のため合計には含みません)"
+                  title="社保他小計 = 社保負担額(会社負担、雇用保険込み) + 交通費(自社負担) + 駐車場代 = 雇保 + 社保 + 交通費(自社負担) + 駐車場代"
                 >
                   社保他内訳
                 </th>
@@ -574,11 +581,11 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                   <>
                     <th
                       className="py-2 px-3 text-right bg-violet-50/60 border-l border-violet-200"
-                      title="参考値(給与CSV由来)。「社保」に既に含まれているため、社保他小計の合計には加算していません"
+                      title="雇用保険の会社負担(計算値) = 支払額 × 事業主の料率(〜2025-03: 0.95%、2025-04〜: 0.9%)。本人が雇用保険に未加入(給与からの控除が0円)の場合は0円。給与の内訳が無い月(四国の売上実績一覧表から取り込んだ月)も0円(社保に含めて表示)"
                     >
                       雇保 <span className="text-slate-400">ⓘ</span>
                     </th>
-                    <th className="py-2 px-3 text-right bg-violet-50/60" title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">
+                    <th className="py-2 px-3 text-right bg-violet-50/60" title="請求データの社保負担額(会社負担) − 雇保">
                       社保
                     </th>
                     <th className="py-2 px-3 text-right bg-violet-50/60">交通費(自社負担)</th>
@@ -657,7 +664,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               {showSocialBreakdown && (
                 <>
                   <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.employmentInsurance.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.socialInsurance.toLocaleString()}</td>
+                  <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{(totals.socialInsurance - totals.employmentInsurance).toLocaleString()}</td>
                   <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.salaryTransport.toLocaleString()}</td>
                   <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.parkingFee.toLocaleString()}</td>
                 </>
@@ -803,10 +810,10 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                         <span className="text-slate-300">データなし</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-300 whitespace-nowrap" title="交通費(税抜)は月単位の登録値のため、個別行には表示しません(合計行を参照)">—</td>
+                    <td className="py-2.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">¥{(row.transportExTax || 0).toLocaleString()}</td>
                     <td
                       className="py-2.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap"
-                      title={`社保負担額(請求CSV由来): ¥${row.socialInsurance.toLocaleString()}, 交通費(自社負担): ¥${row.salaryTransport.toLocaleString()}, 駐車場: ¥${row.parkingFee.toLocaleString()} ｜ 雇用保険(参考・給与CSV由来、社保負担額に含まれる想定のため合計には非算入): ¥${row.employmentInsurance.toLocaleString()}`}
+                      title={`社保負担額(会社負担、雇保込み): ¥${row.socialInsurance.toLocaleString()}(うち雇保 ¥${row.employmentInsurance.toLocaleString()}), 交通費(自社負担): ¥${row.salaryTransport.toLocaleString()}, 駐車場: ¥${row.parkingFee.toLocaleString()}`}
                     >
                       ¥{breakdown.socialInsuranceOther.toLocaleString()}
                     </td>
@@ -816,7 +823,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                         <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30 border-l border-violet-200">
                           ¥{row.employmentInsurance.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30">¥{row.socialInsurance.toLocaleString()}</td>
+                        <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30">¥{(row.socialInsurance - row.employmentInsurance).toLocaleString()}</td>
                         <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30">¥{row.salaryTransport.toLocaleString()}</td>
                         <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30 border-r border-violet-200">
                           ¥{row.parkingFee.toLocaleString()}

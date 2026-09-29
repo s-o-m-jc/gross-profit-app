@@ -91,8 +91,8 @@ interface FiscalYearAnalyticsProps {
   previousPreviousSummary: FiscalYearSummary;
   /** ★2026-09-28追加: 「交通費(税抜)」列の説明文を選択中の会社の定義に切り替えるため */
   companyId: CompanyId;
-  /** ★2026-09-29追加: 交通費(税抜)を自動計算(請求書の交通費合計)で補完した月。月次サマリで「(自動)」と表示する */
-  autoTransportExTaxMonths: string[];
+  /** ★2026-09-29追加: 交通費(税抜)が手入力(イレギュラーな月の上書き)の月。月次サマリで「(手入力)」と表示する */
+  manualTransportExTaxMonths: string[];
 }
 
 const DEFAULT_LEAVE_BALANCE_THRESHOLD = 10;
@@ -103,7 +103,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   previousSummary,
   previousPreviousSummary,
   companyId,
-  autoTransportExTaxMonths,
+  manualTransportExTaxMonths,
 }) => {
   // 22章タスク3: 得意先別ランキングのベスト/ワースト切替、行クリックでの月次トレンド展開
   const [rankingMode, setRankingMode] = useState<'best' | 'worst'>('best');
@@ -683,7 +683,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                   className="py-2 px-3 text-right bg-slate-100 cursor-pointer hover:bg-slate-200 select-none"
                   rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
                   onClick={() => setShowSocialBreakdown((v) => !v)}
-                  title="クリックして内訳(雇保・社保・交通費(自社負担)・駐車場代)の表示/非表示を切り替え。雇保は社保に含まれる参考値のため、社保+交通費(自社負担)+駐車場代の3項目が社保他小計と一致します"
+                  title="クリックして内訳(雇保・社保・交通費(自社負担)・駐車場代)の表示/非表示を切り替え。雇保+社保+交通費(自社負担)+駐車場代の4項目が社保他小計と一致します"
                 >
                   <span className="inline-flex items-center justify-end gap-1 w-full">
                     <span>社保他小計</span>
@@ -694,7 +694,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                   <th
                     className="py-1.5 px-3 text-center bg-violet-50 border-l border-r border-violet-200 text-violet-800 font-extrabold"
                     colSpan={4}
-                    title="社保他小計 = 社保(雇用保険込み) + 交通費(自社負担) + 駐車場代(雇保は社保に含まれる参考列のため合計には含みません)"
+                    title="社保他小計 = 社保負担額(会社負担、雇用保険込み) + 交通費(自社負担) + 駐車場代 = 雇保 + 社保 + 交通費(自社負担) + 駐車場代"
                   >
                     社保他内訳
                   </th>
@@ -726,11 +726,11 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                     <>
                       <th
                         className="py-2 px-3 text-right bg-violet-50/60 border-l border-violet-200"
-                        title="参考値(給与CSV由来)。「社保」に既に含まれているため、社保他小計の合計には加算していません"
+                        title="雇用保険の会社負担(計算値) = 支払額 × 事業主の料率(〜2025-03: 0.95%、2025-04〜: 0.9%)。本人が雇用保険に未加入(給与からの控除が0円)の場合は0円。給与の内訳が無い月(四国の売上実績一覧表から取り込んだ月)も0円(社保に含めて表示)"
                       >
                         雇保 <span className="text-slate-400">ⓘ</span>
                       </th>
-                      <th className="py-2 px-3 text-right bg-violet-50/60" title="請求CSV由来の社保負担額(雇用保険を含んだ金額)">
+                      <th className="py-2 px-3 text-right bg-violet-50/60" title="請求データの社保負担額(会社負担) − 雇保">
                         社保
                       </th>
                       <th className="py-2 px-3 text-right bg-violet-50/60">交通費(自社負担)</th>
@@ -818,7 +818,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                       ¥{monthlyTotals.employmentInsurance.toLocaleString()}
                     </td>
                     <td className="py-2 px-3 text-right font-mono bg-violet-50/60">
-                      ¥{monthlyTotals.socialInsurance.toLocaleString()}
+                      ¥{(monthlyTotals.socialInsurance - monthlyTotals.employmentInsurance).toLocaleString()}
                     </td>
                     <td className="py-2 px-3 text-right font-mono bg-violet-50/60">
                       ¥{monthlyTotals.transportSalary.toLocaleString()}
@@ -877,8 +877,8 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                     {m.transportExTax !== undefined ? (
                       <>
                         ¥{m.transportExTax.toLocaleString()}
-                        {autoTransportExTaxMonths.includes(m.month) && (
-                          <span className="ml-1 text-[10px] text-slate-400" title="手入力が無いため、請求書(スタナビ)の交通費の合計で自動計算した値">(自動)</span>
+                        {manualTransportExTaxMonths.includes(m.month) && (
+                          <span className="ml-1 text-[10px] text-slate-400" title="イレギュラー対応として手入力した値(自動集計より優先)">(手入力)</span>
                         )}
                       </>
                     ) : (
@@ -894,7 +894,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                       <td className="py-2 px-3 text-right font-mono bg-violet-50/30 border-l border-violet-200">
                         ¥{m.employmentInsurance.toLocaleString()}
                       </td>
-                      <td className="py-2 px-3 text-right font-mono bg-violet-50/30">¥{m.socialInsurance.toLocaleString()}</td>
+                      <td className="py-2 px-3 text-right font-mono bg-violet-50/30">¥{(m.socialInsurance - m.employmentInsurance).toLocaleString()}</td>
                       <td className="py-2 px-3 text-right font-mono bg-violet-50/30">¥{m.transportSalary.toLocaleString()}</td>
                       <td className="py-2 px-3 text-right font-mono bg-violet-50/30 border-r border-violet-200">
                         ¥{m.parkingFee.toLocaleString()}

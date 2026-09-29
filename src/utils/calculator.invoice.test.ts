@@ -108,3 +108,42 @@ test('支払＠は円単位に丸める(時間の実数換算による端数を�
   const results = calculateGrossProfit([payroll], [billing('20010672', '22631111', '20004967', 351416)], []);
   assert.equal(byStaff(results, '20010672').payUnitPrice, 1460);
 });
+
+test('2つの受注がまとめられた行(同じ請求No・スタッフ・受注名称)の交通費は受注ごとに合計する', () => {
+  // 実データ例: 2024-04 石本 直子さん(受注29120301: 2,419円、受注29120302: 345円)
+  const b1 = { ...billing('S1', '29120301', '20004877', 100000), orderName: '同じ受注名称' };
+  const b2 = { ...billing('S1', '29120302', '20004877', 20000), orderName: '同じ受注名称' };
+  const invoices = [
+    invoice({ billingNo: '20004877', orderNo: '29120301', staffNo: 'S1', unitPrice: 1500, transportAmount: 2419 }),
+    invoice({ billingNo: '20004877', orderNo: '29120302', staffNo: 'S1', unitPrice: 1500, transportAmount: 345 }),
+  ];
+  const results = calculateGrossProfit([], [b1, b2], invoices);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].billingTransport, 2764);
+});
+
+test('同じ受注番号の重複行(締日で分かれた同じ契約)の交通費は二重に数えない', () => {
+  const b1 = { ...billing('S1', 'O1', 'B1', 100000), orderName: 'X' };
+  const b2 = { ...billing('S1', 'O1', 'B1', 20000), orderName: 'X' };
+  const results = calculateGrossProfit([], [b1, b2], [invoice({ billingNo: 'B1', orderNo: 'O1', staffNo: 'S1', transportAmount: 5000 })]);
+  assert.equal(results[0].billingTransport, 5000);
+});
+
+test('請求Noだけで結合する場合も、請求書行が別のスタッフのものなら結合しない', () => {
+  // 実データ例: 2024-07 周防 冬さん(自分の請求書行が無く、同じ請求Noの別スタッフの行が1件だけあった)
+  const results = calculateGrossProfit(
+    [],
+    [billing('S2', 'O-none', 'B7', 100000)],
+    [invoice({ billingNo: 'B7', orderNo: 'O-other', staffNo: 'S1', unitPrice: 2000, transportAmount: 7036 })]
+  );
+  assert.equal(byStaff(results, 'S2').billingTransport, 0);
+  assert.equal(byStaff(results, 'S2').billingUnitPrice, 0);
+});
+
+test('受注番号が請求書に無い行が、同じスタッフの別受注の請求書行を拾っても交通費は二重に付けない', () => {
+  // 実データ例: 2024-04 浜田 千雅さん(受注22231604は請求書あり4,746円、22231605は請求書に行が無い)
+  const b1 = { ...billing('S1', '22231604', '20004866', 100000), orderName: 'Y' };
+  const b2 = { ...billing('S1', '22231605', '20004866', 20000), orderName: 'Y' };
+  const results = calculateGrossProfit([], [b1, b2], [invoice({ billingNo: '20004866', orderNo: '22231604', staffNo: 'S1', unitPrice: 1600, transportAmount: 4746 })]);
+  assert.equal(results.reduce((s, r) => s + r.billingTransport, 0), 4746);
+});

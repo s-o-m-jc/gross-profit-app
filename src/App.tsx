@@ -253,12 +253,6 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     referralFeeRows,
     transportExTaxOverrideRows,
   } = flattened;
-  // ★2026-09-29追加(はまさんの決定済み): 実際に表示・集計に使う交通費(税抜)。手入力優先、大阪のみ手入力が無い月を
-  // 請求書の交通費合計で自動補完する(transportExTaxDisplay.ts・config/transportExTax.ts参照)。
-  const effectiveTransportExTaxRows = useMemo(
-    () => buildEffectiveTransportExTaxRows(selectedCompanyMonths, TRANSPORT_EX_TAX_DEFINITIONS[selectedCompanyId].autoFromInvoice),
-    [selectedCompanyMonths, selectedCompanyId]
-  );
 
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
   const [fiscalYear, setFiscalYear] = useState<string>(fiscalYearOptions[0].value);
@@ -584,7 +578,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       leaveAllowanceRows,
       nextMonthAdjustmentRows,
       personInChargeRows,
-      referralFeeRows
+      referralFeeRows,
+      TRANSPORT_EX_TAX_DEFINITIONS[selectedCompanyId].transportExTaxSource
     );
   }, [
     payrollRows,
@@ -597,7 +592,14 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     nextMonthAdjustmentRows,
     personInChargeRows,
     referralFeeRows,
+    selectedCompanyId,
   ]);
+  // ★2026-09-29(はまさんの決定済み): 実際に表示・集計に使う交通費(税抜)の月次値。各行のtransportExTaxの合計で
+  // 自動集計し、手入力(イレギュラーな月)がある月は手入力を優先する(transportExTaxDisplay.ts参照)。
+  const effectiveTransportExTaxRows = useMemo(
+    () => buildEffectiveTransportExTaxRows(selectedCompanyMonths, calculatedResults),
+    [selectedCompanyMonths, calculatedResults]
+  );
 
   // 決算期サマリー計算 (calculateFiscalYearSummary自身が、渡された全月のデータの中から
   // 選択中の決算期の12ヶ月分だけをtargetMonthで絞り込む。計算ロジック自体は変更していない)
@@ -813,6 +815,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               selectedMonth={selectedTargetMonth}
               onSelectedMonthChange={setSelectedTargetMonth}
               transportExTaxOverrides={effectiveTransportExTaxRows}
+              companyId={selectedCompanyId}
             />
           </>
         )}
@@ -930,7 +933,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             previousSummary={previousFiscalSummary}
             previousPreviousSummary={previousPreviousFiscalSummary}
             companyId={selectedCompanyId}
-            autoTransportExTaxMonths={effectiveTransportExTaxRows.filter((r) => r.source === 'auto').map((r) => r.targetMonth)}
+            manualTransportExTaxMonths={effectiveTransportExTaxRows.filter((r) => r.source === 'manual').map((r) => r.targetMonth)}
           />
         )}
       </main>

@@ -562,6 +562,9 @@ export function extractShikokuSalesSummarySheet(
     // 列マッピング(COLUMN_CANDIDATES の'transport'エントリ)自体は、「支払」列の部分一致
     // フォールバックがこの列を誤って拾わないようにする列特定の目印として引き続き必要なため、
     // 定義は残している(findShikokuSummaryColumns参照)。
+    // ★2026-09-29追記: この列はPayrollRow.paidTransport(支給交通費)にも入れない。はまさんとの調査で、一部スタッフに
+    // 実際の支給額ではなく「契約上の交通費」が転記されている等、給与CSV(未払計上表)の交通費1+交通費2と一致しない
+    // ことが判明したため(全33ヶ月中18ヶ月で月合計がずれる)。過去分の支給交通費は勤怠明細票の「未払計上表」から補う。
     const clientName = clientNameRaw || '派遣先企業';
 
     // 紹介手数料行の判定(はまさん確認済みのパターン): 支払＝0、社保他＝0、出勤日数＝0、

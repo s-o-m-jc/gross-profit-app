@@ -10,9 +10,15 @@ export interface PayrollRow {
   staffName: string;           // スタッフ氏名
   paymentAmount: number;       // 給与支給総額 (基本給・残業・各種手当。有給手当込み)
   socialInsurance: number;     // 社保会社負担額 (健康保険+介護保険+厚生年金+雇用保険の合計相当)
-  employmentInsurance: number; // 雇用保険会社負担額 (参考値。粗利計算では社保負担額に含まれる想定で二重控除しない)
+  employmentInsurance: number; // 雇用保険(本人負担=給与からの控除額)。★2026-09-29訂正: 以前「会社負担額」と書いていたが実データは本人負担。
+                               // 会社負担の雇保はGrossProfitResult.employmentInsurance(計算値)を参照
   parkingFee: number;          // 駐車場代 (自社負担分)
   salaryTransport: number;     // 給与側交通費支給額 (交通費1+交通費2の暫定合算・要最終確認)
+  // ★2026-09-29追加: スタッフに支給した交通費(給与CSVの交通費1+交通費2)。salaryTransportと同じ値だが、
+  // salaryTransportは表示用の分解(給与総額=支払−交通費、社保他小計=社保他+交通費)にも使われるため、
+  // その分解を適用しない取込み元(四国の売上実績一覧表)でも支給交通費を保持できるよう別項目にしている。
+  // 四国の交通費(税抜)の自動集計に使う(calculator.tsのtransportExTaxSource='payroll')。
+  paidTransport?: number;
   paidLeaveAllowance: number;  // 有給手当 (総支給額に内包済み。参考表示・検算用)
   paidLeaveDays: number;       // 有給日数
   // 支払＠(支払単価)算出用。運用者確認・実データ検算済み: 賃金台帳CSVは給与計算CSVと
@@ -286,7 +292,9 @@ export interface GrossProfitResult {
   // 原価項目
   paymentAmount: number;       // 給料支給額
   socialInsurance: number;     // 社保会社負担額
-  employmentInsurance: number; // 雇用保険会社負担額
+  employmentInsurance: number; // 雇保(会社負担、表示用の計算値。支払額×事業主料率、本人未加入なら0。粗利には使わない)
+  // ★2026-09-29追加: 行ごとの交通費(税抜)。大阪・松山=請求交通費、四国=給与の支給交通費(スタッフ×月の最初の行のみ)
+  transportExTax?: number;
   parkingFee: number;          // 駐車場料金
   retirementAmount: number;    // 退職金配賦額
   salaryTransport: number;     // 給与交通費支給額

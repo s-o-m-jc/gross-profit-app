@@ -9,6 +9,7 @@
  * 有給手当・有給日数(参考表示/検算用)の取得元としてのみ使用する。
  */
 
+import { employerEmploymentInsuranceRate } from '../config/employmentInsuranceRates';
 import {
   PayrollRow,
   BillingRow,
@@ -117,6 +118,34 @@ function calcPayUnitPrice(p: PayrollRow): number {
   return p.regularHours > 0 ? Math.round(p.regularAmount / p.regularHours) : 0;
 }
 
+/**
+ * 雇保(会社負担)= 雇用保険の対象額 × 事業主の雇用保険料率(円未満四捨五入)。★2026-09-29追加。
+ * - 対象額: 給与データの「雇用保険対象額」をこの行の支払額の比で按分した額(同月複数契約のスタッフのため)。
+ *   給与データに雇用保険対象額が無い場合(古い形式)は、この行の支払額。大阪の元Excelは「(給与+交通費)×料率」
+ *   (=支払額×料率)に、対象外の手当を手作業で差し引いた数式(例: 2024-10 (給与+交通費−5,048)×0.95%)が混じるが、
+ *   雇用保険対象額を使えばその調整も自動で反映される。
+ * - 本人の雇用保険(給与データの控除額)が0円のスタッフは未加入とみなして0(大阪の元Excelの雇保列と全1,954行で
+ *   一致を確認済み)。給与データが無い、または本人の雇用保険の内訳が無い(四国の売上実績一覧表から取り込んだ月)
+ *   場合も加入を判定できないため0。
+ * - 社保負担額(雇用保険込み)を超えないようにする(健保・年金に未加入で雇用保険のみのスタッフは社保負担額=雇保
+ *   そのもので、四捨五入の差で「社保=社保負担額−雇保」が−1円にならないようにするため)。
+ */
+function calcEmployerEmploymentInsurance(
+  paymentAmount: number,
+  staffPaymentTotal: number,
+  socialInsurance: number,
+  payroll: PayrollRow | undefined,
+  targetMonth: string
+): number {
+  if (!payroll || !(payroll.employmentInsurance > 0)) return 0;
+  const base =
+    payroll.employmentInsuranceBase && payroll.employmentInsuranceBase > 0 && staffPaymentTotal > 0
+      ? (payroll.employmentInsuranceBase * paymentAmount) / staffPaymentTotal
+      : paymentAmount;
+  const amount = Math.round(base * employerEmploymentInsuranceRate(targetMonth));
+  return Math.max(0, Math.min(amount, socialInsurance));
+}
+
 function mergeDuplicateBillingRows(billings: BillingRow[]): MergedBillingRow[] {
   const groups = new Map<string, BillingRow[]>();
   billings.forEach((b) => {
@@ -138,8 +167,13 @@ function mergeDuplicateBillingRows(billings: BillingRow[]): MergedBillingRow[] {
     }
 
     const base = rows[0];
-    // 交通費は重複行間で同額のはずなので合算せず、非ゼロ側(最大値)を1行分として採用する
-    const billingTransport = Math.max(...rows.map((r) => r.billingTransport));
+    // 交通費は、同じ受注番号の重複行(締日で分かれた同じ契約)間では同額のはずなので合算せず最大値を1行分として採用し、
+    // 受注番号が違う行同士は別々の交通費なので合計する。
+    // ★2026-09-29修正: 以前は受注番号を問わず最大値だけを採っていたが、大阪は請求書の交通費を受注ごとに補うように
+    // なったため、2つの受注がまとめられた行で片方の交通費が落ちていた(2024-04 石本 直子さんの345円等)。
+    const transportByOrder = new Map<string, number>();
+    rows.forEach((r) => transportByOrder.set(r.orderNo || '', Math.max(transportByOrder.get(r.orderNo || '') ?? 0, r.billingTransport || 0)));
+    const billingTransport = [...transportByOrder.values()].reduce((s, v) => s + v, 0);
 
     merged.push({
       ...base,
@@ -177,7 +211,11 @@ export function calculateGrossProfit(
   personInChargeOverrides: PersonInChargeRow[] = [],
   // ★2026-09-19追加(はまさんの指摘「紹介手数料の手入力が必要」): 対象月・スタッフNo単位の
   // 紹介手数料手入力。retirementsと全く同じ設計・使い方(下記referralFeeMap参照)。
-  referralFees: ReferralFeeRow[] = []
+  referralFees: ReferralFeeRow[] = [],
+  // ★2026-09-29追加: 行ごとの交通費(税抜)(GrossProfitResult.transportExTax)の元データ。
+  // 'billing'=請求交通費(大阪・松山)、'payroll'=給与の支給交通費(四国。スタッフ×月の最初の行にだけ付ける)。
+  // 会社ごとの設定はconfig/transportExTax.tsのtransportExTaxSource。
+  transportExTaxSource: 'billing' | 'payroll' = 'billing'
 ): GrossProfitResult[] {
   // 退職金データのマップ作成 キー: `${targetMonth}_${staffNo}`
   const retirementMap = new Map<string, number>();
@@ -238,7 +276,11 @@ export function calculateGrossProfit(
     const k = `${b.targetMonth}_${b.billingNo}`;
     const byStaff = invoiceMapByBillingNoStaff.get(`${k}_${b.staffNo}`);
     if (byStaff) return byStaff;
-    return invoiceCountByBillingNo.get(k) === 1 ? invoiceMap.get(k) : undefined;
+    if (invoiceCountByBillingNo.get(k) !== 1) return undefined;
+    // ★2026-09-29修正: 請求書行がスタッフ番号を持ち、それが別のスタッフなら結合しない(請求書に自分の行が無い
+    // スタッフに、同じ請求Noの別スタッフの単価・交通費が付いていた。2024-07 周防 冬さんの例)
+    const only = invoiceMap.get(k);
+    return only && (!only.staffNo || String(only.staffNo).trim() === String(b.staffNo).trim()) ? only : undefined;
   };
 
   // 給与データのマップ作成 キー: `${targetMonth}_${staffNo}`
@@ -282,14 +324,38 @@ export function calculateGrossProfit(
   // 0. 20日締による重複行の統合
   // ★2026-09-29追加: 請求データ側に交通費が無い行(大阪の「請求支払（スタナビ）」シートには交通費列が
   // 無く常に0)は、紐づく請求書行の「交通費－金額」(税抜、請求額に含まれている)で補う。統合前に
-  // 補うことで、同じ受注の重複行は統合時のMath.max(下記)で1行分だけ採用される。
+  // 補うことで、同じ受注の重複行は統合時(受注番号ごとの最大値、mergeDuplicateBillingRows参照)で1行分だけ採用される。
+  // ★2026-09-29修正: 1つの請求書行の交通費は1回だけ補う。受注番号で直接紐づく行を優先して確定させ、受注番号が
+  // 請求書に無い行が予備の結合(請求No+スタッフ番号等)で既に使われた請求書行を拾った場合は交通費を付けない
+  // (同じスタッフの別受注の請求書行を拾い、交通費が2倍になっていた。2024-04 浜田 千雅さん等)。
+  const invoiceByOrder = (b: BillingRow) => (b.orderNo ? invoiceMapByOrderNo.get(`${b.targetMonth}_${b.orderNo}`) : undefined);
+  const invoicesUsedForTransport = new Set<InvoicePrintRow>();
+  billings.forEach((b) => {
+    const inv = invoiceByOrder(b);
+    if (inv) invoicesUsedForTransport.add(inv);
+  });
   const mergedBillings = mergeDuplicateBillingRows(
     billings.map((b) => {
       if (b.billingTransport) return b;
-      const transport = findInvoice(b)?.transportAmount;
+      let inv = invoiceByOrder(b);
+      if (!inv) {
+        const fallback = findInvoice(b);
+        if (fallback && !invoicesUsedForTransport.has(fallback)) {
+          invoicesUsedForTransport.add(fallback);
+          inv = fallback;
+        }
+      }
+      const transport = inv?.transportAmount;
       return transport ? { ...b, billingTransport: transport } : b;
     })
   );
+
+  // 雇保(会社負担)の按分用: スタッフ×月ごとの支払額の合計(calcEmployerEmploymentInsurance参照)
+  const staffMonthPaymentTotal = new Map<string, number>();
+  mergedBillings.forEach((b) => {
+    const k = `${b.targetMonth}_${b.staffNo}`;
+    staffMonthPaymentTotal.set(k, (staffMonthPaymentTotal.get(k) || 0) + (b.paymentAmount || 0));
+  });
 
   // 同月・同一スタッフが複数クライアントに派遣されているケースの検知用カウント。
   // 要件整理ドキュメント3章(追記)・9章: 支払額・社保負担額はbilling CSV由来の契約単位の値を
@@ -350,8 +416,16 @@ export function calculateGrossProfit(
     // 支払額・社保負担額は請求CSV由来の値をそのまま使う(11-1参照。給与CSVとの突合は不要)
     const paymentAmount = billing.paymentAmount || 0;
     const socialInsurance = billing.socialInsuranceBilling || 0;
-    // 雇用保険は参考表示のみ。社保負担額に含まれている想定のため粗利計算では控除しない(12章参照)
-    const employmentInsurance = payroll?.employmentInsurance || 0;
+    // 雇保(会社負担、表示用の計算値)。社保負担額に含まれているため粗利計算では控除しない(12章参照)。
+    // ★2026-09-29修正(はまさんの指摘): 以前は給与データの雇用保険=本人負担(給与からの控除額)を表示していた。
+    // 元Excelと同じく会社負担を「支払額 × 事業主の料率」で計算する(calcEmployerEmploymentInsurance参照)。
+    const employmentInsurance = calcEmployerEmploymentInsurance(
+      paymentAmount,
+      staffMonthPaymentTotal.get(key) || paymentAmount,
+      socialInsurance,
+      payroll,
+      billing.targetMonth
+    );
     const parkingFee = payroll?.parkingFee || 0;
     const salaryTransport = payroll?.salaryTransport || 0;
     const paidLeaveAllowance = payroll?.paidLeaveAllowance || 0;
@@ -540,7 +614,7 @@ export function calculateGrossProfit(
         referralFee,
         paymentAmount: payroll.paymentAmount,
         socialInsurance: payroll.socialInsurance,
-        employmentInsurance: payroll.employmentInsurance,
+        employmentInsurance: calcEmployerEmploymentInsurance(payroll.paymentAmount, payroll.paymentAmount, payroll.socialInsurance, payroll, payroll.targetMonth),
         parkingFee: payroll.parkingFee,
         retirementAmount,
         salaryTransport: payroll.salaryTransport,
@@ -802,6 +876,29 @@ export function calculateGrossProfit(
     while (seenResultIds.has(`${r.id}_${suffix}`)) suffix += 1;
     r.id = `${r.id}_${suffix}`;
     seenResultIds.add(r.id);
+  });
+
+  // ★2026-09-29追加: 行ごとの交通費(税抜)。'billing'は各行の請求交通費、'payroll'は給与の支給交通費を
+  // スタッフ×月の最初の行(手入力の合成行を除く)にだけ付ける(同月複数契約で二重に数えないため)。
+  const payrollTransportAssigned = new Set<string>();
+  const payrollByKey = new Map(payrolls.map((p) => [`${p.targetMonth}_${p.staffNo}`, p]));
+  results.forEach((r) => {
+    if (r.manualEntryType) {
+      r.transportExTax = 0;
+      return;
+    }
+    if (transportExTaxSource === 'billing') {
+      r.transportExTax = r.billingTransport || 0;
+      return;
+    }
+    const key = `${r.targetMonth}_${r.staffNo}`;
+    const p = payrollByKey.get(key);
+    if (!p || payrollTransportAssigned.has(key)) {
+      r.transportExTax = 0;
+      return;
+    }
+    payrollTransportAssigned.add(key);
+    r.transportExTax = p.paidTransport ?? p.salaryTransport ?? 0;
   });
 
   return results.sort((a, b) => {

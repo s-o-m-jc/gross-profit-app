@@ -44,7 +44,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       '請求金額(税込)': r.billingAmountIncTax,
       給与支給額: r.paymentAmount,
       社保負担額: r.socialInsurance,
-      '雇用保険(参考・社保負担額に含まれる想定)': r.employmentInsurance,
+      // ★2026-09-29: 雇保は会社負担の計算値に変更(以前は本人負担を出していた。calculator.ts参照)
+      '雇保(会社負担・計算値、社保負担額に含まれる)': r.employmentInsurance,
       駐車場代: r.parkingFee,
       退職金配賦額: r.retirementAmount,
       有給手当: r.paidLeaveAllowance,
@@ -56,6 +57,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       '粗利率(%)': r.grossProfitRate,
       給与交通費: r.salaryTransport,
       請求交通費: r.billingTransport,
+      '交通費(税抜)': r.transportExTax ?? 0,
       交通費差額: r.transportDiff,
       交通費判定:
         r.transportDiff === 0

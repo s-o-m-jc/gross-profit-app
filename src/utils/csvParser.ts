@@ -369,6 +369,8 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
         employmentInsurance: getNum(row, empInsKey),
         parkingFee: getNum(row, parkingKey),
         salaryTransport,
+        // ★2026-09-29追加: 支給交通費(types.ts PayrollRow.paidTransport参照)。給与CSVではsalaryTransportと同じ値。
+        paidTransport: salaryTransport,
         paidLeaveAllowance: getNum(row, paidLeaveAllowanceKey),
         paidLeaveDays: getNum(row, paidLeaveDaysKey),
         regularAmount: getNum(row, regularAmountKey),
