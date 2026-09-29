@@ -91,6 +91,8 @@ interface FiscalYearAnalyticsProps {
   previousPreviousSummary: FiscalYearSummary;
   /** ★2026-09-28追加: 「交通費(税抜)」列の説明文を選択中の会社の定義に切り替えるため */
   companyId: CompanyId;
+  /** ★2026-09-29追加: 交通費(税抜)を自動計算(請求書の交通費合計)で補完した月。月次サマリで「(自動)」と表示する */
+  autoTransportExTaxMonths: string[];
 }
 
 const DEFAULT_LEAVE_BALANCE_THRESHOLD = 10;
@@ -101,6 +103,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   previousSummary,
   previousPreviousSummary,
   companyId,
+  autoTransportExTaxMonths,
 }) => {
   // 22章タスク3: 得意先別ランキングのベスト/ワースト切替、行クリックでの月次トレンド展開
   const [rankingMode, setRankingMode] = useState<'best' | 'worst'>('best');
@@ -872,7 +875,12 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                   </td>
                   <td className="py-2 px-3 text-right font-mono">
                     {m.transportExTax !== undefined ? (
-                      `¥${m.transportExTax.toLocaleString()}`
+                      <>
+                        ¥{m.transportExTax.toLocaleString()}
+                        {autoTransportExTaxMonths.includes(m.month) && (
+                          <span className="ml-1 text-[10px] text-slate-400" title="手入力が無いため、請求書(スタナビ)の交通費の合計で自動計算した値">(自動)</span>
+                        )}
+                      </>
                     ) : (
                       <span className="text-slate-300">不明</span>
                     )}

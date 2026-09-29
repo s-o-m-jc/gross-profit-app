@@ -64,6 +64,8 @@ import {
   deleteCompanyMonth,
 } from './utils/monthlyData';
 import { loadAppState, saveAppState } from './utils/persistence';
+import { buildEffectiveTransportExTaxRows } from './utils/transportExTaxDisplay';
+import { TRANSPORT_EX_TAX_DEFINITIONS } from './config/transportExTax';
 import { fetchMonthlyDataForCompany, replaceCompanyMonthlyData } from './utils/supabaseSync';
 import { downloadBackupFile, parseBackupFile } from './utils/backupFile';
 import { useAuth, Profile } from './lib/AuthContext';
@@ -251,6 +253,12 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     referralFeeRows,
     transportExTaxOverrideRows,
   } = flattened;
+  // ★2026-09-29追加(はまさんの決定済み): 実際に表示・集計に使う交通費(税抜)。手入力優先、大阪のみ手入力が無い月を
+  // 請求書の交通費合計で自動補完する(transportExTaxDisplay.ts・config/transportExTax.ts参照)。
+  const effectiveTransportExTaxRows = useMemo(
+    () => buildEffectiveTransportExTaxRows(selectedCompanyMonths, TRANSPORT_EX_TAX_DEFINITIONS[selectedCompanyId].autoFromInvoice),
+    [selectedCompanyMonths, selectedCompanyId]
+  );
 
   const [taxRate, setTaxRate] = useState<number>(defaultTaxRate);
   const [fiscalYear, setFiscalYear] = useState<string>(fiscalYearOptions[0].value);
@@ -594,8 +602,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // 決算期サマリー計算 (calculateFiscalYearSummary自身が、渡された全月のデータの中から
   // 選択中の決算期の12ヶ月分だけをtargetMonthで絞り込む。計算ロジック自体は変更していない)
   const fiscalSummary = useMemo(() => {
-    return calculateFiscalYearSummary(calculatedResults, payrollRows, fiscalYear, 12, transportExTaxOverrideRows);
-  }, [calculatedResults, payrollRows, fiscalYear, transportExTaxOverrideRows]);
+    return calculateFiscalYearSummary(calculatedResults, payrollRows, fiscalYear, 12, effectiveTransportExTaxRows);
+  }, [calculatedResults, payrollRows, fiscalYear, effectiveTransportExTaxRows]);
 
   // ★2026-09-20追加(はまさんのご要望「決算期グラフに前年対比を追加」): 選択中の決算期の
   // 1年前(開始年月の年だけ-1した決算期)のサマリーを、前年対比グラフ用に同じ関数
@@ -608,8 +616,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     return `${parseInt(y, 10) - 1}-${m}`;
   }, [fiscalYear]);
   const previousFiscalSummary = useMemo(() => {
-    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousFiscalYearStart, 12, transportExTaxOverrideRows);
-  }, [calculatedResults, payrollRows, previousFiscalYearStart, transportExTaxOverrideRows]);
+    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousFiscalYearStart, 12, effectiveTransportExTaxRows);
+  }, [calculatedResults, payrollRows, previousFiscalYearStart, effectiveTransportExTaxRows]);
 
   // ★2026-09-20追加(はまさんのご要望「スタッフ人数・粗利率のグラフを直近3決算期分の折れ線で
   // 比較できるようにしてほしい」): 前々期(2年前)のサマリーも同じ考え方(既存関数の開始年月を
@@ -619,8 +627,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     return `${parseInt(y, 10) - 2}-${m}`;
   }, [fiscalYear]);
   const previousPreviousFiscalSummary = useMemo(() => {
-    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousPreviousFiscalYearStart, 12, transportExTaxOverrideRows);
-  }, [calculatedResults, payrollRows, previousPreviousFiscalYearStart, transportExTaxOverrideRows]);
+    return calculateFiscalYearSummary(calculatedResults, payrollRows, previousPreviousFiscalYearStart, 12, effectiveTransportExTaxRows);
+  }, [calculatedResults, payrollRows, previousPreviousFiscalYearStart, effectiveTransportExTaxRows]);
 
   if (!isDataLoaded) {
     return (
@@ -804,7 +812,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               fiscalYearLabel={fiscalYearLabel}
               selectedMonth={selectedTargetMonth}
               onSelectedMonthChange={setSelectedTargetMonth}
-              transportExTaxOverrides={transportExTaxOverrideRows}
+              transportExTaxOverrides={effectiveTransportExTaxRows}
             />
           </>
         )}
@@ -922,6 +930,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             previousSummary={previousFiscalSummary}
             previousPreviousSummary={previousPreviousFiscalSummary}
             companyId={selectedCompanyId}
+            autoTransportExTaxMonths={effectiveTransportExTaxRows.filter((r) => r.source === 'auto').map((r) => r.targetMonth)}
           />
         )}
       </main>
