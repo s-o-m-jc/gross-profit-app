@@ -598,7 +598,13 @@ export function calculateGrossProfit(
       // targetMonth_staffNo単位のため引き当て可能。retirementAmountと同じ扱い。
       const referralFee = referralFeeMap.get(key) || 0;
       if (referralFeeMap.has(key)) processedReferralFeeKeys.add(key);
-      const totalCostExTax = payroll.paymentAmount + payroll.socialInsurance + payroll.parkingFee + retirementAmount;
+      // ★2026-09-29修正(はまさんの指摘・決定済み): 請求データが無い行は会社負担の社保負担額が無いため、以前は給与データの
+      // 社保合計(大阪・松山では本人負担)をそのまま原価にしていた。会社負担を「本人の健保・介護・年金(=社保合計−本人の
+      // 雇用保険) + 会社負担の雇用保険」で計算して使う(大阪の請求支払の社保負担額はこの式で1,666件中1,659件説明できる)。
+      // 四国の売上実績一覧表由来の給与データは社保に会社負担(社保他)が入っており本人の雇用保険が0円のため値は変わらない。
+      const employerEmploymentInsurance = calcEmployerEmploymentInsurance(payroll.paymentAmount, payroll.paymentAmount, Infinity, payroll, payroll.targetMonth);
+      const employerSocialInsurance = payroll.socialInsurance - (payroll.employmentInsurance || 0) + employerEmploymentInsurance;
+      const totalCostExTax = payroll.paymentAmount + employerSocialInsurance + payroll.parkingFee + retirementAmount;
 
       results.push({
         id: `UNMATCHED_P_${payroll.targetMonth}_${payroll.staffNo}`,
@@ -613,8 +619,8 @@ export function calculateGrossProfit(
         billingTransport: 0,
         referralFee,
         paymentAmount: payroll.paymentAmount,
-        socialInsurance: payroll.socialInsurance,
-        employmentInsurance: calcEmployerEmploymentInsurance(payroll.paymentAmount, payroll.paymentAmount, payroll.socialInsurance, payroll, payroll.targetMonth),
+        socialInsurance: employerSocialInsurance,
+        employmentInsurance: employerEmploymentInsurance,
         parkingFee: payroll.parkingFee,
         retirementAmount,
         salaryTransport: payroll.salaryTransport,
