@@ -540,6 +540,10 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
       // ★2026-09-29追加(はまさんの指摘・大阪2025-04の実データで確定): 請求Noが空欄の行でも
       // 契約単価データを活かせるよう、受注番号も取得しておく(types.ts InvoicePrintRow.orderNo参照)。
       const orderNoKey = findColumnKey(row, ['受注番号']);
+      // ★2026-09-29追加(大阪の単価・交通費の取り違え修正): スタッフ番号・交通費(税抜)。
+      // 「交通費－金額」の全角ハイフンはNFKC正規化で半角"-"になる(時間内－単価と同じ)。
+      const staffNoKey = findColumnKey(row, ['スタッフ番号', 'スタッフNo']);
+      const transportKey = findColumnKey(row, ['交通費-金額', '交通費−金額']);
 
       const printVal = getStr(row, printKey);
       let printStatus: InvoicePrintRow['printStatus'] = '印刷済';
@@ -560,6 +564,8 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
         sentStatus,
         unitPrice: getNum(row, unitPriceKey),
         orderNo: getStr(row, orderNoKey) || undefined,
+        staffNo: getStr(row, staffNoKey) || undefined,
+        transportAmount: transportKey ? getNum(row, transportKey) : undefined,
       };
     })
     // ★2026-09-29修正(はまさんの指摘): 以前は請求No(billingNo)が無い行を丸ごと除外していたが、

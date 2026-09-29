@@ -28,8 +28,8 @@ import {
 } from '../types';
 
 // 環境変数からのデフォルト値取得 (Vite環境変数要件遵守)
-const DEFAULT_TAX_RATE = Number(import.meta.env.VITE_DEFAULT_TAX_RATE || '0.1');
-const LOW_MARGIN_THRESHOLD = Number(import.meta.env.VITE_LOW_MARGIN_THRESHOLD || '10');
+const DEFAULT_TAX_RATE = Number(import.meta.env?.VITE_DEFAULT_TAX_RATE || '0.1');
+const LOW_MARGIN_THRESHOLD = Number(import.meta.env?.VITE_LOW_MARGIN_THRESHOLD || '10');
 
 // 社保負担額の検算許容誤差 (これを超える差異はSOCIAL_INSURANCE_MISMATCHとして警告)
 const SOCIAL_INSURANCE_TOLERANCE = 500;
@@ -107,6 +107,16 @@ interface MergedBillingRow extends BillingRow {
  * 暫定ルールとする(運用者未確定・要継続検証。統合が発生した行にはDUPLICATE_MERGEDアラートを付与し、
  * 監査パネルで目視確認できるようにしている)。
  */
+/**
+ * 支払＠ = 時間内(金額) ÷ 時間内時間。時間内時間が0なら0(0除算回避)。
+ * ★2026-09-29追加: 時間内時間は[h]:mm書式のExcelセル(経過日数)を×24した実数で、時間内(金額)は
+ * 円単位に丸め済みのため、割り算の結果に 1460.004208… のような端数が出る。元Excelの「支払＠」は
+ * 円単位の整数(大阪の実データで確認済み)なので、円単位に四捨五入する。
+ */
+function calcPayUnitPrice(p: PayrollRow): number {
+  return p.regularHours > 0 ? Math.round(p.regularAmount / p.regularHours) : 0;
+}
+
 function mergeDuplicateBillingRows(billings: BillingRow[]): MergedBillingRow[] {
   const groups = new Map<string, BillingRow[]>();
   billings.forEach((b) => {
@@ -200,14 +210,36 @@ export function calculateGrossProfit(
   // (スタッフ)単位の結合キーとして必ずしも信頼できない。受注番号(orderNo)は契約単位で
   // 一意なため、billingNoでの結合に失敗した場合のフォールバックとして別マップを用意する。
   const invoiceMapByOrderNo = new Map<string, InvoicePrintRow>();
+  // ★2026-09-29修正(大阪の請求＠・交通費の取り違え、全38ヶ月の元Excel突合で判明): 合算請求では
+  // 1つの請求Noに複数スタッフの請求書行がぶら下がる(例: 2024-06 大和冷機工業の請求No 20004975に
+  // 4名)。従来は請求Noを最優先キーにしていたため、Mapの後勝ちで最後の行の単価が同じ請求Noの
+  // 全スタッフに付いていた(中山 真美さんの1980円が、喜多 洋子さんの2200円になる等)。
+  // 受注番号(契約単位で一意、実データ確認済み)を最優先にし、次に請求No+スタッフ番号、
+  // 請求Noだけの結合はその月にその請求Noの請求書行が1件しか無い(=曖昧さが無い)場合に限る。
+  const invoiceMapByBillingNoStaff = new Map<string, InvoicePrintRow>();
+  const invoiceCountByBillingNo = new Map<string, number>();
   invoices.forEach((inv) => {
     if (inv.billingNo) {
-      invoiceMap.set(`${inv.targetMonth}_${inv.billingNo}`, inv);
+      const k = `${inv.targetMonth}_${inv.billingNo}`;
+      invoiceMap.set(k, inv);
+      invoiceCountByBillingNo.set(k, (invoiceCountByBillingNo.get(k) || 0) + 1);
+      if (inv.staffNo) invoiceMapByBillingNoStaff.set(`${k}_${inv.staffNo}`, inv);
     }
     if (inv.orderNo) {
       invoiceMapByOrderNo.set(`${inv.targetMonth}_${inv.orderNo}`, inv);
     }
   });
+  const findInvoice = (b: BillingRow): InvoicePrintRow | undefined => {
+    if (b.orderNo) {
+      const byOrder = invoiceMapByOrderNo.get(`${b.targetMonth}_${b.orderNo}`);
+      if (byOrder) return byOrder;
+    }
+    if (!b.billingNo) return undefined;
+    const k = `${b.targetMonth}_${b.billingNo}`;
+    const byStaff = invoiceMapByBillingNoStaff.get(`${k}_${b.staffNo}`);
+    if (byStaff) return byStaff;
+    return invoiceCountByBillingNo.get(k) === 1 ? invoiceMap.get(k) : undefined;
+  };
 
   // 給与データのマップ作成 キー: `${targetMonth}_${staffNo}`
   const payrollMap = new Map<string, PayrollRow>();
@@ -248,7 +280,16 @@ export function calculateGrossProfit(
   const results: GrossProfitResult[] = [];
 
   // 0. 20日締による重複行の統合
-  const mergedBillings = mergeDuplicateBillingRows(billings);
+  // ★2026-09-29追加: 請求データ側に交通費が無い行(大阪の「請求支払（スタナビ）」シートには交通費列が
+  // 無く常に0)は、紐づく請求書行の「交通費－金額」(税抜、請求額に含まれている)で補う。統合前に
+  // 補うことで、同じ受注の重複行は統合時のMath.max(下記)で1行分だけ採用される。
+  const mergedBillings = mergeDuplicateBillingRows(
+    billings.map((b) => {
+      if (b.billingTransport) return b;
+      const transport = findInvoice(b)?.transportAmount;
+      return transport ? { ...b, billingTransport: transport } : b;
+    })
+  );
 
   // 同月・同一スタッフが複数クライアントに派遣されているケースの検知用カウント。
   // 要件整理ドキュメント3章(追記)・9章: 支払額・社保負担額はbilling CSV由来の契約単位の値を
@@ -285,9 +326,8 @@ export function calculateGrossProfit(
     // ★2026-09-29修正(はまさんの指摘・大阪2025-04の実データで確定): billingNoでの結合に
     // 失敗した場合(billing.billingNoが空欄、または請求書印刷データ側に一致するbillingNoが
     // 無い場合)、受注番号(orderNo)での結合をフォールバックとして試す(invoiceMapByOrderNo参照)。
-    const invoicePrint =
-      invoiceMap.get(`${billing.targetMonth}_${billing.billingNo}`) ||
-      invoiceMapByOrderNo.get(`${billing.targetMonth}_${billing.orderNo}`);
+    // ★2026-09-29変更: 受注番号 → 請求No+スタッフ番号 → (曖昧でない場合のみ)請求No の順(findInvoice参照)
+    const invoicePrint = findInvoice(billing);
     // 請求＠算出用の契約単価。請求書印刷CSV由来(未読込 or 未紐付けの場合はbilling.unitPriceに
     // フォールバックする。★2026-09-15追加: 四国の過去実績Excel(実績加工シートP列「請求単価」)は
     // BillingRow.unitPriceに契約単価を持っているが、従来はinvoicePrintしか参照しておらずこの値が
@@ -296,7 +336,7 @@ export function calculateGrossProfit(
     const billingUnitPrice = invoicePrint?.unitPrice || billing.unitPrice || 0;
     // 支払＠算出用の支払単価 = 時間内(金額) ÷ 時間内時間。時間内時間が0またはpayroll未紐付けなら0
     // (0除算回避。SUM集計では0は寄与しないため、自動的に「除外」と同じ効果になる)
-    const payUnitPrice = payroll && payroll.regularHours > 0 ? payroll.regularAmount / payroll.regularHours : 0;
+    const payUnitPrice = payroll ? calcPayUnitPrice(payroll) : 0;
     // ★2026-09-15追加(23章タスクA拡張): 行レベルの名目粗利率(詳細はtypes.ts参照)
     const nominalGrossMarginRateDataAvailable = billingUnitPrice > 0;
     const nominalGrossMarginRate = billingUnitPrice > 0
@@ -525,7 +565,7 @@ export function calculateGrossProfit(
         ],
         invoicePrintStatus: 'MISSING_INVOICE',
         billingUnitPrice: 0,
-        payUnitPrice: payroll.regularHours > 0 ? payroll.regularAmount / payroll.regularHours : 0,
+        payUnitPrice: calcPayUnitPrice(payroll),
         // 請求が存在しない行のため請求＠が無く、名目粗利率は算出不可
         nominalGrossMarginRateDataAvailable: false,
         nominalGrossMarginRate: 0,
