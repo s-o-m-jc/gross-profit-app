@@ -804,6 +804,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               fiscalYearLabel={fiscalYearLabel}
               selectedMonth={selectedTargetMonth}
               onSelectedMonthChange={setSelectedTargetMonth}
+              transportExTaxOverrides={transportExTaxOverrideRows}
             />
           </>
         )}
