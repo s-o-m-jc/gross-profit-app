@@ -220,10 +220,80 @@ export function extractMatsuyamaPastData(
     billingRows = parseBillingCsv(csv, fileName)
       .filter((r) => r.staffNo)
       .map((r) => ({ ...r, targetMonth }));
+    billingRows = applyMatsuyamaBillingTransport(billingSheet, billingRows, warnings);
   }
 
   // 松山の過去実績Excelには契約単価(請求＠)を持つシートが無いため常に空(23章参照)
   return { payrollRows, billingRows, invoiceRows: [], targetMonth, warnings };
+}
+
+/**
+ * ★2026-09-28修正(請求交通費の取り違え): 「請求支払一覧」シートの「請求交通費」列(AA列)は
+ * 左側の請求支払一覧(A〜Q列)の一部ではなく、U〜AA列に別CSV(請求データ「基本単価・出勤日数・
+ * 交通費」)を貼り付けた独立した副表で、専用の「ｸﾗｲｱﾝﾄ番号」「スタッフ番号」列を持ち、行の並びは
+ * 左側と一致しない。従来はparseBillingCsvが同じ行の値をそのまま読んでいたため、交通費が
+ * 無関係なスタッフに付いていた(左右の行数が違う月は月合計もズレていた)。
+ * 副表を(クライアント番号, スタッフ番号)で集計し、該当する最初の請求行に1回だけ割り当てる
+ * (同じ組の請求行が複数あっても二重計上しない。calculator.tsの重複行統合はMath.maxで
+ * 交通費を採るため、残りの行を0にしておけば合算後も正しい値になる)。
+ * 元Excelの「売上実績表」の「うち交通費請求」はスタッフ番号でMATCHした最初の1件を請求行ごとに
+ * 引くため、同月2契約のスタッフで二重計上・副表2行目の取りこぼしがあり、この関数の結果とは
+ * 一致しない月がある(こちらが副表の実額合計と一致する)。
+ */
+function applyMatsuyamaBillingTransport(
+  ws: XLSX.WorkSheet,
+  billingRows: BillingRow[],
+  warnings: string[]
+): BillingRow[] {
+  const aoa = sheetToAoaFromRow(ws, MATSUYAMA_BILLING_HEADER_ROW);
+  if (aoa.length === 0) return billingRows;
+  const header = aoa[0].map((h) => String(h ?? '').normalize('NFKC').trim());
+  const transportCol = header.indexOf('請求交通費');
+  const findLeft = (names: string[]) => {
+    for (let i = transportCol - 1; i >= 0; i--) if (names.includes(header[i])) return i;
+    return -1;
+  };
+  const staffCol = transportCol >= 0 ? findLeft(['スタッフ番号', 'スタッフNo']) : -1;
+  const clientCol = staffCol >= 0 ? findLeft(['クライアント番号']) : -1;
+  const cleared = billingRows.map((r) => ({ ...r, billingTransport: 0 }));
+  if (transportCol < 0 || staffCol < 0 || clientCol < 0) {
+    warnings.push('「請求支払一覧」シートの請求交通費の副表(クライアント番号・スタッフ番号・請求交通費)が見つからないため、請求交通費は0として取り込みました。');
+    return cleared;
+  }
+
+  const str = (v: any) => String(v ?? '').normalize('NFKC').trim();
+  const num = (v: any) => {
+    const n = typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(/,/g, ''));
+    return isNaN(n) ? 0 : n;
+  };
+  const totals = new Map<string, { client: string; staff: string; amount: number }>();
+  aoa.slice(1).forEach((row) => {
+    const staff = str(row[staffCol]);
+    const amount = num(row[transportCol]);
+    if (!staff || !amount) return;
+    const client = str(row[clientCol]);
+    const key = `${client}_${staff}`;
+    const cur = totals.get(key) || { client, staff, amount: 0 };
+    cur.amount += amount;
+    totals.set(key, cur);
+  });
+
+  totals.forEach(({ client, staff, amount }, key) => {
+    let target = cleared.find((r) => `${str(r.clientCode)}_${str(r.staffNo)}` === key);
+    if (!target) {
+      // クライアント番号が一致しない場合は、同じスタッフの最初の請求行に割り当てる
+      target = cleared.find((r) => str(r.staffNo) === staff);
+      if (target) {
+        warnings.push(`請求交通費 ${amount}円(スタッフ${staff})はクライアント番号${client}の請求行が無いため、同スタッフの別クライアント(${target.clientCode})の請求行に計上しました。`);
+      }
+    }
+    if (!target) {
+      warnings.push(`請求交通費 ${amount}円(スタッフ${staff}・クライアント${client})は請求支払一覧に該当スタッフの請求行が無いため、取り込みませんでした。`);
+      return;
+    }
+    target.billingTransport += amount;
+  });
+  return cleared;
 }
 
 // ---------------------------------------------------------------------------

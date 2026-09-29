@@ -499,7 +499,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   };
   const handleRemovePersonInCharge = (row: PersonInChargeRow) =>
     handleRemoveManualEntry('personInChargeRows', row.targetMonth, row.id);
-  // ★2026-09-25追加(はまさんの確認済み定義、大阪専用): 交通費(税抜)の月次手入力上書き値。
+  // ★2026-09-25追加(はまさんの確認済み定義。2026-09-28に大阪専用から3社共通化): 交通費(税抜)の月次手入力上書き値。
   // personInChargeRowsと全く同じ扱い(対象月ごとに1件のみ、upsert専用関数+共通の削除関数)。
   const handleUpsertTransportExTaxOverride = (row: TransportExTaxOverrideRow) => {
     setMonthlyData((prev) => ({
@@ -849,9 +849,9 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             onRemoveLeaveAllowance={handleRemoveLeaveAllowance}
             onAddNextMonthAdjustment={handleAddNextMonthAdjustment}
             onRemoveNextMonthAdjustment={handleRemoveNextMonthAdjustment}
-            // ★2026-09-25追加(はまさんの確認済み定義): 交通費(税抜)の月次手入力上書き(大阪専用)。
+            // ★2026-09-25追加: 交通費(税抜)の月次手入力上書き(2026-09-28に3社共通化)。
             // 対象月ごとに1件のみのためupsert専用ハンドラを渡す(personInChargeと同じ扱い)。
-            showTransportExTaxOverride={selectedCompanyId === 'osaka'}
+            companyId={selectedCompanyId}
             onUpsertTransportExTaxOverride={handleUpsertTransportExTaxOverride}
             onRemoveTransportExTaxOverride={handleRemoveTransportExTaxOverride}
             canEdit={canEdit}
@@ -920,6 +920,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             summary={fiscalSummary}
             previousSummary={previousFiscalSummary}
             previousPreviousSummary={previousPreviousFiscalSummary}
+            companyId={selectedCompanyId}
           />
         )}
       </main>

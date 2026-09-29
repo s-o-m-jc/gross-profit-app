@@ -32,6 +32,8 @@ import {
   Legend,
 } from 'recharts';
 import { FiscalYearSummary } from '../types';
+import { CompanyId } from '../config/companies';
+import { TRANSPORT_EX_TAX_DEFINITIONS } from '../config/transportExTax';
 
 /**
  * ★2026-09-21追加(はまさんのご要望「Y軸の下限を実データに合わせて引き上げて、変化を見やすく
@@ -87,6 +89,8 @@ interface FiscalYearAnalyticsProps {
    * できるようにしてほしい」): 選択中の決算期の2年前の決算期のサマリー(previousSummaryと同じ
    * 考え方、開始年月を2年ずらして同じcalculateFiscalYearSummaryで計算したもの)。 */
   previousPreviousSummary: FiscalYearSummary;
+  /** ★2026-09-28追加: 「交通費(税抜)」列の説明文を選択中の会社の定義に切り替えるため */
+  companyId: CompanyId;
 }
 
 const DEFAULT_LEAVE_BALANCE_THRESHOLD = 10;
@@ -96,6 +100,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   summary,
   previousSummary,
   previousPreviousSummary,
+  companyId,
 }) => {
   // 22章タスク3: 得意先別ランキングのベスト/ワースト切替、行クリックでの月次トレンド展開
   const [rankingMode, setRankingMode] = useState<'best' | 'worst'>('best');
@@ -187,7 +192,7 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
       grossMarginRate: summary.overallGrossMarginRate,
       paidLeaveDays: summary.totalPaidLeaveDays,
       avgPaidLeaveDaysPerStaff: summary.avgPaidLeaveDaysPerStaff,
-      // ★2026-09-25追加: 交通費(税抜、大阪専用の手入力上書き値)。値がある月だけを合算した
+      // ★2026-09-25追加: 交通費(税抜、3社共通の手入力上書き値)。値がある月だけを合算した
       // 決算期合計(summary.totalTransportExTax参照)。データが1件も無い期間は「不明」表示のまま。
       transportExTax: summary.totalTransportExTax,
       transportExTaxDataAvailable: summary.transportExTaxDataAvailable,
@@ -662,12 +667,12 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
                     (自社負担)と一致する月としない月がある理由もこれで説明がつく)。
                     ★2026-09-25追加: 大阪に限り、はまさんが個別ファイル(契約別売上実績表)から
                     確定させた月次の値をTransportExTaxOverrideRow(手入力上書き)として保持できる
-                    ようになった(monthlyData.ts参照)。値がある月はその値を表示し、無い月
-                    (四国・松山、および大阪でも未取込の月)は引き続き「不明」を表示する。 */}
+                    ようになった(monthlyData.ts参照)。値がある月はその値を表示し、無い月は引き続き「不明」を表示する。
+                    ★2026-09-28: 四国・松山にも拡大。定義は会社ごとに異なるため説明文を切り替える(config/transportExTax.ts)。 */}
                 <th
                   className="py-2 px-3 text-right"
                   rowSpan={anyMonthlySummaryBreakdownOpen ? 2 : 1}
-                  title="大阪のみ、はまさんが個別ファイルから確定させた値を手入力で保持しています。値が無い月(四国・松山、大阪の未取込月)は「不明」と表示します"
+                  title={TRANSPORT_EX_TAX_DEFINITIONS[companyId].tooltip}
                 >
                   交通費(税抜) <span className="text-amber-500">ⓘ</span>
                 </th>

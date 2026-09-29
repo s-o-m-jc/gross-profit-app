@@ -28,6 +28,8 @@ import {
   TransportExTaxOverrideRow,
 } from '../types';
 import { CompanyMonthlyData, MonthlyDataState, listRealMonths } from '../utils/monthlyData';
+import { CompanyId } from '../config/companies';
+import { TRANSPORT_EX_TAX_DEFINITIONS } from '../config/transportExTax';
 
 interface ReferralFeePanelProps {
   companyName: string;
@@ -40,9 +42,9 @@ interface ReferralFeePanelProps {
   onRemoveLeaveAllowance: (row: LeaveAllowanceRow) => void;
   onAddNextMonthAdjustment: (row: NextMonthAdjustmentRow) => void;
   onRemoveNextMonthAdjustment: (row: NextMonthAdjustmentRow) => void;
-  /** ★2026-09-25追加(はまさんの確認済み定義): 交通費(税抜)の月次手入力上書き(大阪専用)。
-   * falseの場合(大阪以外)はサブタブ自体を表示しない。 */
-  showTransportExTaxOverride: boolean;
+  /** ★2026-09-25追加: 交通費(税抜)の月次手入力上書き。★2026-09-28: 大阪専用から3社共通に拡大。
+   * 値の定義は会社ごとに異なるため、説明文の切替に選択中の会社を受け取る(config/transportExTax.ts参照)。 */
+  companyId: CompanyId;
   onUpsertTransportExTaxOverride: (row: TransportExTaxOverrideRow) => void;
   onRemoveTransportExTaxOverride: (row: TransportExTaxOverrideRow) => void;
   /** falseの場合(viewer)は入力フォーム・削除ボタンを非表示にし、一覧の閲覧のみ可能にする */
@@ -74,7 +76,7 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
   onRemoveLeaveAllowance,
   onAddNextMonthAdjustment,
   onRemoveNextMonthAdjustment,
-  showTransportExTaxOverride,
+  companyId,
   onUpsertTransportExTaxOverride,
   onRemoveTransportExTaxOverride,
   canEdit,
@@ -292,7 +294,7 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
     setNjMemo('');
   };
 
-  // ---- 交通費(税抜)上書き フォーム状態 (★2026-09-25追加、大阪専用) ----
+  // ---- 交通費(税抜)上書き フォーム状態 (★2026-09-25追加、2026-09-28に3社共通化) ----
   // 対象月ごとに1件のみ(upsert)のため、他の手入力カテゴリと異なりスタッフNo入力欄は無い。
   const [teMonth, setTeMonth] = useState('');
   const [teAmount, setTeAmount] = useState('');
@@ -341,18 +343,13 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
       icon: <ArrowLeftRight className="w-3.5 h-3.5" />,
       count: nextMonthAdjustmentRows.length,
     },
-    // ★2026-09-25追加(大阪専用): showTransportExTaxOverrideがfalse(大阪以外)の場合は
-    // サブタブ自体を出さない。
-    ...(showTransportExTaxOverride
-      ? [
-          {
-            key: 'transportExTax' as SubTabKey,
-            label: '交通費(税抜)',
-            icon: <Bus className="w-3.5 h-3.5" />,
-            count: transportExTaxOverrideRows.length,
-          },
-        ]
-      : []),
+    // ★2026-09-25追加、2026-09-28に3社共通化(定義は会社ごとに異なる)
+    {
+      key: 'transportExTax' as SubTabKey,
+      label: '交通費(税抜)',
+      icon: <Bus className="w-3.5 h-3.5" />,
+      count: transportExTaxOverrideRows.length,
+    },
   ];
 
   return (
@@ -737,14 +734,11 @@ export const ReferralFeePanel: React.FC<ReferralFeePanelProps> = ({
         </div>
       )}
 
-      {/* 5. 交通費(税抜) (★2026-09-25追加、大阪専用)。showTransportExTaxOverride===trueの時のみ
-          サブタブ自体が存在するため、activeSubTabがこの値になるのは大阪選択中のみ。 */}
-      {showTransportExTaxOverride && activeSubTab === 'transportExTax' && (
+      {/* 5. 交通費(税抜) (★2026-09-25追加、2026-09-28に3社共通化。説明文は選択中の会社の定義) */}
+      {activeSubTab === 'transportExTax' && (
         <div>
           <p className="text-xs text-slate-500 mb-3">
-            派遣先企業へ交通費を請求する際の税抜金額(大阪専用)。個別ファイル(契約別売上実績表)の
-            スタッフ別「交通費（税抜）」列の対象月合計を入力してください
-            (「月別総合計」の「集計」タブは一部月で誤入力が確認されているため参照しないこと)。
+            {TRANSPORT_EX_TAX_DEFINITIONS[companyId].inputGuide}
             対象月ごとに1件のみ保持され、同じ対象月へ再登録すると上書きされます。
           </p>
           {canEdit && (

@@ -53,7 +53,7 @@ export interface MonthlyDataState {
   // ★2026-09-19追加(はまさんの指摘): 紹介手数料(手入力)。retirementRowsと全く同じ設計
   // (対象月・スタッフNoで1件ずつ追加/削除)。
   referralFeeRows: ReferralFeeRow[];
-  // ★2026-09-25追加(はまさんの確認済み定義、大阪専用): 交通費(税抜)の月次手入力上書き値。
+  // ★2026-09-25追加(はまさんの確認済み定義。2026-09-28に大阪専用から3社共通化): 交通費(税抜)の月次手入力上書き値。
   // personInChargeRowsと同じく、対象月ごとに常に1件だけを保つ(upsertTransportExTaxOverrideRow参照)。
   transportExTaxOverrideRows: TransportExTaxOverrideRow[];
 }
@@ -188,7 +188,7 @@ export function upsertPersonInChargeRow(
 }
 
 /**
- * 交通費(税抜)の手入力上書き値を1件、対象月のバケツにupsertする(★2026-09-25追加、大阪専用)。
+ * 交通費(税抜)の手入力上書き値を1件、対象月のバケツにupsertする(★2026-09-25追加、2026-09-28に3社共通化)。
  * upsertPersonInChargeRowと全く同じ考え方(対象月ごとに常に1件だけを保ち、再保存は上書き)。
  * rowのidは呼び出し側で`targetMonth`と同じ値に統一しているため、同一idの既存行を
  * 取り除いてから追加するだけで上書きを実現できる。

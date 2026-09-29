@@ -779,7 +779,7 @@ export function calculateFiscalYearSummary(
   payrolls: PayrollRow[] = [],
   startFiscalMonth: string = getDefaultFiscalYearStart(),
   monthsCount: number = 12,
-  // ★2026-09-25追加(はまさんの確認済み定義、大阪専用): 交通費(税抜)の月次手入力上書き値。
+  // ★2026-09-25追加(はまさんの確認済み定義。2026-09-28に大阪専用から3社共通化): 交通費(税抜)の月次手入力上書き値。
   // 対象月ごとに1件のみ(monthlyData.tsのupsertTransportExTaxOverrideRow参照)。
   transportExTaxOverrides: TransportExTaxOverrideRow[] = []
 ): FiscalYearSummary {
