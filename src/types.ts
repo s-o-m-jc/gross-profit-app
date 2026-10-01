@@ -292,7 +292,7 @@ export interface GrossProfitResult {
   // 原価項目
   paymentAmount: number;       // 給料支給額
   socialInsurance: number;     // 社保会社負担額
-  employmentInsurance: number; // 雇保(会社負担、表示用の計算値。支払額×事業主料率、本人未加入なら0。粗利には使わない)
+  employmentInsurance: number; // 雇保(会社負担、表示用の計算値。給与データの雇用保険対象額(無ければ支払額)×事業主料率、本人未加入なら0。粗利には使わない)
   // ★2026-09-29追加: 行ごとの交通費(税抜)。大阪・松山=請求交通費、四国=給与の支給交通費(スタッフ×月の最初の行のみ)
   transportExTax?: number;
   parkingFee: number;          // 駐車場料金

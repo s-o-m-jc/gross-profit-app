@@ -418,7 +418,8 @@ export function calculateGrossProfit(
     const socialInsurance = billing.socialInsuranceBilling || 0;
     // 雇保(会社負担、表示用の計算値)。社保負担額に含まれているため粗利計算では控除しない(12章参照)。
     // ★2026-09-29修正(はまさんの指摘): 以前は給与データの雇用保険=本人負担(給与からの控除額)を表示していた。
-    // 元Excelと同じく会社負担を「支払額 × 事業主の料率」で計算する(calcEmployerEmploymentInsurance参照)。
+    // 会社負担を「雇用保険対象額(給与データ。無ければ支払額) × 事業主の料率」で計算する
+    // (calcEmployerEmploymentInsurance参照。元Excelの「支払額×料率」とは対象外の手当がある行で異なる)。
     const employmentInsurance = calcEmployerEmploymentInsurance(
       paymentAmount,
       staffMonthPaymentTotal.get(key) || paymentAmount,
