@@ -36,7 +36,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, User, Users, ChevronDown, ChevronUp, AlertTriangle, Plus, Trash2, PenLine, X } from 'lucide-react';
 import { PayrollRow, PaidLeaveOverrideRow } from '../types';
-import { hasLegacyPayrollRows } from '../utils/monthlyData';
+import { hasLegacyPayrollRows, isAttendanceMissingSummaryRow } from '../utils/monthlyData';
 
 interface StaffPayrollDetailProps {
   payrollRows: PayrollRow[];
@@ -847,6 +847,14 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                               {p.staffCategory && (
                                 <span className="text-[9px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded px-1 py-0.5">
                                   {p.staffCategory}
+                                </span>
+                              )}
+                              {isAttendanceMissingSummaryRow(p) && (
+                                <span
+                                  title="元データ(勤怠明細票の未払計上表)にこのスタッフの行が無いため、出勤日数・時間などの勤怠情報がありません(請求のみのスタッフ等)。金額は売上実績一覧表の値で正しく反映されています。"
+                                  className="text-[9px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5"
+                                >
+                                  勤怠データなし
                                 </span>
                               )}
                             </div>

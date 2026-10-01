@@ -283,12 +283,23 @@ export function listRealMonths(companyMonths: CompanyMonthlyData): string[] {
  * 全件非ゼロで入っているにも関わらず画面上0表示になる不具合の根本原因と判明した。22-16章参照)。
  * 該当する場合、その月のCSVを再アップロードすることで解消する(他に復元手段はない)。
  */
-export function isLegacyPayrollRow(row: { workDays?: number; totalDeduction?: number }): boolean {
-  return row.workDays === undefined && row.totalDeduction === undefined;
+type LegacyCheckRow = { workDays?: number; totalDeduction?: number; remarks?: string };
+
+export function isLegacyPayrollRow(row: LegacyCheckRow): boolean {
+  return row.workDays === undefined && row.totalDeduction === undefined && !isAttendanceMissingSummaryRow(row);
+}
+
+/**
+ * ★2026-10-01追加(はまさんの指摘): 四国の売上実績一覧表から取り込んだ行で、勤怠明細票から勤怠を補えなかったもの
+ * (未払計上表に行が無い「請求のみ」のスタッフ、勤怠明細票が無い2025-03など)。元データに勤怠が無いだけで
+ * 旧形式ではないため、CSV再アップロードの案内(isLegacyPayrollRow)の対象から外し、行ごとに表示する。
+ */
+export function isAttendanceMissingSummaryRow(row: LegacyCheckRow): boolean {
+  return row.workDays === undefined && !!row.remarks?.startsWith('過去実績Excel(売上実績一覧表)取込み');
 }
 
 /** 給与CSVの行の配列に、1件でも旧形式(isLegacyPayrollRow参照)の行が含まれるか */
-export function hasLegacyPayrollRows(rows: { workDays?: number; totalDeduction?: number }[]): boolean {
+export function hasLegacyPayrollRows(rows: LegacyCheckRow[]): boolean {
   return rows.length > 0 && rows.some(isLegacyPayrollRow);
 }
 
