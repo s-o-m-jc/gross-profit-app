@@ -60,7 +60,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       '交通費(税抜)': r.transportExTax ?? 0,
       交通費差額: r.transportDiff,
       交通費判定:
-        r.transportDiff === 0
+        r.transportStatus === 'NOT_BILLED_CONTRACT'
+          ? '対象外(交通費を請求しない契約)'
+          : r.transportDiff === 0
           ? '一致'
           : r.transportDiff > 0
           ? '請求漏れ疑い'

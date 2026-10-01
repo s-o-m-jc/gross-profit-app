@@ -10,6 +10,7 @@
  */
 
 import { employerEmploymentInsuranceRate } from '../config/employmentInsuranceRates';
+import { WorkersCompRate, workersCompRate } from '../config/socialInsuranceCheck';
 import {
   PayrollRow,
   BillingRow,
@@ -217,7 +218,10 @@ export function calculateGrossProfit(
   // ★2026-09-29追加: 行ごとの交通費(税抜)(GrossProfitResult.transportExTax)の元データ。
   // 'billing'=請求交通費(大阪・松山)、'payroll'=給与の支給交通費(四国。スタッフ×月の最初の行にだけ付ける)。
   // 会社ごとの設定はconfig/transportExTax.tsのtransportExTaxSource。
-  transportExTaxSource: 'billing' | 'payroll' = 'billing'
+  transportExTaxSource: 'billing' | 'payroll' = 'billing',
+  // ★2026-10-01追加: 社保負担額の検算で、請求側の社保負担額に含まれる労災保険の率(松山のみ。
+  // config/socialInsuranceCheck.ts)。
+  workersCompRates: WorkersCompRate[] = []
 ): GrossProfitResult[] {
   // 退職金データのマップ作成 キー: `${targetMonth}_${staffNo}`
   const retirementMap = new Map<string, number>();
@@ -377,6 +381,28 @@ export function calculateGrossProfit(
   // 個々の行の突合結果(給与交通費 vs 0円)を請求漏れとして警告しない(実データ検証で判明。要件整理6章参照)。
   const transportDataAvailable = mergedBillings.some((b) => b.billingTransport > 0);
 
+  // ★2026-10-01追加(はまさんの依頼、監査アラートの見直し): 社保負担額・交通費の突合はスタッフ×月の単位で行う。
+  // 給与データはスタッフ×月に1行、請求データは契約ごとに1行のため、契約の行ごとに比べると同月複数契約の
+  // スタッフで必ず差が出ていた。アラートはそのスタッフ×月の最初の請求行にだけ付ける。
+  const staffMonthSocialTotal = new Map<string, number>();
+  const staffMonthTransportTotal = new Map<string, number>();
+  mergedBillings.forEach((b) => {
+    const k = `${b.targetMonth}_${b.staffNo}`;
+    staffMonthSocialTotal.set(k, (staffMonthSocialTotal.get(k) || 0) + (b.socialInsuranceBilling || 0));
+    staffMonthTransportTotal.set(k, (staffMonthTransportTotal.get(k) || 0) + (b.billingTransport || 0));
+  });
+  const staffMonthCheckedKeys = new Set<string>();
+  // 交通費を請求する契約(スタッフ×派遣先で、いずれかの月に請求交通費がある)。一度も請求していない契約は、
+  // 交通費込みの単価など交通費を別建てで請求しない契約とみなし、交通費の突合の対象外にする。
+  const transportBilledContracts = new Set(
+    mergedBillings.filter((b) => b.billingTransport > 0).map((b) => `${b.staffNo}_${b.clientCode}`)
+  );
+  const staffMonthBillsTransport = new Map<string, boolean>();
+  mergedBillings.forEach((b) => {
+    const k = `${b.targetMonth}_${b.staffNo}`;
+    if (transportBilledContracts.has(`${b.staffNo}_${b.clientCode}`)) staffMonthBillsTransport.set(k, true);
+  });
+
   // 1. 請求データを軸に結合および粗利計算を実行
   mergedBillings.forEach((billing) => {
     const key = `${billing.targetMonth}_${billing.staffNo}`;
@@ -457,8 +483,23 @@ export function calculateGrossProfit(
     const totalCostExTax = paymentAmount + socialInsurance + parkingFee + retirementAmount;
 
     // 交通費差額検証 (月次金額一致検証)
-    const transportDiff = salaryTransport - billing.billingTransport;
+    // ★2026-10-01変更(はまさんの依頼): スタッフ×月の単位で「給与の支給交通費(税込の実費)を税抜に換算した額」と
+    // 「請求交通費(税抜)の合計」を比べ、差額はそのスタッフ×月の最初の請求行にだけ載せる(以前は契約の行ごとに
+    // 税込の支給額と税抜の請求額を比べていたため、消費税分・同月複数契約で必ず差が出ていた)。端数処理の1円差は一致。
+    // 交通費を一度も請求していない契約(transportBilledContracts参照)は対象外(NOT_BILLED_CONTRACT)。
+    const isFirstRowOfStaffMonth = !staffMonthCheckedKeys.has(key);
+    staffMonthCheckedKeys.add(key);
+    let transportDiff = 0;
     let transportStatus: GrossProfitResult['transportStatus'] = 'MATCH';
+    if (!staffMonthBillsTransport.get(key)) {
+      transportStatus = 'NOT_BILLED_CONTRACT';
+    } else if (isFirstRowOfStaffMonth) {
+      // 請求交通費は、支給額を税抜に換算した額(大半)か、支給額そのもの(大阪の一部の契約)のどちらかで請求している。
+      // どちらかと一致すれば一致とみなす。
+      const billedTotal = staffMonthTransportTotal.get(key) || 0;
+      const raw = Math.round(salaryTransport / (1 + taxRate)) - billedTotal;
+      transportDiff = Math.abs(raw) <= 1 || billedTotal === salaryTransport ? 0 : raw;
+    }
     if (transportDiff > 0) {
       transportStatus = 'UNDER_BILLED'; // 請求不足 (給与支給 > 請求)
     } else if (transportDiff < 0) {
@@ -489,13 +530,17 @@ export function calculateGrossProfit(
 
     // 交通費不一致 (このデータソースに交通費情報が無い場合は警告しない)
     if (transportDiff !== 0 && transportDataAvailable) {
+      const billedTotal = staffMonthTransportTotal.get(key) || 0;
+      const paidExTax = Math.round(salaryTransport / (1 + taxRate));
+      const contracts = staffMonthContractCount.get(key) || 1;
+      const scope = contracts > 1 ? `このスタッフの同月${contracts}契約の合計。` : '';
       alerts.push({
         type: 'TRANSPORT_MISMATCH',
         severity: 'warning',
         message:
           transportStatus === 'UNDER_BILLED'
-            ? `交通費請求漏れ疑い: 差額 +¥${transportDiff.toLocaleString()}（給料支給 ¥${salaryTransport.toLocaleString()} > 請求 ¥${billing.billingTransport.toLocaleString()}）`
-            : `交通費過剰請求疑い: 差額 -¥${Math.abs(transportDiff).toLocaleString()}（請求 ¥${billing.billingTransport.toLocaleString()} > 給料支給 ¥${salaryTransport.toLocaleString()}）`,
+            ? `交通費請求漏れ疑い: 差額 +¥${transportDiff.toLocaleString()}（給料支給 ¥${salaryTransport.toLocaleString()}(税抜換算 ¥${paidExTax.toLocaleString()}) > 請求(税抜) ¥${billedTotal.toLocaleString()}）。${scope}`
+            : `交通費過剰請求疑い: 差額 -¥${Math.abs(transportDiff).toLocaleString()}（請求(税抜) ¥${billedTotal.toLocaleString()} > 給料支給 ¥${salaryTransport.toLocaleString()}(税抜換算 ¥${paidExTax.toLocaleString()})）。${scope}`,
       });
     }
 
@@ -522,16 +567,31 @@ export function calculateGrossProfit(
         message: `請求データに対応する給与データが存在しません (対象年月: ${billing.targetMonth}, スタッフ: ${billing.staffNo})`,
       });
     } else {
-      // 社保負担額の検算 (請求CSV由来の値 と 給与CSVの社保合計+雇用保険 を比較)
-      // 12章: 「片方は0円になっていると思う」という未確定情報のため、実データで乖離があれば警告する
-      const payrollSocialTotal = payroll.socialInsurance + payroll.employmentInsurance;
-      const diff = socialInsurance - payrollSocialTotal;
-      if (Math.abs(diff) > SOCIAL_INSURANCE_TOLERANCE) {
-        alerts.push({
-          type: 'SOCIAL_INSURANCE_MISMATCH',
-          severity: 'info',
-          message: `社保負担額の差異を検出: 請求CSV ¥${socialInsurance.toLocaleString()} / 給与CSV(社保合計+雇用保険) ¥${payrollSocialTotal.toLocaleString()}（差額 ¥${diff.toLocaleString()}）。二重控除でないか要確認。`,
-        });
+      // 社保負担額の検算: 請求の社保負担額(会社負担)の合計 と 給与から見込んだ会社負担 をスタッフ×月で比較する。
+      // ★2026-10-01変更(はまさんの依頼): 以前は「給与の社保合計+雇用保険」と比べていたが、社保合計は本人負担で
+      // 本人の雇用保険を既に含む(二重計上)うえ、会社負担の雇用保険・労災とも違うため、ほぼ全員で差が出ていた。
+      // 見込みの会社負担 = 本人の健保・介護・年金(社保合計−本人の雇用保険) + 会社負担の雇用保険 + 労災(松山のみ)。
+      // 大阪・松山の実データでこの式と1円以内で一致しない差は、保険料の控除月のずれ(入社月分の翌月控除、給与が
+      // 少なく控除できない月など)や本人分の未控除で、元データ同士の食い違いとして確認が必要なもの。
+      if (isFirstRowOfStaffMonth) {
+        const employerEi = calcEmployerEmploymentInsurance(payroll.paymentAmount, payroll.paymentAmount, Infinity, payroll, billing.targetMonth);
+        // 四国の売上実績一覧表由来の給与データは社保に会社負担(社保他)がそのまま入っているため労災等を足さない
+        const socialIsEmployerTotal = !!payroll.remarks?.startsWith('過去実績Excel(売上実績一覧表)');
+        const workersComp = socialIsEmployerTotal
+          ? 0
+          : Math.round(payroll.paymentAmount * workersCompRate(workersCompRates, billing.targetMonth));
+        const personalHealthPension = payroll.socialInsurance - (payroll.employmentInsurance || 0);
+        const expected = personalHealthPension + employerEi + workersComp;
+        const billedTotal = staffMonthSocialTotal.get(key) || 0;
+        const diff = billedTotal - expected;
+        if (Math.abs(diff) > SOCIAL_INSURANCE_TOLERANCE) {
+          const contracts = staffMonthContractCount.get(key) || 1;
+          alerts.push({
+            type: 'SOCIAL_INSURANCE_MISMATCH',
+            severity: 'info',
+            message: `社保負担額の差異: 請求の社保負担額${contracts > 1 ? `(同月${contracts}契約の合計)` : ''} ¥${billedTotal.toLocaleString()} / 給与から見込んだ会社負担 ¥${expected.toLocaleString()}（本人の健保・介護・年金 ¥${personalHealthPension.toLocaleString()} + 会社の雇用保険 ¥${employerEi.toLocaleString()}${workersComp ? ` + 労災等 ¥${workersComp.toLocaleString()}` : ''}）、差額 ¥${diff.toLocaleString()}。保険料の控除月のずれ・本人分の未控除などを要確認。`,
+          });
+        }
       }
     }
 

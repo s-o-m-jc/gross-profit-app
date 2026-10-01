@@ -321,8 +321,10 @@ export interface GrossProfitResult {
   grossProfitRate: number;     // 粗利率 (%) = 粗利益 / 請求額(税抜) * 100
 
   // 交通費一致検証 (月次金額一致検証)
-  transportDiff: number;       // 給与交通費 - 請求交通費
-  transportStatus: 'MATCH' | 'UNDER_BILLED' | 'OVER_BILLED'; // 一致 / 請求漏れ / 過剰請求
+  // ★2026-10-01変更: スタッフ×月の単位で「給与の支給交通費(税抜換算) − 請求交通費(税抜)の合計」。そのスタッフ×月の
+  // 最初の請求行にだけ載せ、他の行は0。交通費を一度も請求していない契約は0(transportStatus=NOT_BILLED_CONTRACT)。
+  transportDiff: number;
+  transportStatus: 'MATCH' | 'UNDER_BILLED' | 'OVER_BILLED' | 'NOT_BILLED_CONTRACT'; // 一致 / 請求漏れ / 過剰請求 / 交通費を請求しない契約
   // 請求支払一覧CSVには交通費列が無く、常に0になる場合がある(6章参照)。
   // データセット全体で請求側交通費が1件も入っていない場合はfalseとし、突合結果を「参考外」として扱う。
   transportDataAvailable: boolean;

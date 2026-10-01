@@ -536,6 +536,8 @@ export function extractShikokuSalesSummarySheet(
   // 最後の1件のみを採用する仕様(同一スタッフの支払単価は契約単位ではなくスタッフ単位の値として
   // 扱う、calculator.ts既存コメント参照)のため、ここでも同じキーで重複を排除してから返す
   // (件数表示・FiscalYearSummaryの有給集計等での重複計上を防ぐため)。
+  // ★2026-10-01修正(はまさんの依頼): 支払・社保他はスタッフの給与として全契約分の合計にする(以前は最後の契約の値だけで、
+  // スタッフ給与明細の支給額が1契約分しか表示されず、社保差異のアラートも誤って出ていた)。支払＠は従来どおり最後の契約の値。
   const payrollRowMap = new Map<string, PayrollRow>();
 
   let rowSeq = 0;
@@ -624,17 +626,18 @@ export function extractShikokuSalesSummarySheet(
     });
 
     const payrollKey = `${targetMonth}_${staffNo}`;
+    const prevPayroll = payrollRowMap.get(payrollKey);
     payrollRowMap.set(payrollKey, {
       targetMonth,
       staffNo,
       staffName,
       // スタッフ給与明細画面での参考表示専用(grossProfitExTaxの算出には使われない。
-      // 上のBillingRow.paymentAmountが実際の控除対象)。
-      paymentAmount,
+      // 上のBillingRow.paymentAmountが実際の控除対象)。同月の複数契約は合計する。
+      paymentAmount: (prevPayroll?.paymentAmount || 0) + paymentAmount,
       // 社保他はBillingRow.socialInsuranceBilling(粗利計算の実際の控除対象)にも同じ値を
-      // 設定済み。PayrollRow側にも同値を入れることで、calculator.tsの社保負担額突合
-      // (SOCIAL_INSURANCE_MISMATCH、参考ログ)で無用な差異アラートが出ないようにする。
-      socialInsurance: socialInsuranceOther,
+      // 設定済み。PayrollRow側にも同値(複数契約は合計)を入れることで、calculator.tsの社保負担額突合
+      // (SOCIAL_INSURANCE_MISMATCH、スタッフ×月で比較)で無用な差異アラートが出ないようにする。
+      socialInsurance: (prevPayroll?.socialInsurance || 0) + socialInsuranceOther,
       employmentInsurance: 0,
       // このシートには駐車場代・退職金配賦に相当する列が無く、粗利益の計算式自体
       // (売上−支払−社保他)にもこれらの控除項目が含まれていない。0のまま(=無し)として扱うことで、

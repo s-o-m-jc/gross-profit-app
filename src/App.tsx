@@ -66,6 +66,7 @@ import {
 import { loadAppState, saveAppState } from './utils/persistence';
 import { buildEffectiveTransportExTaxRows } from './utils/transportExTaxDisplay';
 import { TRANSPORT_EX_TAX_DEFINITIONS } from './config/transportExTax';
+import { WORKERS_COMP_RATES_IN_SOCIAL_INSURANCE } from './config/socialInsuranceCheck';
 import { fetchMonthlyDataForCompany, replaceCompanyMonthlyData } from './utils/supabaseSync';
 import { downloadBackupFile, parseBackupFile } from './utils/backupFile';
 import { useAuth, Profile } from './lib/AuthContext';
@@ -579,7 +580,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       nextMonthAdjustmentRows,
       personInChargeRows,
       referralFeeRows,
-      TRANSPORT_EX_TAX_DEFINITIONS[selectedCompanyId].transportExTaxSource
+      TRANSPORT_EX_TAX_DEFINITIONS[selectedCompanyId].transportExTaxSource,
+      WORKERS_COMP_RATES_IN_SOCIAL_INSURANCE[selectedCompanyId]
     );
   }, [
     payrollRows,
