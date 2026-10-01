@@ -31,6 +31,7 @@ import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { PayrollRow, BillingRow, InvoicePrintRow } from '../types';
 import { parsePayrollCsv, parseBillingCsv, parseInvoicePrintCsv } from './csvParser';
+import { calcPayUnitPrice } from './calculator';
 
 // 未払計上表シートの「時間」列(H:MM形式で24時間を超えうる、[h]:mm書式のExcelセル)。
 // Excel上はこれらのセルは「1日を1.0とする経過日数」の実数として保存されている
@@ -329,6 +330,8 @@ function applyMatsuyamaBillingTransport(
 // ような内訳列が無く、粗利益の計算式自体にも含まれていないため)とする。
 
 const SHIKOKU_SUMMARY_HEADER_MARKER = '企業名';
+const SHIKOKU_SUMMARY_PAYROLL_REMARKS =
+  '過去実績Excel(売上実績一覧表)取込み: 給与の時間内訳データなし(支払＠を単価として直接反映)';
 
 // ヘッダーのテキスト候補(表記ゆれ含む、はまさん確認済み)。定義順が列特定の優先順位になる
 // (「支払」より前に「支払の内交通費」を確定させることで、部分一致フォールバック時に
@@ -660,14 +663,15 @@ export function extractShikokuSalesSummarySheet(
       // 有給日数の合計には、四国のこの期間分は反映されない制約として残る)。
       paidLeaveAllowance: 0,
       paidLeaveDays: 0,
-      // 支払＠(このシートの参考単価列)を、calculator.tsのpayUnitPrice算出式
-      // (regularAmount ÷ regularHours)でそのまま再現するための変換。regularHours=1に
-      // 固定することで、regularAmount(=支払＠)がそのままpayUnitPriceとして使われる
-      // (このシートには実際の稼働時間の内訳が無いため、単価を単価のまま伝えるための
-      // 割り切った処理。「時間内時間」としての実際の意味は持たない)。
-      regularAmount: payUnitPrice,
-      regularHours: payUnitPrice > 0 ? 1 : 0,
-      remarks: '過去実績Excel(売上実績一覧表)取込み: 給与の時間内訳データなし(支払＠を単価として直接反映)',
+      // 支払＠(このシートの参考単価列)はpayUnitPriceで直接持つ(calculator.ts calcPayUnitPrice)。
+      // このシートには時間内時間・基本給が無いため0。勤怠明細票の「未払計上表」から後で補える
+      // (mergeShikokuAttendanceDetail参照)。
+      // ★2026-10-01変更: 以前はregularHours=1・regularAmount=支払＠として支払＠を再現していたため、
+      // それ以前に取り込んだ行はこの形のまま(calcPayUnitPriceの結果は同じ)。
+      regularAmount: 0,
+      regularHours: 0,
+      payUnitPrice,
+      remarks: SHIKOKU_SUMMARY_PAYROLL_REMARKS,
     });
   }
 
@@ -704,6 +708,143 @@ export function extractShikokuPastData(
   }
   return extractShikokuSalesSummarySheet(wb, sheetName, targetMonth, fileName);
 }
+
+// ---------------------------------------------------------------------------
+// 四国人材: 勤怠明細票(★YYMM勤怠明細票 時間計算.xlsm)からの勤怠の補完
+// ---------------------------------------------------------------------------
+//
+// ★2026-10-01追加(はまさんの依頼): 売上実績一覧表から取り込んだ月の給与行は、金額(支払・社保他・
+// 支給交通費)はあるが出勤日数・時間が0のまま。勤怠明細票の「未払計上表」シート(給与計算CSVそのもの、
+// 10行目がヘッダー)には日数・時間があるので、既存の給与行に「勤怠(日数・時間)と基本給」だけを補う。
+// 金額系の項目(支払・社保・雇用保険・交通費・駐車場・有給手当など)は既存の値をそのまま残す。
+// 未払計上表の金額は給与側の本人負担の社保等で、売上実績一覧表の「社保他」(会社負担)とは意味が違い、
+// 置き換えると粗利・表示が変わるため。支払＠は補完前の値をpayUnitPriceで固定する(時間内時間・基本給を
+// 入れても名目粗利が変わらないように)。売上実績一覧表に無いスタッフの行は追加しない(「給与のみ」の行に
+// なり原価が変わるため)。警告で知らせる。
+
+const SHIKOKU_ATTENDANCE_SHEET = '未払計上表';
+const SHIKOKU_ATTENDANCE_HEADER_ROW = 10;
+
+/** 勤怠明細票から既存の給与行へ補う項目(日数・時間・基本給。粗利・社保・交通費の計算には使われない) */
+const SHIKOKU_ATTENDANCE_FIELDS = [
+  'staffNameKana',
+  'staffCategory',
+  'payDate',
+  'workDays',
+  'absenceDays',
+  'holidayWorkDays',
+  'lateEarlyDays',
+  'specialLeaveDays',
+  'otherLeaveDays',
+  'paidLeaveDays',
+  'paidLeaveRemainingDays',
+  'regularHours',
+  'overtimeHours',
+  'nightHours',
+  'nightOvertimeHours',
+  'holidayWorkHours',
+  'otherOvertimeHours',
+  'paidLeaveHours',
+  'lateEarlyHours',
+  'paidLeaveRemainingHours',
+  'regularAmount',
+] as const satisfies readonly (keyof PayrollRow)[];
+
+/** 勤怠明細票(未払計上表シートがあり、売上実績一覧表の月シートが無い)かどうか */
+export function isShikokuAttendanceWorkbook(wb: XLSX.WorkBook, targetMonth: string): boolean {
+  return !!wb.Sheets[SHIKOKU_ATTENDANCE_SHEET] && !guessShikokuSheetName(wb, targetMonth);
+}
+
+/** 勤怠明細票の「未払計上表」シートを給与行として読む(そのまま保存はせず、mergeShikokuAttendanceDetailに渡す) */
+export function extractShikokuAttendanceRows(wb: XLSX.WorkBook, targetMonth: string, fileName: string): PayrollRow[] {
+  const ws = wb.Sheets[SHIKOKU_ATTENDANCE_SHEET];
+  if (!ws) return [];
+  const csv = payrollSheetToCsv(ws, SHIKOKU_ATTENDANCE_HEADER_ROW);
+  return parsePayrollCsv(csv, fileName)
+    .filter((r) => r.staffNo)
+    .map((r) => ({ ...r, targetMonth }));
+}
+
+export interface ShikokuAttendanceMergeResult {
+  payrollRows: PayrollRow[];
+  /** 勤怠を補った既存行の数 */
+  mergedCount: number;
+  warnings: string[];
+}
+
+/**
+ * 既存の給与行(同じ月の分)に、勤怠明細票の行から日数・時間・基本給だけを補う。
+ * 既存行の数・並び・金額項目は変えない(SHIKOKU_ATTENDANCE_FIELDS以外は既存の値のまま)。
+ */
+export function mergeShikokuAttendanceDetail(
+  existing: PayrollRow[],
+  attendance: PayrollRow[],
+  targetMonth: string
+): ShikokuAttendanceMergeResult {
+  const warnings: string[] = [];
+  const key = (staffNo: string) => String(staffNo ?? '').normalize('NFKC').trim();
+  const byStaff = new Map<string, PayrollRow>();
+  attendance.forEach((a) => {
+    const k = key(a.staffNo);
+    if (byStaff.has(k)) warnings.push(`未払計上表にスタッフ番号${k}(${a.staffName})の行が複数あります。最初の行を使いました。`);
+    else byStaff.set(k, a);
+  });
+
+  const used = new Set<string>();
+  const notFound: string[] = [];
+  const transportDiffs: string[] = [];
+  let detailedCount = 0;
+  const payrollRows = existing.map((row) => {
+    if (row.targetMonth !== targetMonth) return row;
+    // 売上実績一覧表由来の行(と、この補完を一度行った行)だけが対象。未払計上表から直接取り込んだ行
+    // (2023-10・2024-02・2024-03など)は既に勤怠を持っているので触らない。
+    if (row.remarks !== SHIKOKU_SUMMARY_PAYROLL_REMARKS && row.remarks !== SHIKOKU_ATTENDANCE_REMARKS) {
+      detailedCount += 1;
+      return row;
+    }
+    const k = key(row.staffNo);
+    const a = byStaff.get(k);
+    if (!a) {
+      notFound.push(`${row.staffName}(${k})`);
+      return row;
+    }
+    used.add(k);
+    // 支給交通費は9/29に同じ未払計上表から補った値のはず。違えば知らせる(上書きはしない)
+    const attTransport = a.paidTransport ?? a.salaryTransport ?? 0;
+    if (row.paidTransport !== undefined && row.paidTransport !== attTransport) {
+      transportDiffs.push(`${row.staffName}(${k}) 登録済み${row.paidTransport}円/未払計上表${attTransport}円`);
+    }
+    const merged: PayrollRow = { ...row, payUnitPrice: calcPayUnitPrice(row) };
+    SHIKOKU_ATTENDANCE_FIELDS.forEach((f) => {
+      (merged as any)[f] = a[f];
+    });
+    merged.remarks = SHIKOKU_ATTENDANCE_REMARKS;
+    return merged;
+  });
+
+  if (detailedCount > 0) {
+    warnings.push(`${detailedCount}件は既に勤怠の内訳を持つ給与データ(売上実績一覧表以外から取込み)のため、変更しませんでした。`);
+  }
+  if (notFound.length > 0) {
+    warnings.push(`未払計上表に見つからず、勤怠を補えなかったスタッフ: ${notFound.join('、')}`);
+  }
+  const existingStaff = new Set(existing.filter((r) => r.targetMonth === targetMonth).map((r) => key(r.staffNo)));
+  const extra = attendance.filter((a) => !existingStaff.has(key(a.staffNo)) && (a.paymentAmount || a.workDays));
+  if (extra.length > 0) {
+    warnings.push(
+      `未払計上表にはあるが登録済みの給与データに無いため、追加しなかったスタッフ: ${extra
+        .map((a) => `${a.staffName}(${key(a.staffNo)}、支給${a.paymentAmount}円)`)
+        .join('、')}`
+    );
+  }
+  if (transportDiffs.length > 0) {
+    warnings.push(`支給交通費が未払計上表と違うスタッフ(登録済みの値のまま残しました): ${transportDiffs.join('、')}`);
+  }
+  return { payrollRows, mergedCount: used.size, warnings };
+}
+
+const SHIKOKU_ATTENDANCE_REMARKS =
+  '過去実績Excel(売上実績一覧表)取込み + 勤怠明細票(未払計上表)から出勤日数・時間・基本給を補完(金額・支払＠は売上実績一覧表の値)';
 
 // ---------------------------------------------------------------------------
 // 大阪人材

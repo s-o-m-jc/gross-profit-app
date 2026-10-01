@@ -34,6 +34,9 @@ import {
   readWorkbookFile,
   guessTargetMonthFromFileName,
   extractPastData,
+  isShikokuAttendanceWorkbook,
+  extractShikokuAttendanceRows,
+  mergeShikokuAttendanceDetail,
   PastImportCompany,
   PastImportResult,
 } from '../utils/excelImport';
@@ -47,6 +50,8 @@ interface PastExcelImportPanelProps {
   // 「請求書（スタナビ）」シートのように契約単価(請求＠)データを持つ会社向け。CsvUploaderの
   // onInvoiceLoadedと同じApp.tsx側のハンドラをそのまま渡す想定。
   onInvoiceLoaded: (data: InvoicePrintRow[]) => void;
+  // ★2026-10-01追加: 四国の勤怠明細票で、登録済みの給与データに勤怠を補うときに使う(その月の登録済み給与行)
+  getMonthPayrollRows: (month: string) => PayrollRow[];
 }
 
 function toPastImportCompany(id: CompanyId): PastImportCompany | null {
@@ -76,6 +81,8 @@ interface PastImportFileEntry {
   targetMonth: string;
   status: FileStatus;
   result?: PastImportResult;
+  /** 取込み結果の件数表示を置き換える説明(四国の勤怠明細票による補完時) */
+  summary?: string;
   errorMessage?: string;
 }
 
@@ -84,6 +91,7 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
   onPayrollLoaded,
   onBillingLoaded,
   onInvoiceLoaded,
+  getMonthPayrollRows,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -154,6 +162,51 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
       updateEntry(id, { status: 'processing', errorMessage: undefined });
       try {
         const wb = await readWorkbookFile(entry.file);
+
+        // ★2026-10-01追加: 四国の勤怠明細票(未払計上表あり・売上実績一覧表の月シート無し)は、
+        // 金額は登録済みの売上実績一覧表の値のまま、勤怠(日数・時間)と基本給だけを補う
+        // (excelImport.ts mergeShikokuAttendanceDetail参照)。
+        if (company === 'shikoku' && isShikokuAttendanceWorkbook(wb, entry.targetMonth)) {
+          const existing = getMonthPayrollRows(entry.targetMonth);
+          if (existing.length === 0) {
+            updateEntry(id, {
+              status: 'error',
+              errorMessage: `勤怠明細票は、登録済みの給与データに出勤日数・時間を補うためのファイルです。${entry.targetMonth}は給与データが未登録のため、先に売上実績一覧表を取り込んでください。`,
+            });
+            continue;
+          }
+          const attendance = extractShikokuAttendanceRows(wb, entry.targetMonth, entry.file.name);
+          if (attendance.length === 0) {
+            updateEntry(id, {
+              status: 'error',
+              errorMessage: '「未払計上表」シートから給与行を1件も読み取れませんでした(10行目がヘッダーの想定)。',
+            });
+            continue;
+          }
+          const merged = mergeShikokuAttendanceDetail(existing, attendance, entry.targetMonth);
+          if (merged.mergedCount === 0) {
+            updateEntry(id, {
+              status: 'error',
+              errorMessage: `勤怠を補える行がありませんでした。${merged.warnings.join(' ')}`,
+            });
+            continue;
+          }
+          onPayrollLoaded(merged.payrollRows);
+          updateEntry(id, {
+            status: 'success',
+            summary: `勤怠明細票: 給与${merged.mergedCount}件に出勤日数・時間・基本給を補いました(金額は変更なし)`,
+            result: {
+              payrollRows: merged.payrollRows,
+              billingRows: [],
+              invoiceRows: [],
+              targetMonth: entry.targetMonth,
+              warnings: merged.warnings,
+            },
+            errorMessage: undefined,
+          });
+          continue;
+        }
+
         const extracted = extractPastData(company, wb, entry.targetMonth, entry.file.name);
         if (extracted.payrollRows.length === 0 && extracted.billingRows.length === 0) {
           updateEntry(id, {
@@ -184,13 +237,14 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
       ? '「未払計上表」「請求支払一覧」シート'
       : company === 'osaka'
       ? '「給与一覧（スタナビ）」「請求支払（スタナビ）」シート'
-      : '「未払計上表」「実績加工」シート';
+      : '「YYYY年M月」シート(売上実績一覧表)';
+  // ★2026-10-01修正: 四国は2026-09-29に売上実績一覧表形式へ切り替えたが、この案内が勤怠明細票のままだった
   const fileNameLabel =
     company === 'matsuyama'
       ? '★派遣明細YYYYMM.xlsm'
       : company === 'osaka'
       ? '契約別売上実績表（YYYY.M).xlsx'
-      : '★YYMM勤怠明細票 時間計算.xlsm';
+      : '売上実績一覧表';
 
   const pendingCount = files.filter((e) => e.status !== 'success').length;
   const successCount = files.filter((e) => e.status === 'success').length;
@@ -224,6 +278,12 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
             まとめて選択・ドラッグ&ドロップできます。ファイル内の{sheetLabel}
             を自動的に読み取り、通常のCSV取り込みと同じ計算エンジンで粗利益・粗利率を算出します。
           </p>
+          {company === 'shikoku' && (
+            <p className="text-slate-600 leading-relaxed">
+              ★YYMM勤怠明細票 時間計算.xlsm を選ぶと、売上実績一覧表で取り込み済みの月の給与データに、「未払計上表」シートの
+              出勤日数・時間・基本給だけを補います(支払・社保他・交通費などの金額と支払＠は変わりません)。
+            </p>
+          )}
 
           <div
             className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
@@ -306,8 +366,12 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
                                 <span>取込済み</span>
                               </span>
                               <div className="text-slate-600 mt-0.5">
-                                給与{entry.result.payrollRows.length}件 / 請求{entry.result.billingRows.length}件
-                                {entry.result.invoiceRows.length > 0 && ` / 契約単価${entry.result.invoiceRows.length}件`}
+                                {entry.summary ?? (
+                                  <>
+                                    給与{entry.result.payrollRows.length}件 / 請求{entry.result.billingRows.length}件
+                                    {entry.result.invoiceRows.length > 0 && ` / 契約単価${entry.result.invoiceRows.length}件`}
+                                  </>
+                                )}
                               </div>
                               {entry.result.warnings.length > 0 && (
                                 <ul className="text-amber-700 mt-0.5 space-y-0.5">

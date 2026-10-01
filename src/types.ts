@@ -25,6 +25,10 @@ export interface PayrollRow {
   // 列構成が完全に同一のため、このCSVから直接取得できる(新規CSV取り込み不要)。
   regularAmount: number;       // 基本給 (実列名は「基本」(過去実績Excel取込)または「時間内」(通常の月次CSV)。ファイル形式により異なる。2026-09-02確認)
   regularHours: number;        // 時間内時間 - 通常時間帯の稼働時間(10進数に変換済み。"164:30"→164.5)
+  // ★2026-10-01追加: 支払＠を元ファイルの値で固定する場合のみ設定(四国の売上実績一覧表の「支払＠」列)。
+  // 設定があれば regularAmount ÷ regularHours より優先する(calculator.ts calcPayUnitPrice)。
+  // 勤怠明細票から時間内時間・基本給を補っても、支払＠(名目粗利の計算元)が変わらないようにするため。
+  payUnitPrice?: number;
   payDate?: string;            // 支給日 (対象年月算出のソース)
   remarks?: string;            // 備考
 

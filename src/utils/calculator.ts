@@ -114,7 +114,9 @@ interface MergedBillingRow extends BillingRow {
  * 円単位に丸め済みのため、割り算の結果に 1460.004208… のような端数が出る。元Excelの「支払＠」は
  * 円単位の整数(大阪の実データで確認済み)なので、円単位に四捨五入する。
  */
-function calcPayUnitPrice(p: PayrollRow): number {
+export function calcPayUnitPrice(p: PayrollRow): number {
+  // ★2026-10-01追加: 元ファイルの支払＠で固定されている行(四国の売上実績一覧表由来)はその値を使う
+  if (p.payUnitPrice !== undefined) return p.payUnitPrice;
   return p.regularHours > 0 ? Math.round(p.regularAmount / p.regularHours) : 0;
 }
 
