@@ -187,6 +187,9 @@ function mergeDuplicateBillingRows(billings: BillingRow[]): MergedBillingRow[] {
       referralFee: rows.reduce((s, r) => s + r.referralFee, 0),
       workHours: rows.reduce((s, r) => s + r.workHours, 0),
       billingTransport,
+      paidTransport: rows.some((r) => r.paidTransport !== undefined)
+        ? rows.reduce((s, r) => s + (r.paidTransport || 0), 0)
+        : undefined,
       mergedRowCount: rows.length,
       mergedOrderNos: rows.map((r) => r.orderNo).filter(Boolean),
     });
@@ -403,6 +406,9 @@ export function calculateGrossProfit(
     if (transportBilledContracts.has(`${b.staffNo}_${b.clientCode}`)) staffMonthBillsTransport.set(k, true);
   });
 
+  // 契約ごとの支給交通費の目安(BillingRow.paidTransport、四国の売上実績一覧表のみ)。行ごとの交通費(税抜)の振り分けに使う
+  const contractPaidTransport = new Map<GrossProfitResult, number>();
+
   // 1. 請求データを軸に結合および粗利計算を実行
   mergedBillings.forEach((billing) => {
     const key = `${billing.targetMonth}_${billing.staffNo}`;
@@ -430,7 +436,9 @@ export function calculateGrossProfit(
     const billingUnitPrice = invoicePrint?.unitPrice || billing.unitPrice || 0;
     // 支払＠算出用の支払単価 = 時間内(金額) ÷ 時間内時間。時間内時間が0またはpayroll未紐付けなら0
     // (0除算回避。SUM集計では0は寄与しないため、自動的に「除外」と同じ効果になる)
-    const payUnitPrice = payroll ? calcPayUnitPrice(payroll) : 0;
+    // ★2026-10-02追加: 契約ごとの支払＠を持つ請求行(四国の売上実績一覧表)はその値。給与データはスタッフ×月で1行のため、
+    // 同月複数契約のスタッフでは給与側の値が1契約分(最後の契約)しか無い(2024-05 多田羅 麻美さんで1,200円が1,100円になっていた)。
+    const payUnitPrice = billing.payUnitPrice ?? (payroll ? calcPayUnitPrice(payroll) : 0);
     // ★2026-09-15追加(23章タスクA拡張): 行レベルの名目粗利率(詳細はtypes.ts参照)
     const nominalGrossMarginRateDataAvailable = billingUnitPrice > 0;
     const nominalGrossMarginRate = billingUnitPrice > 0
@@ -650,6 +658,7 @@ export function calculateGrossProfit(
       nominalGrossMarginRate,
       personInCharge,
     });
+    if (billing.paidTransport !== undefined) contractPaidTransport.set(results[results.length - 1], billing.paidTransport);
   });
 
   // 2. 未紐付けの給与データ (請求が存在しない不整合データ) を検出して登録
@@ -949,25 +958,45 @@ export function calculateGrossProfit(
 
   // ★2026-09-29追加: 行ごとの交通費(税抜)。'billing'は各行の請求交通費、'payroll'は給与の支給交通費を
   // スタッフ×月の最初の行(手入力の合成行を除く)にだけ付ける(同月複数契約で二重に数えないため)。
-  const payrollTransportAssigned = new Set<string>();
+  // ★2026-10-02修正(はまさんの指摘、2024-05 多田羅 麻美さん): 'payroll'で同月複数契約のスタッフは、契約ごとの目安
+  // (BillingRow.paidTransport)があればそれで分ける。目安の合計が支給交通費と一致すれば目安そのまま(元Excelの契約ごとの値)、
+  // 一致しなければ支給交通費を目安の比で按分する(目安は契約上の額が転記されていることがあり、金額は支給交通費を正とする)。
+  // 目安が無い・すべて0なら従来どおり最初の行に全額。
   const payrollByKey = new Map(payrolls.map((p) => [`${p.targetMonth}_${p.staffNo}`, p]));
+  const payrollTransportRows = new Map<string, GrossProfitResult[]>();
   results.forEach((r) => {
-    if (r.manualEntryType) {
-      r.transportExTax = 0;
-      return;
-    }
+    r.transportExTax = 0;
+    if (r.manualEntryType) return;
     if (transportExTaxSource === 'billing') {
       r.transportExTax = r.billingTransport || 0;
       return;
     }
     const key = `${r.targetMonth}_${r.staffNo}`;
-    const p = payrollByKey.get(key);
-    if (!p || payrollTransportAssigned.has(key)) {
-      r.transportExTax = 0;
+    if (!payrollByKey.has(key)) return;
+    const rows = payrollTransportRows.get(key) || [];
+    rows.push(r);
+    payrollTransportRows.set(key, rows);
+  });
+  payrollTransportRows.forEach((rows, key) => {
+    const p = payrollByKey.get(key)!;
+    const total = p.paidTransport ?? p.salaryTransport ?? 0;
+    const guides = rows.map((r) => contractPaidTransport.get(r) || 0);
+    const guideTotal = guides.reduce((s, v) => s + v, 0);
+    if (rows.length === 1 || guideTotal <= 0) {
+      rows[0].transportExTax = total;
       return;
     }
-    payrollTransportAssigned.add(key);
-    r.transportExTax = p.paidTransport ?? p.salaryTransport ?? 0;
+    if (guideTotal === total) {
+      rows.forEach((r, i) => (r.transportExTax = guides[i]));
+      return;
+    }
+    // 按分の端数は目安の最も大きい契約に寄せる
+    let allocated = 0;
+    rows.forEach((r, i) => {
+      r.transportExTax = Math.floor((total * guides[i]) / guideTotal);
+      allocated += r.transportExTax;
+    });
+    rows[guides.indexOf(Math.max(...guides))].transportExTax += total - allocated;
   });
 
   return results.sort((a, b) => {

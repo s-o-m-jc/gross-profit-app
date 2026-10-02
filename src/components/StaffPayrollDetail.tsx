@@ -153,7 +153,9 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
       // 一覧の「交通費」列は交通費1+2・交通費課税のみ、通信費・非課税他は「通信費・非課税他」列に
       // 分離した(computeSummary参照)。ここでの内訳表示自体は変更していない。
       fields: [
-        { label: '交通費', hint: '交通費1+2合算、一覧の「交通費」列に集計', value: yen(p.salaryTransport) },
+        // ★2026-10-02修正(はまさんの指摘): 支給交通費(paidTransport)を表示する。四国の売上実績一覧表由来の行はsalaryTransportが0
+        // (表示用の分解を避けるため、excelImport.ts参照)で、交通費が出ていなかった。給与CSVでは両者は同じ値。
+        { label: '交通費', hint: '交通費1+2合算、一覧の「交通費」列に集計', value: yen(staffPaidTransport(p)) },
         { label: '交通費課税', hint: '一覧の「交通費」列に集計', value: yen(p.transportTaxable) },
         { label: '通信費', hint: '一覧の「通信費・非課税他」列に集計', value: yen(p.commsAllowance) },
         {
@@ -218,8 +220,8 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
         { label: '介護保険', value: yen(p.nursingInsurance) },
         { label: '厚生年金', value: yen(p.pensionInsurance) },
         { label: '厚生年金基金', value: yen(p.pensionFund) },
-        { label: '雇用保険', value: yen(p.employmentInsurance) },
-        { label: '社保合計額', value: yen(p.socialInsurance) },
+        { label: '雇用保険', value: yen(p.personalEmploymentInsurance ?? p.employmentInsurance) },
+        { label: '社保合計額', value: yen(personalSocialInsurance(p)) },
         { label: '所得税', value: yen(p.incomeTax) },
         { label: '住民税', value: yen(p.residentTax) },
         { label: '遅早控除', value: yen(p.lateEarlyDeduction) },
@@ -282,9 +284,14 @@ function buildCategories(p: PayrollRow, override: PaidLeaveOverrideTotal): Categ
  * 抜けがあった。overrideDays(数値)だけでなくoverride全体(日数+金額)を受け取り、金額分は
  * paymentAmount・netPaymentの計算にも加算するようにした。
  */
+/** 支給交通費(交通費1+2)。四国の売上実績一覧表由来の行はsalaryTransportが0で、paidTransportにだけ値がある */
+const staffPaidTransport = (p: PayrollRow) => p.paidTransport ?? p.salaryTransport ?? 0;
+/** 本人負担の社保合計額。四国の売上実績一覧表由来の行はsocialInsuranceが会社負担(社保他)のため、補った本人負担の値を使う */
+const personalSocialInsurance = (p: PayrollRow) => p.personalSocialInsurance ?? p.socialInsurance ?? 0;
+
 function computeSummary(p: PayrollRow, override: PaidLeaveOverrideTotal = { days: 0, amount: 0, count: 0 }) {
   // 交通費 (交通費1+2・交通費課税のみ。通信費・非課税他は下記の別項目に分離)
-  const transportSummary = (p.salaryTransport ?? 0) + (p.transportTaxable ?? 0);
+  const transportSummary = staffPaidTransport(p) + (p.transportTaxable ?? 0);
   // 通信費・非課税他 (交通費とは別カテゴリの非課税手当。以前は「交通費」に混入していた)
   const otherNonTaxable = (p.commsAllowance ?? 0) + (p.nonTaxableOtherAllowances ?? 0);
   // 労働時間(合計) = 時間内時間・時間外時間・深夜内時間・深夜外時間・休日出時間・その他時間外(時間)の合算
@@ -314,7 +321,7 @@ function computeSummary(p: PayrollRow, override: PaidLeaveOverrideTotal = { days
     reimbursement: p.reimbursement ?? 0,
     trainingAllowance: p.trainingAllowance ?? 0,
     paymentAmount: paymentAmountWithOverride,
-    socialInsurance: p.socialInsurance ?? 0,
+    socialInsurance: personalSocialInsurance(p),
     totalDeduction: p.totalDeduction ?? 0,
     // ★2026-09-02修正(スタッフ給与明細バグ報告): 以前はCSVの「差引支給額」列(p.netPayment)を
     // そのまま使い、0円等で欠けている場合のみ総支給額にフォールバックしていたが、

@@ -623,6 +623,11 @@ export function extractShikokuSalesSummarySheet(
       // 請求＠(契約単価)。calculator.tsのbillingUnitPrice算出で、請求書印刷CSV未読込時の
       // フォールバックとして参照される(四国は請求書印刷CSV相当のシートが無いため常にこちらを使う)。
       unitPrice: billingUnitPrice,
+      // ★2026-10-02追加(はまさんの指摘、2024-05 多田羅 麻美さん): 契約ごとの支払＠と「支払の内交通費」。
+      // 給与行はスタッフ×月で1行(下記)のため、同月複数契約のスタッフでは支払＠が最後の契約の値、交通費が最初の契約に
+      // 全額載っていた。交通費の金額そのものは勤怠明細票の支給交通費を正とし、この値は契約への振り分けにだけ使う。
+      payUnitPrice,
+      paidTransport: parseShikokuNum(get('transport')),
     });
 
     const payrollKey = `${targetMonth}_${staffNo}`;
@@ -724,6 +729,8 @@ export function extractShikokuPastData(
 // 置き換えると粗利・表示が変わるため。支払＠は補完前の値をpayUnitPriceで固定する(時間内時間・基本給を
 // 入れても名目粗利が変わらないように)。売上実績一覧表に無いスタッフの行は追加しない(「給与のみ」の行に
 // なり原価が変わるため)。警告で知らせる。
+// ★2026-10-02追加: 手当・控除の内訳(健保・介護・年金・税など、表示専用)も補う。本人負担の社保合計・雇用保険は
+// personalSocialInsurance・personalEmploymentInsuranceに入れる(socialInsurance・employmentInsuranceは変えない)。
 
 const SHIKOKU_ATTENDANCE_SHEET = '未払計上表';
 const SHIKOKU_ATTENDANCE_HEADER_ROW = 10;
@@ -751,6 +758,40 @@ const SHIKOKU_ATTENDANCE_FIELDS = [
   'lateEarlyHours',
   'paidLeaveRemainingHours',
   'regularAmount',
+  // ★2026-10-02追加(はまさんの指摘「詳細内訳に保険の内訳が出ない」): 手当・控除の内訳(スタッフ給与明細の表示専用)。
+  // 粗利・社保・交通費の計算には使われない項目だけ。本人負担の社保合計・雇用保険は別項目に入れる(下記)。
+  'overtimeAmount',
+  'nightAmount',
+  'nightOvertimeAmount',
+  'holidayWorkAmount',
+  'otherOvertimeAllowance',
+  'leaveAllowance',
+  'absenceLeaveAllowance',
+  'specialLeaveAllowance',
+  'trainingAllowance',
+  'welfareAllowance',
+  'paidLeaveAllowance2',
+  'taxableOtherAllowances',
+  'transportTaxable',
+  'commsAllowance',
+  'nonTaxableOtherAllowances',
+  'reimbursement',
+  'lateEarlyDeduction',
+  'absenceDeduction',
+  'leaveDeduction',
+  'healthInsurance',
+  'nursingInsurance',
+  'pensionInsurance',
+  'pensionFund',
+  'taxableIncomeBase',
+  'incomeTax',
+  'yearEndAdjustment',
+  'residentTax',
+  'lunchFee',
+  'healthCheckFee',
+  'cleaningFee',
+  'advancePaymentSettlement',
+  'totalDeduction',
 ] as const satisfies readonly (keyof PayrollRow)[];
 
 /** 勤怠明細票(未払計上表シートがあり、売上実績一覧表の月シートが無い)かどうか */
@@ -821,6 +862,10 @@ export function mergeShikokuAttendanceDetail(
     SHIKOKU_ATTENDANCE_FIELDS.forEach((f) => {
       (merged as any)[f] = a[f];
     });
+    // 未払計上表の社保合計・雇用保険は本人負担(控除額)。この行のsocialInsurance(会社負担の社保他)・
+    // employmentInsurance(0)は粗利・監査の計算に使うので変えず、表示専用の項目に入れる
+    merged.personalSocialInsurance = a.socialInsurance;
+    merged.personalEmploymentInsurance = a.employmentInsurance;
     merged.remarks = SHIKOKU_ATTENDANCE_REMARKS;
     return merged;
   });

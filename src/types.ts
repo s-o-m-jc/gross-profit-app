@@ -19,6 +19,12 @@ export interface PayrollRow {
   // その分解を適用しない取込み元(四国の売上実績一覧表)でも支給交通費を保持できるよう別項目にしている。
   // 四国の交通費(税抜)の自動集計に使う(calculator.tsのtransportExTaxSource='payroll')。
   paidTransport?: number;
+  // ★2026-10-02追加: 本人負担の社保合計額・雇用保険(給与からの控除額、スタッフ給与明細の表示専用)。
+  // 四国の売上実績一覧表由来の行はsocialInsuranceに会社負担(社保他)、employmentInsuranceに0が入っている
+  // (粗利・監査の計算がその前提)ため、勤怠明細票の未払計上表から補った本人負担の値をこちらに持つ。
+  // 他の取込み元では未設定(socialInsurance・employmentInsuranceが本人負担そのもの)。
+  personalSocialInsurance?: number;
+  personalEmploymentInsurance?: number;
   paidLeaveAllowance: number;  // 有給手当 (総支給額に内包済み。参考表示・検算用)
   paidLeaveDays: number;       // 有給日数
   // 支払＠(支払単価)算出用。運用者確認・実データ検算済み: 賃金台帳CSVは給与計算CSVと
@@ -124,6 +130,12 @@ export interface BillingRow {
   referralFee: number;         // 紹介手数料 (粗利非算入・売上算入)
   workHours: number;           // 請求稼働時間 (このCSVには存在しないことが多く0になりうる)
   unitPrice: number;           // 契約時間単価 (同上、0になりうる)
+  // ★2026-10-02追加(四国の売上実績一覧表のみ): 契約ごとの支払＠と「支払の内交通費」。給与データはスタッフ×月で
+  // 1行のため、同月複数契約のスタッフでは給与データからは契約ごとの値が分からない。
+  // 支払＠はこちらを優先し、交通費はスタッフの支給交通費(PayrollRow.paidTransport)を契約ごとに分ける目安にする
+  // (calculator.ts参照)。
+  payUnitPrice?: number;
+  paidTransport?: number;
 
   // ★2026-09-11追加(23章タスクB「担当者」列復活): クライアント(企業)×対象月単位の営業担当者名。
   // 現状、実データに自動取得元の列が存在するのは松山の「請求支払一覧」シート(Q列)のみ
