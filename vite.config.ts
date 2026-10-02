@@ -1,11 +1,45 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {execSync} from 'child_process';
+import {defineConfig, type Plugin} from 'vite';
+
+// ★2026-10-02追加(はまさんの依頼「古い画面を見ていたのでは」の混乱を無くす): ビルドしたコミットと日時を
+// アプリに埋め込み(フッターに表示)、同じ内容をdist/version.jsonにも出す。開いているタブはversion.jsonを
+// 定期的に読み、自分と違うコミットがデプロイされていたら再読み込みを促す(src/components/UpdateNotifier.tsx)。
+// Vercelのビルドでは.gitが無い場合があるため、Vercelが渡すVERCEL_GIT_COMMIT_SHAを優先する。
+function resolveCommit(): string {
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA;
+  try {
+    return execSync('git rev-parse HEAD', {encoding: 'utf8'}).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+const APP_COMMIT = resolveCommit();
+const APP_BUILT_AT = new Date().toISOString();
+
+function versionJsonPlugin(): Plugin {
+  return {
+    name: 'app-version-json',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({commit: APP_COMMIT, builtAt: APP_BUILT_AT}),
+      });
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), versionJsonPlugin()],
+    define: {
+      __APP_COMMIT__: JSON.stringify(APP_COMMIT),
+      __APP_BUILT_AT__: JSON.stringify(APP_BUILT_AT),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

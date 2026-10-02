@@ -70,6 +70,7 @@ import { WORKERS_COMP_RATES_IN_SOCIAL_INSURANCE } from './config/socialInsurance
 import { fetchMonthlyDataForCompany, replaceCompanyMonthlyData } from './utils/supabaseSync';
 import { downloadBackupFile, parseBackupFile } from './utils/backupFile';
 import { useAuth, Profile } from './lib/AuthContext';
+import { APP_COMMIT, formatAppVersion } from './version';
 
 // ★2026-09-17追加(はまさんの指摘): 過去データを2023年分まで遡って取り込んでいく運用のため、
 // 決算期セレクタの選択肢は最低でもこの年から選べるようにする(実データがさらに古い場合は
@@ -954,6 +955,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
           <div className="text-slate-400 text-center md:text-right">
             計算基準: 粗利益（税抜）＝ 請求額(税抜) − 支払給与 − 社保負担 − 雇用保険 − 駐車場代 − 退職金配賦
+            {/* ★2026-10-02追加(はまさんの依頼): 表示中の画面のバージョン。最新かどうかの確認用 */}
+            <div className="mt-1 font-mono" title={APP_COMMIT}>バージョン: {formatAppVersion()}</div>
           </div>
         </div>
       </footer>

@@ -188,6 +188,15 @@ CsvUploader.tsxの「ひな形CSVダウンロード」機能専用で、画面�
 
 以上をもって、四国の過去実績データ取込み対応は完了。
 
+## 表示中のバージョンの確認方法(2026-10-02追加) (★重要・毎回確認しない)
+
+「古い画面を見ていたのでは」という混乱を無くすため、画面下のフッターに「バージョン: コミット先頭7桁 (ビルド日時)」を常時表示し、
+ビルドごとに`/version.json`(`{commit, builtAt}`)を出力している(`vite.config.ts`。Vercelでは`VERCEL_GIT_COMMIT_SHA`を使う)。
+開いているタブは5分ごと・タブに戻ったときにこれを読み、違うコミットがデプロイされていれば「新しいバージョンがあります」を出す
+(`src/components/UpdateNotifier.tsx`、再読み込みはボタンを押したときだけ)。**デプロイ後の確認は
+`curl -s https://gross-profit-app-oqpi.vercel.app/version.json` のcommitがpushしたコミットと一致するかで行い、
+はまさんにはフッターの7桁が`git log --oneline -1`と同じか見てもらう。**
+
 ## 本番の「removeChild」クラッシュの原因と対策 (★重要・毎回確認しない)
 
 (2026-09-26対応、commit `a212af0`。調査は2026-09-24〜26)
