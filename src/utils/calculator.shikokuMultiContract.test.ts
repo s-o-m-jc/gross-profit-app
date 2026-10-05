@@ -67,3 +67,17 @@ test('勤怠明細票の補完で控除の内訳が入り、本人負担の社�
   assert.equal(p.paidTransport, 920);
   assert.equal(p.payUnitPrice, 1100);
 });
+
+test('給与の交通費(salaryTransport)は同月複数契約で契約の行に分ける(給与総額・社保他小計で二重に数えない)', () => {
+  // 実データ例: 大阪2024-12 井上 千鶴さん(2契約、給与の交通費8,640円)。以前は両方の行に8,640円が付いていた
+  const p = payroll({ salaryTransport: 8640, paidTransport: 8640, payUnitPrice: undefined, remarks: '' });
+  const b1 = { ...billing('S1', 'A', 150000, undefined, undefined), billingTransport: 5000 };
+  const b2 = { ...billing('S2', 'B', 89440, undefined, undefined), billingTransport: 3000 };
+  const r = calc([p], [b1, b2]);
+  assert.deepEqual(r.map((x) => x.salaryTransport), [5400, 3240]);
+  // どの契約も交通費を請求していなければ支払額の比
+  const r2 = calc([p], [billing('S1', 'A', 100000, undefined, undefined), billing('S2', 'B', 300000, undefined, undefined)]);
+  assert.deepEqual(r2.map((x) => x.salaryTransport), [2160, 6480]);
+  // 1契約なら全額
+  assert.equal(calc([p], [billing('S1', 'A', 100000, undefined, undefined)])[0].salaryTransport, 8640);
+});

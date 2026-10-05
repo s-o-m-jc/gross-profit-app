@@ -182,11 +182,14 @@ function deriveTargetMonthFromPayDate(payDateStr: string): string {
 function parseHoursMinutesToDecimal(val: any): number {
   const s = parseSafeString(val);
   if (!s) return 0;
-  const m = s.match(/^(\d+):(\d{1,2})$/);
+  // ★2026-10-05修正: Excelから書き出したCSVは「105:15:00」(H:MM:SS)形式のことがある(大阪 契約別売上実績表（2024.12).csv)。
+  // 以前はH:MMしか受け付けず、下の数値フォールバックで分が落ちて105時間になっていた。
+  const m = s.match(/^(\d+):(\d{1,2})(?::(\d{1,2}))?$/);
   if (m) {
     const hours = parseInt(m[1], 10);
     const minutes = parseInt(m[2], 10);
-    return hours + minutes / 60;
+    const seconds = m[3] ? parseInt(m[3], 10) : 0;
+    return hours + minutes / 60 + seconds / 3600;
   }
   // H:MM形式でない場合のフォールバック(念のため数値としてそのまま解釈)
   return parseSafeNumber(s);

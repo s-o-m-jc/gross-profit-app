@@ -149,6 +149,19 @@ function calcEmployerEmploymentInsurance(
   return Math.max(0, Math.min(amount, socialInsurance));
 }
 
+/**
+ * スタッフ×月の金額(total)を、契約の行ごとの目安(guides、0以上)の比で分ける(円未満切り捨て、端数は目安の最も大きい行)。
+ * 目安の合計がtotalと同じなら目安そのものになる。目安がすべて0なら最初の行に全額。★2026-10-05追加
+ */
+export function allocateByGuide(total: number, guides: number[]): number[] {
+  const guideTotal = guides.reduce((s, v) => s + v, 0);
+  if (guides.length === 0) return [];
+  if (guideTotal <= 0) return guides.map((_, i) => (i === 0 ? total : 0));
+  const shares = guides.map((g) => Math.floor((total * g) / guideTotal));
+  shares[guides.indexOf(Math.max(...guides))] += total - shares.reduce((s, v) => s + v, 0);
+  return shares;
+}
+
 function mergeDuplicateBillingRows(billings: BillingRow[]): MergedBillingRow[] {
   const groups = new Map<string, BillingRow[]>();
   billings.forEach((b) => {
@@ -406,6 +419,24 @@ export function calculateGrossProfit(
     if (transportBilledContracts.has(`${b.staffNo}_${b.clientCode}`)) staffMonthBillsTransport.set(k, true);
   });
 
+  // ★2026-10-05追加(はまさんの依頼「スタッフ給与明細の総支給額−交通費と月次粗利明細一覧が一致しない」の全件確認で判明):
+  // 給与の交通費(salaryTransport、スタッフ×月の値)を契約の行に分ける。以前は同月複数契約のスタッフで全契約の行に同じ額が
+  // 付き、表示用の給与総額(支払額−交通費)・社保他小計(社保+交通費+駐車場)で交通費が契約の数だけ引かれ・足されていた
+  // (粗利は請求データの支払額・社保負担額で計算するので影響なし)。各契約の請求交通費の比で分け、どの契約も交通費を
+  // 請求していなければ請求データの支払額(交通費を含む)の比で分ける。
+  const salaryTransportShare = new Map<MergedBillingRow, number>();
+  const billingsByStaffMonth = new Map<string, MergedBillingRow[]>();
+  mergedBillings.forEach((b) => {
+    const k = `${b.targetMonth}_${b.staffNo}`;
+    billingsByStaffMonth.set(k, [...(billingsByStaffMonth.get(k) || []), b]);
+  });
+  billingsByStaffMonth.forEach((rows, k) => {
+    const total = payrollMap.get(k)?.salaryTransport || 0;
+    const byTransport = rows.map((r) => Math.max(0, r.billingTransport || 0));
+    const guides = byTransport.some((v) => v > 0) ? byTransport : rows.map((r) => Math.max(0, r.paymentAmount || 0));
+    allocateByGuide(total, guides).forEach((v, i) => salaryTransportShare.set(rows[i], v));
+  });
+
   // 契約ごとの支給交通費の目安(BillingRow.paidTransport、四国の売上実績一覧表のみ)。行ごとの交通費(税抜)の振り分けに使う
   const contractPaidTransport = new Map<GrossProfitResult, number>();
 
@@ -464,7 +495,9 @@ export function calculateGrossProfit(
       billing.targetMonth
     );
     const parkingFee = payroll?.parkingFee || 0;
-    const salaryTransport = payroll?.salaryTransport || 0;
+    // 給与の交通費: 行の表示用はこの契約の分(salaryTransportShare)、交通費の突合はスタッフ×月の合計(staffSalaryTransport)
+    const salaryTransport = salaryTransportShare.get(billing) ?? 0;
+    const staffSalaryTransport = payroll?.salaryTransport || 0;
     const paidLeaveAllowance = payroll?.paidLeaveAllowance || 0;
     const paidLeaveDays = payroll?.paidLeaveDays || 0;
 
@@ -505,8 +538,8 @@ export function calculateGrossProfit(
       // 請求交通費は、支給額を税抜に換算した額(大半)か、支給額そのもの(大阪の一部の契約)のどちらかで請求している。
       // どちらかと一致すれば一致とみなす。
       const billedTotal = staffMonthTransportTotal.get(key) || 0;
-      const raw = Math.round(salaryTransport / (1 + taxRate)) - billedTotal;
-      transportDiff = Math.abs(raw) <= 1 || billedTotal === salaryTransport ? 0 : raw;
+      const raw = Math.round(staffSalaryTransport / (1 + taxRate)) - billedTotal;
+      transportDiff = Math.abs(raw) <= 1 || billedTotal === staffSalaryTransport ? 0 : raw;
     }
     if (transportDiff > 0) {
       transportStatus = 'UNDER_BILLED'; // 請求不足 (給与支給 > 請求)
@@ -539,7 +572,7 @@ export function calculateGrossProfit(
     // 交通費不一致 (このデータソースに交通費情報が無い場合は警告しない)
     if (transportDiff !== 0 && transportDataAvailable) {
       const billedTotal = staffMonthTransportTotal.get(key) || 0;
-      const paidExTax = Math.round(salaryTransport / (1 + taxRate));
+      const paidExTax = Math.round(staffSalaryTransport / (1 + taxRate));
       const contracts = staffMonthContractCount.get(key) || 1;
       const scope = contracts > 1 ? `このスタッフの同月${contracts}契約の合計。` : '';
       alerts.push({
@@ -547,8 +580,8 @@ export function calculateGrossProfit(
         severity: 'warning',
         message:
           transportStatus === 'UNDER_BILLED'
-            ? `交通費請求漏れ疑い: 差額 +¥${transportDiff.toLocaleString()}（給料支給 ¥${salaryTransport.toLocaleString()}(税抜換算 ¥${paidExTax.toLocaleString()}) > 請求(税抜) ¥${billedTotal.toLocaleString()}）。${scope}`
-            : `交通費過剰請求疑い: 差額 -¥${Math.abs(transportDiff).toLocaleString()}（請求(税抜) ¥${billedTotal.toLocaleString()} > 給料支給 ¥${salaryTransport.toLocaleString()}(税抜換算 ¥${paidExTax.toLocaleString()})）。${scope}`,
+            ? `交通費請求漏れ疑い: 差額 +¥${transportDiff.toLocaleString()}（給料支給 ¥${staffSalaryTransport.toLocaleString()}(税抜換算 ¥${paidExTax.toLocaleString()}) > 請求(税抜) ¥${billedTotal.toLocaleString()}）。${scope}`
+            : `交通費過剰請求疑い: 差額 -¥${Math.abs(transportDiff).toLocaleString()}（請求(税抜) ¥${billedTotal.toLocaleString()} > 給料支給 ¥${staffSalaryTransport.toLocaleString()}(税抜換算 ¥${paidExTax.toLocaleString()})）。${scope}`,
       });
     }
 
@@ -980,23 +1013,8 @@ export function calculateGrossProfit(
   payrollTransportRows.forEach((rows, key) => {
     const p = payrollByKey.get(key)!;
     const total = p.paidTransport ?? p.salaryTransport ?? 0;
-    const guides = rows.map((r) => contractPaidTransport.get(r) || 0);
-    const guideTotal = guides.reduce((s, v) => s + v, 0);
-    if (rows.length === 1 || guideTotal <= 0) {
-      rows[0].transportExTax = total;
-      return;
-    }
-    if (guideTotal === total) {
-      rows.forEach((r, i) => (r.transportExTax = guides[i]));
-      return;
-    }
-    // 按分の端数は目安の最も大きい契約に寄せる
-    let allocated = 0;
-    rows.forEach((r, i) => {
-      r.transportExTax = Math.floor((total * guides[i]) / guideTotal);
-      allocated += r.transportExTax;
-    });
-    rows[guides.indexOf(Math.max(...guides))].transportExTax += total - allocated;
+    const guides = rows.map((r) => Math.max(0, contractPaidTransport.get(r) || 0));
+    allocateByGuide(total, guides).forEach((v, i) => (rows[i].transportExTax = v));
   });
 
   return results.sort((a, b) => {
