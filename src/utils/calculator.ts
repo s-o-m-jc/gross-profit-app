@@ -425,6 +425,8 @@ export function calculateGrossProfit(
   // (粗利は請求データの支払額・社保負担額で計算するので影響なし)。各契約の請求交通費の比で分け、どの契約も交通費を
   // 請求していなければ請求データの支払額(交通費を含む)の比で分ける。
   const salaryTransportShare = new Map<MergedBillingRow, number>();
+  // 駐車場代(スタッフ×月の手当)も同じ比で分ける。契約ごとの内訳は元データに無い(給与の駐車場手当は1件だけ)。表示用の内訳専用
+  const parkingFeeShare = new Map<MergedBillingRow, number>();
   const billingsByStaffMonth = new Map<string, MergedBillingRow[]>();
   mergedBillings.forEach((b) => {
     const k = `${b.targetMonth}_${b.staffNo}`;
@@ -435,6 +437,7 @@ export function calculateGrossProfit(
     const byTransport = rows.map((r) => Math.max(0, r.billingTransport || 0));
     const guides = byTransport.some((v) => v > 0) ? byTransport : rows.map((r) => Math.max(0, r.paymentAmount || 0));
     allocateByGuide(total, guides).forEach((v, i) => salaryTransportShare.set(rows[i], v));
+    allocateByGuide(payrollMap.get(k)?.parkingFee || 0, guides).forEach((v, i) => parkingFeeShare.set(rows[i], v));
   });
 
   // 契約ごとの支給交通費の目安(BillingRow.paidTransport、四国の売上実績一覧表のみ)。行ごとの交通費(税抜)の振り分けに使う
@@ -494,7 +497,7 @@ export function calculateGrossProfit(
       payroll,
       billing.targetMonth
     );
-    const parkingFee = payroll?.parkingFee || 0;
+    const parkingFee = parkingFeeShare.get(billing) ?? 0;
     // 給与の交通費: 行の表示用はこの契約の分(salaryTransportShare)、交通費の突合はスタッフ×月の合計(staffSalaryTransport)
     const salaryTransport = salaryTransportShare.get(billing) ?? 0;
     const staffSalaryTransport = payroll?.salaryTransport || 0;
@@ -505,14 +508,19 @@ export function calculateGrossProfit(
     const billingAmountExTax = billing.billingAmountExTax || 0;
     const billingAmountIncTax = billing.billingAmountIncTax || Math.round(billingAmountExTax * (1 + taxRate));
 
-    // 粗利益（税抜）＝ 請求額 − 支払額(請求CSV由来) − 社保負担額(請求CSV由来) − 駐車場料金 − 退職金
-    const grossProfitExTax = billingAmountExTax - paymentAmount - socialInsurance - parkingFee - retirementAmount;
+    // 粗利益（税抜）＝ 請求額 − 支払額(請求CSV由来) − 社保負担額(請求CSV由来) − 退職金
+    // ★2026-10-05修正(はまさんの指摘、松山2025-01 松尾 夏葵さんの駐車場代の調査で判明): 駐車場代(給与の「駐車場手当」)は
+    // スタッフに支払う手当で、総支給額=請求データの支払額に既に含まれている(駐車場代のある全99件で支払額=総支給額、元Excelの
+    // 未払計上表で総支給額=各手当の合計(駐車場手当込み)を確認)。以前は支払額とは別にもう一度引いており二重計上だった
+    // (松山の粗利が元Excelより駐車場代の分だけ低かった原因。修正後は松山2024-09・2024-12・2025-01で売上実績表の粗利額と1円まで一致)。
+    // 駐車場代は表示用の内訳(社保他小計・給与総額から除く)にだけ使う。
+    const grossProfitExTax = billingAmountExTax - paymentAmount - socialInsurance - retirementAmount;
 
     // 税込粗利益 = 請求額(税込) − 原価(給与・社保・駐車場・退職金はいずれも不課税のため税率を掛けない)。
     // ★2026-08-26修正: 旧実装は grossProfitExTax * (1+taxRate) としており、本来消費税がかからない
     // 原価項目にまで税率が掛かってしまう不具合があった(消費税切替が「表示だけで計算に反映されない」
     // 問題の原因調査で判明。修正方針の詳細は本ファイル冒頭のコメント、および実施報告を参照)。
-    const grossProfitIncTax = billingAmountIncTax - paymentAmount - socialInsurance - parkingFee - retirementAmount;
+    const grossProfitIncTax = billingAmountIncTax - paymentAmount - socialInsurance - retirementAmount;
 
     // 粗利率 (%)
     const grossProfitRate =
@@ -520,8 +528,8 @@ export function calculateGrossProfit(
         ? Number(((grossProfitExTax / billingAmountExTax) * 100).toFixed(2))
         : 0;
 
-    // 総原価
-    const totalCostExTax = paymentAmount + socialInsurance + parkingFee + retirementAmount;
+    // 総原価(駐車場代は支払額に含まれる)
+    const totalCostExTax = paymentAmount + socialInsurance + retirementAmount;
 
     // 交通費差額検証 (月次金額一致検証)
     // ★2026-10-01変更(はまさんの依頼): スタッフ×月の単位で「給与の支給交通費(税込の実費)を税抜に換算した額」と
@@ -559,13 +567,14 @@ export function calculateGrossProfit(
       });
     }
 
-    // 同月・同一スタッフの複数クライアント契約検知 (駐車場代・退職金の重複計上リスク。按分ロジックは未実装のため軽量アラートのみ)
+    // 同月・同一スタッフの複数クライアント契約検知 (退職金の重複計上リスク。按分ロジックは未実装のため軽量アラートのみ)
+    // ★2026-10-05: 駐車場代は粗利に入らなくなり、契約の行に分けるようにした(parkingFeeShare)ので対象外
     const sameMonthContractCount = staffMonthContractCount.get(key) || 1;
-    if (sameMonthContractCount > 1 && (parkingFee > 0 || retirementAmount > 0)) {
+    if (sameMonthContractCount > 1 && retirementAmount > 0) {
       alerts.push({
         type: 'MULTI_CONTRACT_SAME_MONTH',
         severity: 'warning',
-        message: `同一スタッフが同月に${sameMonthContractCount}件の契約(請求行)を持っています。駐車場代(¥${parkingFee.toLocaleString()})・退職金配賦額(¥${retirementAmount.toLocaleString()})は按分されず、各契約行に同額がそのまま計上されています（重複計上の可能性あり・按分ロジック未実装）。`,
+        message: `同一スタッフが同月に${sameMonthContractCount}件の契約(請求行)を持っています。退職金配賦額(¥${retirementAmount.toLocaleString()})は按分されず、各契約行に同額がそのまま計上されています（重複計上の可能性あり・按分ロジック未実装）。`,
       });
     }
 
@@ -709,7 +718,8 @@ export function calculateGrossProfit(
       // 四国の売上実績一覧表由来の給与データは社保に会社負担(社保他)が入っており本人の雇用保険が0円のため値は変わらない。
       const employerEmploymentInsurance = calcEmployerEmploymentInsurance(payroll.paymentAmount, payroll.paymentAmount, Infinity, payroll, payroll.targetMonth);
       const employerSocialInsurance = payroll.socialInsurance - (payroll.employmentInsurance || 0) + employerEmploymentInsurance;
-      const totalCostExTax = payroll.paymentAmount + employerSocialInsurance + payroll.parkingFee + retirementAmount;
+      // 駐車場代は総支給額(paymentAmount)に含まれる(上の請求行と同じ。★2026-10-05)
+      const totalCostExTax = payroll.paymentAmount + employerSocialInsurance + retirementAmount;
 
       results.push({
         id: `UNMATCHED_P_${payroll.targetMonth}_${payroll.staffNo}`,
@@ -1252,9 +1262,9 @@ export function calculateFiscalYearSummary(
       if (r.manualEntryType === 'LEAVE_COMPENSATION') mTrend.leaveCompensation += r.billingAmountExTax;
       if (r.manualEntryType === 'LEAVE_ALLOWANCE') mTrend.leaveAllowance += r.paymentAmount;
       // ★2026-09-14追加(はまさんの指摘・大阪の実データ「契約別売上実績表（2023.9)」で最終確認):
-      // 駐車場代は「集計」シート(大阪方式)には存在しない列だが、既存grossProfitの原価には
-      // 含まれているため、月次サマリ表の内訳合計を必ずgrossProfitと一致させるため
-      // socialInsuranceOther(社保他)にそのまま畳み込んで集計する(下記の派生値算出コメント参照)。
+      // 駐車場代は「集計」シート(大阪方式)には存在しない列。支払額(総支給額)に含まれる手当のため、
+      // 交通費と同じく給与総額から除いてsocialInsuranceOther(社保他)の側に畳み込んで集計する
+      // (★2026-10-05修正: 以前は粗利で支払額と別にもう一度引いていた。下記の派生値算出コメント参照)。
       mTrend.socialInsuranceOther += r.parkingFee;
       // ★2026-09-18追加(はまさんの指摘): 社保他小計の内訳(雇保/社保/交通費自社負担)だけでは
       // 駐車場代が発生する行・月で内訳合計と一致しないため、駐車場代も独立集計する
@@ -1305,7 +1315,8 @@ export function calculateFiscalYearSummary(
     // 派遣 = 派遣売上 − 交通費(相手企業負担) − 休業分補償 (「集計」シートの実際の数式の逆算)
     mTrend.dispatch = mTrend.dispatchSales - mTrend.transportBilling - mTrend.leaveCompensation;
     // 給与総額(Excel方式) = ΣpaymentAmount − ΣsalaryTransport (上記1.、交通費を除く)
-    mTrend.totalSalary = mTrend.totalSalary - mTrend.transportSalary;
+    // ★2026-10-05: 駐車場代も支払額(総支給額)に含まれるので給与総額から除き、社保他(自社負担)の側に表示する
+    mTrend.totalSalary = mTrend.totalSalary - mTrend.transportSalary - mTrend.parkingFee;
     // 給与 = 給与総額 − 休業手当 (「集計」シートの実際の数式の逆算)
     mTrend.salary = mTrend.totalSalary - mTrend.leaveAllowance;
     // 社保他 = 社保(雇用保険込み、請求CSV由来) + 交通費(自社負担) + 駐車場代

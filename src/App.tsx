@@ -954,7 +954,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
           </div>
 
           <div className="text-slate-400 text-center md:text-right">
-            計算基準: 粗利益（税抜）＝ 請求額(税抜) − 支払給与 − 社保負担 − 雇用保険 − 駐車場代 − 退職金配賦
+            計算基準: 粗利益（税抜）＝ 請求額(税抜) − 支払額(総支給額。交通費・駐車場手当を含む) − 社保負担額(雇用保険を含む) − 退職金配賦
             {/* ★2026-10-02追加(はまさんの依頼): 表示中の画面のバージョン。最新かどうかの確認用 */}
             <div className="mt-1 font-mono" title={APP_COMMIT}>バージョン: {formatAppVersion()}</div>
           </div>

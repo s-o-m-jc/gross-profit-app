@@ -62,8 +62,10 @@ function computeRowBreakdown(row: GrossProfitResult, taxRate: number) {
   const dispatchExTax = isLeaveCompensation ? 0 : row.billingAmountExTax - billingTransportExTax;
   const dispatchIncTax = isLeaveCompensation ? 0 : row.billingAmountIncTax - billingTransportIncTax;
 
-  // 給与総額(Excel方式) = 給与支給総額 − 給与交通費支給額
-  const totalSalaryRow = row.paymentAmount - row.salaryTransport;
+  // 給与総額(Excel方式) = 給与支給総額 − 給与交通費支給額 − 駐車場代
+  // ★2026-10-05: 駐車場代(駐車場手当)も支払額に含まれるため、交通費と同じく給与総額から除いて社保他小計の側に出す
+  // (以前は粗利で支払額と別にもう一度引いていた。calculator.ts参照)
+  const totalSalaryRow = row.paymentAmount - row.salaryTransport - row.parkingFee;
   const leaveAllowanceAmount = isLeaveAllowance ? row.paymentAmount : 0;
   // 給与 = 給与総額(Excel方式) − 休業手当
   const salary = totalSalaryRow - leaveAllowanceAmount;

@@ -81,3 +81,14 @@ test('給与の交通費(salaryTransport)は同月複数契約で契約の行に
   // 1契約なら全額
   assert.equal(calc([p], [billing('S1', 'A', 100000, undefined, undefined)])[0].salaryTransport, 8640);
 });
+
+test('駐車場代(駐車場手当)は支払額(総支給額)に含まれるので粗利から別に引かない。同月複数契約では契約の行に分ける', () => {
+  // 実データ例: 松山2025-01 松尾 夏葵さん。総支給221,300円 = 基本197,740+有給手当4,720+駐車場手当2,600+交通費16,240。
+  // 請求の支払額は楽天38,900円+トランスコスモス182,400円=221,300円で、駐車場手当は楽天の支払額に入っている
+  const p = payroll({ paymentAmount: 221300, parkingFee: 2600, salaryTransport: 16240, paidTransport: 16240, payUnitPrice: undefined, remarks: '' });
+  const r = calc([p], [{ ...billing('S1', '楽天', 38900, undefined, undefined), billingAmountExTax: 24463, socialInsuranceBilling: 5216 },
+    { ...billing('S2', 'トランスコスモス', 182400, undefined, undefined), billingAmountExTax: 266000, socialInsuranceBilling: 24463 }]);
+  assert.deepEqual(r.map((x) => x.grossProfitExTax), [24463 - 38900 - 5216, 266000 - 182400 - 24463]); // 元Excelの粗利額 −19,653 / 59,137
+  assert.equal(r.reduce((s, x) => s + x.parkingFee, 0), 2600);
+  assert.ok(r.every((x) => !x.alerts.some((a) => a.type === 'MULTI_CONTRACT_SAME_MONTH')));
+});

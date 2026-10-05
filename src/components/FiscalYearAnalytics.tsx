@@ -156,7 +156,8 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
   const monthlyTotals = useMemo(() => {
     // 給与総額(狭義、集計シート方式の表示用) = ΣpaymentAmount − ΣsalaryTransport
     // (MonthlyTrend.totalSalaryの定義と同じ式。FiscalYearSummary.totalSalaryは交通費控除前)
-    const totalSalaryNarrow = summary.totalSalary - summary.totalTransportSalary;
+    // ★2026-10-05: 駐車場代も支払額に含まれるので除く(MonthlyTrend.totalSalaryと同じ式)
+    const totalSalaryNarrow = summary.totalSalary - summary.totalTransportSalary - summary.totalParkingFee;
     return {
       // ★2026-09-22修正(はまさんの指摘「スタッフ人数の合計欄は誤解を招く」): 合計行での
       // レンダリングは「-」固定にしたため、この値自体はもう使っていない(後方互換のため残置)。

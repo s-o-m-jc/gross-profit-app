@@ -40,12 +40,10 @@ billings.forEach(billing => {
 )`,
     typescriptEquivalent: `const grossProfitExTax =
   billingAmountExTax -
-  paymentAmount -
-  socialInsurance -
-  employmentInsurance -
-  parkingFee -
+  paymentAmount -      // 総支給額(交通費・駐車場手当を含む)
+  socialInsurance -    // 社保負担額(雇用保険を含む)
   retirementAmount;`,
-    explanation: '仕様書 v1.1 に定義された原価減算式をそのまま適用。紹介手数料は個別の派遣粗利計算からは非算入（減算しない）とする原則を厳密に順守します。',
+    explanation: '仕様書 v1.1 の原価減算式が元。実データの確認で、雇用保険は社保負担額に、駐車場代(駐車場手当)は支払額(総支給額)に既に含まれていると分かったため、この2つは別に引かない(二重計上になる。駐車場代は2026-10-05に修正)。紹介手数料は個別の派遣粗利計算からは非算入（減算しない）とする原則を厳密に順守します。',
   },
   {
     stepName: '4. 交通費月次金額一致検証 (Transport Match Verification)',
