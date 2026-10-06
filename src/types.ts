@@ -130,6 +130,7 @@ export interface BillingRow {
   referralFee: number;         // 紹介手数料 (粗利非算入・売上算入)
   workHours: number;           // 請求稼働時間 (このCSVには存在しないことが多く0になりうる)
   unitPrice: number;           // 契約時間単価 (同上、0になりうる)
+  // ★2026-10-06: 松山も請求支払一覧の副表の「支給単価」をpayUnitPriceに持つ(excelImport.ts applyMatsuyamaUnitPrices)。
   // ★2026-10-02追加(四国の売上実績一覧表のみ): 契約ごとの支払＠と「支払の内交通費」。給与データはスタッフ×月で
   // 1行のため、同月複数契約のスタッフでは給与データからは契約ごとの値が分からない。
   // 支払＠はこちらを優先し、交通費はスタッフの支給交通費(PayrollRow.paidTransport)を契約ごとに分ける目安にする
@@ -398,7 +399,10 @@ export interface AuditAlert {
     | 'RETIREMENT_MISSING'
     | 'DUPLICATE_MERGED'
     | 'SOCIAL_INSURANCE_MISMATCH'
-    | 'MULTI_CONTRACT_SAME_MONTH';
+    | 'MULTI_CONTRACT_SAME_MONTH'
+    // ★2026-10-06追加: 請求データの支払額と給与の総支給額の不一致、契約の単価の急変(calculator.ts)
+    | 'PAYMENT_MISMATCH'
+    | 'UNIT_PRICE_CHANGE';
   severity: 'error' | 'warning' | 'info';
   message: string;
 }

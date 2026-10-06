@@ -52,7 +52,9 @@ export const AnomalyAuditPanel: React.FC<AnomalyAuditPanelProps> = ({
       (a) =>
         a.type === 'DUPLICATE_MERGED' ||
         a.type === 'SOCIAL_INSURANCE_MISMATCH' ||
-        a.type === 'MULTI_CONTRACT_SAME_MONTH'
+        a.type === 'MULTI_CONTRACT_SAME_MONTH' ||
+        a.type === 'PAYMENT_MISMATCH' ||
+        a.type === 'UNIT_PRICE_CHANGE'
     )
   );
 
@@ -335,14 +337,15 @@ export const AnomalyAuditPanel: React.FC<AnomalyAuditPanelProps> = ({
           <div>
             <p className="text-xs text-slate-600 mb-3 font-medium">
               20日締等による重複行の統合ログ、同月に同一スタッフが複数クライアントへ派遣されている場合の
-              駐車場代・退職金の重複計上リスク（按分ロジック未実装のため注意喚起のみ）、
-              請求CSV／給与CSV間の社保負担額の検算差異をまとめています。
+              退職金の重複計上リスク（按分ロジック未実装のため注意喚起のみ）、
+              請求CSV／給与CSV間の社保負担額の検算差異、請求データの支払額と給与の総支給額の不一致、
+              契約の請求＠・支払＠が前の月から10%超変わったもの(取込みの読み違い・契約変更の確認用)をまとめています。
               判定キー・按分・二重控除有無は運用者未確定の暫定ルールのため、内容を必ず目視確認してください。
             </p>
 
             {duplicateOrMismatchItems.length === 0 ? (
               <p className="text-xs text-slate-400 py-6 text-center">
-                重複統合・複数契約・社保差異のデータはありません
+                重複統合・複数契約・社保差異・支払額不一致・単価急変のデータはありません
               </p>
             ) : (
               <div className="space-y-2 max-h-60 overflow-y-auto">
@@ -362,7 +365,9 @@ export const AnomalyAuditPanel: React.FC<AnomalyAuditPanelProps> = ({
                           (a) =>
                             a.type === 'DUPLICATE_MERGED' ||
                             a.type === 'SOCIAL_INSURANCE_MISMATCH' ||
-                            a.type === 'MULTI_CONTRACT_SAME_MONTH'
+                            a.type === 'MULTI_CONTRACT_SAME_MONTH' ||
+                            a.type === 'PAYMENT_MISMATCH' ||
+                            a.type === 'UNIT_PRICE_CHANGE'
                         )
                         .map((a, idx) => (
                           <div

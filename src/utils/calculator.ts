@@ -90,6 +90,9 @@ export function hasActionableAlerts(alerts: AuditAlert[]): boolean {
   return alerts.some((a) => a.severity === 'warning' || a.severity === 'error');
 }
 
+/** 契約の請求＠・支払＠が前の月からこの割合を超えて変わったら警告する(★2026-10-06追加) */
+export const UNIT_PRICE_CHANGE_THRESHOLD = 0.1;
+
 export function countActionableAlerts(alerts: AuditAlert[]): number {
   return alerts.filter((a) => a.severity === 'warning' || a.severity === 'error').length;
 }
@@ -645,6 +648,27 @@ export function calculateGrossProfit(
       }
     }
 
+    // ★2026-10-06追加(はまさんの依頼、再発防止): 請求データの支払額(契約の合計)と給与の総支給額をスタッフ×月で比べる。
+    // 3社の実データでは立替金を除いてほぼ全件一致し、違ったのは給与データの貼り付けミス(大阪2024-12 宇佐美 大樹さん)と、
+    // 請求データの支払額に契約上の交通費が満額入っていた件(松山2026-02 田中 亜莉紗さん、実際の支給は日割り)だけだった。
+    // 立替金は請求額・支払額の両方から除かれていることがある(四国2023-10 山地 優子さん)ので、除いた額と一致すれば一致。
+    // 四国の売上実績一覧表由来の給与行は請求データの合計から作っているので対象外。
+    if (payroll && isFirstRowOfStaffMonth && !payroll.remarks?.startsWith('過去実績Excel(売上実績一覧表)')) {
+      const billedPayment = staffMonthPaymentTotal.get(key) || 0;
+      const reimbursement = payroll.reimbursement || 0;
+      const grossPay = payroll.paymentAmount || 0;
+      if (billedPayment !== grossPay && billedPayment !== grossPay - reimbursement) {
+        const contracts = staffMonthContractCount.get(key) || 1;
+        const scope = contracts > 1 ? `(同月${contracts}契約の合計)` : '';
+        const reimb = reimbursement ? `(うち立替金 ¥${reimbursement.toLocaleString()})` : '';
+        alerts.push({
+          type: 'PAYMENT_MISMATCH',
+          severity: 'warning',
+          message: `支払額の不一致: 請求データの支払額${scope} ¥${billedPayment.toLocaleString()} / 給与の総支給額 ¥${grossPay.toLocaleString()}${reimb}、差額 ¥${(billedPayment - grossPay).toLocaleString()}。給与データの取込み誤り・交通費の日割りなどを要確認(粗利は請求データの支払額で計算しています)。`,
+        });
+      }
+    }
+
     // 退職金未配賦警告 (稼働時間が長いにも関わらず退職金0の場合。請求支払一覧CSVにworkHours列がない場合は常に0のため実質発火しない)
     if (billing.workHours >= 140 && retirementAmount === 0) {
       alerts.push({
@@ -998,6 +1022,45 @@ export function calculateGrossProfit(
     r.id = `${r.id}_${suffix}`;
     seenResultIds.add(r.id);
   });
+
+  // ★2026-10-06追加(はまさんの依頼、再発防止): 契約(スタッフ×派遣先)ごとに、請求＠・支払＠が前の月から大きく変わった行に警告を付ける。
+  // 取込み時の列の読み違い(松山の請求＠を別スタッフの行から読んでいた不具合など)は、契約の単価が月ごとに不自然に変わるので気づける。
+  // 昇給など正当な変更もありうるので、前の月の値と変わった額をメッセージに出して確認してもらう。
+  {
+    const byContract = new Map<string, GrossProfitResult[]>();
+    results.forEach((r) => {
+      if (r.manualEntryType || !r.billingNo) return;
+      const k = `${r.staffNo}_${r.clientCode}`;
+      byContract.set(k, [...(byContract.get(k) || []), r]);
+    });
+    byContract.forEach((rows) => {
+      const months = [...new Set(rows.map((r) => r.targetMonth))].sort();
+      const price = (m: string, f: 'billingUnitPrice' | 'payUnitPrice') =>
+        rows.find((r) => r.targetMonth === m && r[f] > 0)?.[f] || 0;
+      for (let i = 1; i < months.length; i++) {
+        const changes: string[] = [];
+        ([['billingUnitPrice', '請求＠'], ['payUnitPrice', '支払＠']] as const).forEach(([f, label]) => {
+          const cur = price(months[i], f);
+          // 直前の、単価が分かっている月と比べる
+          let prev = 0;
+          let prevMonth = '';
+          for (let j = i - 1; j >= 0 && !prev; j--) {
+            prev = price(months[j], f);
+            prevMonth = months[j];
+          }
+          if (cur > 0 && prev > 0 && Math.abs(cur - prev) / prev > UNIT_PRICE_CHANGE_THRESHOLD) {
+            changes.push(`${label} ¥${prev.toLocaleString()}(${prevMonth}) → ¥${cur.toLocaleString()}`);
+          }
+        });
+        if (changes.length === 0) continue;
+        rows.find((r) => r.targetMonth === months[i])!.alerts.push({
+          type: 'UNIT_PRICE_CHANGE',
+          severity: 'warning',
+          message: `単価の急変(前の月から${Math.round(UNIT_PRICE_CHANGE_THRESHOLD * 100)}%超): ${changes.join('、')}。取込みの読み違い・契約変更を要確認。`,
+        });
+      }
+    });
+  }
 
   // ★2026-09-29追加: 行ごとの交通費(税抜)。'billing'は各行の請求交通費、'payroll'は給与の支給交通費を
   // スタッフ×月の最初の行(手入力の合成行を除く)にだけ付ける(同月複数契約で二重に数えないため)。

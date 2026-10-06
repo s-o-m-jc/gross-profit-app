@@ -222,10 +222,83 @@ export function extractMatsuyamaPastData(
       .filter((r) => r.staffNo)
       .map((r) => ({ ...r, targetMonth }));
     billingRows = applyMatsuyamaBillingTransport(billingSheet, billingRows, warnings);
+    billingRows = applyMatsuyamaUnitPrices(sheetToAoaFromRow(billingSheet, MATSUYAMA_BILLING_HEADER_ROW), billingRows, warnings);
   }
 
-  // 松山の過去実績Excelには契約単価(請求＠)を持つシートが無いため常に空(23章参照)
+  // 請求書(invoiceRows)に当たるシートは無い。請求＠・支払＠は請求支払一覧の副表から(applyMatsuyamaUnitPrices)
   return { payrollRows, billingRows, invoiceRows: [], targetMonth, warnings };
+}
+
+/**
+ * ★2026-10-06追加(はまさんの指摘: 松山2026-02 田中 亜莉紗さんの請求＠が1,600円、正しくは2,000円)。
+ * 「請求支払一覧」の右側の副表(ｸﾗｲｱﾝﾄ番号・スタッフ番号・請求単価・日数…請求交通費 と ｸﾗｲｱﾝﾄ番号・スタッフ番号・支給単価)は、
+ * 請求交通費と同じく左側の請求一覧とは行が対応しない別表。以前はparseBillingCsvが同じ行の「請求単価」を読んでいたため、
+ * 請求＠が無関係なスタッフの単価になっていた(全36ヶ月で副表のある契約の約9割)。副表を(クライアント番号, スタッフ番号)で引く。
+ * - 請求＠: 同じ契約に単価が複数ある(月の途中で単価が変わった)場合は日数で加重平均(円未満四捨五入)。
+ * - 支払＠(BillingRow.payUnitPrice): 支給単価が1つの場合だけ使う(複数なら給与データの時間内金額÷時間内時間のまま)。
+ * - 副表に無い契約: クライアント番号が違っても同じスタッフの単価が1種類しか無ければそれを使い、それも無ければ0(不明)。
+ * 元Excelの「売上実績表」の請求単価はスタッフ番号でMATCHした最初の1件で、同月2契約のスタッフでは片方の単価になる。
+ * aoaは1行目がヘッダー(請求支払一覧の16行目、または旧書式の「実績加工」シートの副表の見出し行)。
+ */
+export function applyMatsuyamaUnitPrices(aoa: any[][], billingRows: BillingRow[], warnings: string[]): BillingRow[] {
+  if (aoa.length === 0) return billingRows;
+  const str = (v: any) => String(v ?? '').normalize('NFKC').trim();
+  const header = aoa[0].map(str);
+  // 同じ見出しの列が左の請求一覧側にもあることがある(旧書式の「実績加工」)ため、左にスタッフ番号・クライアント番号が並ぶ列を探す
+  const block = (valueName: string) => {
+    for (let v = 0; v < header.length; v++) {
+      if (header[v] !== valueName) continue;
+      if (header[v - 1] === 'スタッフ番号' && header[v - 2] === 'クライアント番号') return { v, staff: v - 1, client: v - 2 };
+    }
+    return null;
+  };
+  const read = (b: { v: number; staff: number; client: number } | null, daysCol = -1) => {
+    const map = new Map<string, { rate: number; days: number }[]>();
+    if (!b) return map;
+    aoa.slice(1).forEach((row) => {
+      const staff = str(row[b.staff]);
+      const rate = typeof row[b.v] === 'number' ? row[b.v] : parseFloat(str(row[b.v]).replace(/,/g, ''));
+      if (!staff || !(rate > 0)) return;
+      const key = `${str(row[b.client])}_${staff}`;
+      const days = daysCol >= 0 ? Number(row[daysCol]) || 0 : 0;
+      map.set(key, [...(map.get(key) || []), { rate, days }]);
+    });
+    return map;
+  };
+  const billBlock = block('請求単価');
+  const payBlock = block('支給単価');
+  if (!billBlock) {
+    warnings.push('「請求支払一覧」シートの請求単価の副表(クライアント番号・スタッフ番号・請求単価)が見つからないため、請求＠は0(不明)として取り込みました。');
+  }
+  const billMap = read(billBlock, billBlock && header[billBlock.v + 1] === '日数' ? billBlock.v + 1 : -1);
+  const payMap = read(payBlock);
+  const lookup = (map: Map<string, { rate: number; days: number }[]>, client: string, staff: string) => {
+    const own = map.get(`${client}_${staff}`);
+    if (own) return own;
+    const others = [...map.entries()].filter(([k]) => k.endsWith(`_${staff}`)).flatMap(([, v]) => v);
+    return new Set(others.map((e) => e.rate)).size === 1 ? others : undefined;
+  };
+  const missing: string[] = [];
+  const result = billingRows.map((r) => {
+    const client = str(r.clientCode);
+    const staff = str(r.staffNo);
+    const bills = lookup(billMap, client, staff);
+    let unitPrice = 0;
+    if (bills) {
+      const rates = new Set(bills.map((e) => e.rate));
+      const days = bills.reduce((s, e) => s + e.days, 0);
+      unitPrice = rates.size === 1 || days <= 0 ? bills[0].rate : Math.round(bills.reduce((s, e) => s + e.rate * e.days, 0) / days);
+    } else if (billBlock) {
+      missing.push(`${r.staffName}(${staff})`);
+    }
+    const pays = lookup(payMap, client, staff);
+    const payRates = new Set((pays || []).map((e) => e.rate));
+    return { ...r, unitPrice, payUnitPrice: payRates.size === 1 ? [...payRates][0] : undefined };
+  });
+  if (missing.length > 0) {
+    warnings.push(`請求単価の副表に無いため請求＠を0(不明)にした請求行: ${[...new Set(missing)].join('、')}`);
+  }
+  return result;
 }
 
 /**
