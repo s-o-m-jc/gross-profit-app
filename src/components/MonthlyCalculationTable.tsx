@@ -547,9 +547,14 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               <th className="py-3 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 有給(日)
               </th>
-              <th className="py-3 px-3 whitespace-nowrap text-center bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
-                交通費突合
-              </th>
+              {/* ★2026-10-08追加(はまさんの依頼): 四国はtransportDataAvailableが常にfalse(billingTransportを
+                  持たない取込み形式のため)で、この列は毎行「対象外（交通費データなし）」にしかならない。
+                  四国の交通費突合は別の仕組み(交通費(税抜)、transportExTax)で行っているため、この列は非表示にする。 */}
+              {companyId !== 'shikoku' && (
+                <th className="py-3 px-3 whitespace-nowrap text-center bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
+                  交通費突合
+                </th>
+              )}
               <th className="py-3 px-3 whitespace-nowrap text-center bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>監査ステータス</th>
               {/* ★2026-09-11追加(23章タスクB「担当者」列復活)。クライアント×対象月単位の担当者。
                   手入力(PersonInChargePanel)があればそちらを優先し、なければ取り込み元
@@ -679,7 +684,9 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               </td>
               <td className="py-2.5 px-3 text-right font-mono bg-indigo-100 whitespace-nowrap">{totals.grossMarginRate}%</td>
               <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">{totals.paidLeaveDays}日</td>
-              <td className="py-2.5 px-3 text-center font-mono bg-indigo-50 text-slate-400 whitespace-nowrap">-</td>
+              {companyId !== 'shikoku' && (
+                <td className="py-2.5 px-3 text-center font-mono bg-indigo-50 text-slate-400 whitespace-nowrap">-</td>
+              )}
               <td className="py-2.5 px-3 text-center font-mono bg-indigo-50 whitespace-nowrap">
                 {totals.actionableAlertCount === 0 ? '正常' : `要確認 ${totals.actionableAlertCount}件`}
               </td>
@@ -690,7 +697,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
             {filteredResults.length === 0 ? (
               <tr>
                 <td
-                  colSpan={20 + (showSalesBreakdown ? 3 : 0) + (showSalaryBreakdown ? 3 : 0) + (showSocialBreakdown ? 4 : 0)}
+                  colSpan={(companyId === 'shikoku' ? 19 : 20) + (showSalesBreakdown ? 3 : 0) + (showSalaryBreakdown ? 3 : 0) + (showSocialBreakdown ? 4 : 0)}
                   className="py-12 text-center text-slate-400"
                 >
                   該当する計算結果データが見つかりません。CSVデータを読み込んでください。
@@ -859,7 +866,8 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                       {row.paidLeaveDays}日
                     </td>
 
-                    {/* 交通費突合 */}
+                    {/* 交通費突合(四国は常に「対象外」にしかならないため非表示、上のヘッダーと合わせる) */}
+                    {companyId !== 'shikoku' && (
                     <td className="py-2.5 px-3 text-center whitespace-nowrap">
                       {!row.transportDataAvailable ? (
                         <span
@@ -896,6 +904,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                         </div>
                       )}
                     </td>
+                    )}
 
                     {/* 監査ステータス (★2026-08-26修正: info severityは含めず、warning/errorのみで判定) */}
                     <td className="py-2.5 px-3 text-center whitespace-nowrap">
