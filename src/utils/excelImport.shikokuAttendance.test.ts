@@ -1,7 +1,7 @@
 /**
  * 四国の勤怠明細票(未払計上表)から、売上実績一覧表で取り込んだ給与行へ勤怠を補う処理のテスト(npm test)。
  * 2026-10-01: 勤怠明細票を取り込むと「データが1件も抽出できませんでした」になる不具合への対応。
- * 金額・支払＠は既存の値のまま、日数・時間・基本給だけが入ることを確認する。
+ * 金額・支払＠は既存の値のまま、日数・時間・基本給(と表示専用の有給手当等の内訳)だけが入ることを確認する。
  * 実データ例: 四国2024-06 村松 海音さん(支払167,186円、社保他29,129円、支払＠1,215円、支給交通費−30円、
  * 未払計上表は出勤18日・有給1日・時間内134.5時間・基本163,418円、社保は本人負担28,256円)。
  */
@@ -30,7 +30,7 @@ const billing = (staffNo: string): BillingRow => ({
   billingAmountExTax: 244972, paymentAmount: 167186, socialInsuranceBilling: 29129, paidLeaveDaysUsed: 0, billingTransport: 0, referralFee: 0, workHours: 0, unitPrice: 1780,
 });
 
-test('勤怠(日数・時間)と基本給だけが入り、金額・支払＠は既存の値のまま', () => {
+test('勤怠(日数・時間)・基本給・有給手当が入り、金額・支払＠は既存の値のまま', () => {
   const r = mergeShikokuAttendanceDetail([summaryRow('12600')], [attendanceRow('12600')], M);
   assert.equal(r.mergedCount, 1);
   const p = r.payrollRows[0];
@@ -46,7 +46,7 @@ test('勤怠(日数・時間)と基本給だけが入り、金額・支払＠は
   assert.equal(p.parkingFee, 0);
   assert.equal(p.salaryTransport, 0);
   assert.equal(p.paidTransport, -30);
-  assert.equal(p.paidLeaveAllowance, 0);
+  assert.equal(p.paidLeaveAllowance, 9113); // 有給手当は表示専用なので補う(2026-10-08)
 });
 
 test('補完の前後で粗利・支払＠・交通費(税抜)が変わらない', () => {
