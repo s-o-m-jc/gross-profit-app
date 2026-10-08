@@ -412,7 +412,9 @@ export function calculateGrossProfit(
   });
   const staffMonthCheckedKeys = new Set<string>();
   // 交通費を請求する契約(スタッフ×派遣先で、いずれかの月に請求交通費がある)。一度も請求していない契約は、
-  // 交通費込みの単価など交通費を別建てで請求しない契約とみなし、交通費の突合の対象外にする。
+  // 交通費を派遣先に請求せず自社負担のみとする契約(給与側では実際に本人へ交通費を支払う。2026-10-08、
+  // はまさん確認済み: 単価に込みにしているわけではなく、契約条件としてもとから存在する正常な組み合わせ)
+  // とみなし、交通費の突合の対象外にする。
   const transportBilledContracts = new Set(
     mergedBillings.filter((b) => b.billingTransport > 0).map((b) => `${b.staffNo}_${b.clientCode}`)
   );

@@ -879,7 +879,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                       ) : row.transportStatus === 'NOT_BILLED_CONTRACT' ? (
                         <span
                           className="text-[11px] font-medium text-slate-400"
-                          title="このスタッフ×派遣先では一度も交通費を請求していないため、交通費込みの単価など交通費を別建てで請求しない契約とみなし、突合の対象外にしています。"
+                          title="このスタッフ×派遣先では一度も交通費を請求していません。交通費を派遣先に請求せず自社負担のみとする契約(給与側では実際に本人へ交通費を支払う)とみなし、突合の対象外にしています。"
                         >
                           対象外（交通費を請求しない契約）
                         </span>
