@@ -177,6 +177,41 @@ interface AppShellProps {
   onSignOut: () => void;
 }
 
+/**
+ * ★2026-10-09追加(はまさんの指摘「決算期集計キャッシュの更新タイミング」への対応):
+ * 任意の1社(companyId)について、現在Supabaseに保存されている内容(companyMonths)から
+ * FiscalYearSummaryを計算する。selectedCompanyId用の既存のuseMemo群(calculatedResults等)と
+ * 全く同じ計算パイプライン(flattenCompanyMonths→calculateGrossProfit→
+ * buildEffectiveTransportExTaxRows→calculateFiscalYearSummary)を、Reactのhookを使わない
+ * 純粋関数として切り出したもの。保存が確定した直後に、保存した会社自身の決算期集計キャッシュを
+ * 同期的に更新するために使う(フック経由のuseMemoの値を待たず、「今まさにSupabaseへ書き込んだ
+ * companyMonths」から直接計算するため、保存内容とキャッシュ内容が常に一致する)。
+ */
+function buildFiscalSummaryForCompany(
+  companyId: CompanyId,
+  companyMonths: CompanyMonthlyData,
+  fiscalYear: string,
+  taxRate: number
+) {
+  const flat = flattenCompanyMonths(companyMonths);
+  const results = calculateGrossProfit(
+    flat.payrollRows,
+    flat.billingRows,
+    flat.invoiceRows,
+    flat.retirementRows,
+    taxRate,
+    flat.leaveCompensationRows,
+    flat.leaveAllowanceRows,
+    flat.nextMonthAdjustmentRows,
+    flat.personInChargeRows,
+    flat.referralFeeRows,
+    TRANSPORT_EX_TAX_DEFINITIONS[companyId].transportExTaxSource,
+    WORKERS_COMP_RATES_IN_SOCIAL_INSURANCE[companyId]
+  );
+  const effectiveTransportExTaxRows = buildEffectiveTransportExTaxRows(companyMonths, results);
+  return calculateFiscalYearSummary(results, flat.payrollRows, fiscalYear, 12, effectiveTransportExTaxRows);
+}
+
 function AppShell({ profile, onSignOut }: AppShellProps) {
   // ★2026-10-09変更(4ロール化): super_admin・branch_adminは全拠点閲覧可(編集は別軸)。
   // general・accountingは自分のcompany_idの会社のみ閲覧可。
@@ -406,6 +441,28 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
           try {
             await replaceCompanyMonthlyData(company.id, monthlyData[company.id]);
             setSyncError(null);
+            // ★2026-10-09追加(はまさんの指摘「決算期集計キャッシュは保存操作と同じタイミングで
+            // 同期的に更新する必要がある」への対応): バッチ/スケジュールではなく、Supabaseへの
+            // 保存(replaceCompanyMonthlyData)が確定した直後に、保存した会社自身の決算期集計を
+            // 「今まさに保存した内容(monthlyData[company.id])」から直接再計算してキャッシュに
+            // 書き込む(selectedCompanyId用のuseMemoの値を待たない。複数社が同時に変化した
+            // 場合でも、変化した各社それぞれについて行う)。これにより、保存に成功した内容と
+            // キャッシュの内容が常に一致する(保存が失敗した場合はこのブロックに到達せず、
+            // キャッシュも更新されない)。会社ごとの書き込み権限はRLS側(company_id=自社のみ、
+            // またはsuper_admin/branch_adminは全社)でも強制している。
+            const companyFiscalSummary = buildFiscalSummaryForCompany(
+              company.id,
+              monthlyData[company.id],
+              fiscalYear,
+              taxRate
+            );
+            const fiscalYearInt = parseInt(fiscalYear.split('-')[0], 10);
+            if (Number.isFinite(fiscalYearInt)) {
+              const { error: cacheError } = await supabase
+                .from('fiscal_year_summary_cache')
+                .upsert({ company_id: company.id, fiscal_year: fiscalYearInt, summary: companyFiscalSummary as unknown as object });
+              if (cacheError) console.warn('決算期集計キャッシュの更新に失敗しました:', cacheError.message);
+            }
           } catch (e) {
             console.error('Supabaseへの保存に失敗しました:', e);
             setSyncError(e instanceof Error ? e.message : String(e));
@@ -416,7 +473,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       saveAppState({ monthlyData, selectedCompanyId });
     }, 500);
     return () => clearTimeout(timer);
-  }, [monthlyData, selectedCompanyId, isDataLoaded, canEditCurrentCompany, isOffline]);
+  }, [monthlyData, selectedCompanyId, isDataLoaded, canEditCurrentCompany, isOffline, fiscalYear, taxRate]);
 
   // ★2026-10-09追加(はまさんの依頼): CSV/Excel取込みの履歴(誰が・いつ・どの拠点・どの期間・
   // 何件)をcsv_operation_logへ記録する。handlePayrollLoaded/handleBillingLoaded/
@@ -654,8 +711,14 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // 生データ(billingRows/payrollRows)は一切送らず、既にクライアント側で正しく計算済みの
   // fiscalSummary(集計済みの数値のみ)をfiscal_year_summary_cacheへ書き込む。これにより、
   // 他拠点の生データにアクセスできないロール(general/accounting)でも、
-  // get_fiscal_year_summary()経由でこの値を読める。この画面を開いている間、選択中の会社・
-  // 決算期の値を常に最新化し続ける(データを編集した本人が最も正確な値を持っているため)。
+  // get_fiscal_year_summary()経由でこの値を読める。
+  // ★2026-10-09追記(はまさんの指摘「更新タイミングは保存操作と同じタイミングで同期的に」への対応):
+  // 編集(保存)が起きた場合の確実な更新は、上の自動保存effect内で「Supabaseへの保存が確定した
+  // 直後に、保存した内容そのものから計算して」行っている(保存が失敗した場合はキャッシュも
+  // 更新されない、より厳密な経路)。このeffectはそれとは別に、書き込み権限が無く保存effectを
+  // 一度も通らないロール(branch_admin等の閲覧専用ユーザー)が単に閲覧しただけでもキャッシュを
+  // 補える、補助的な経路(閲覧時に自分が見ている正しい値でキャッシュを「育てる」)。
+  // 両方が同じ値を書くだけなので重複しても実害はない。
   useEffect(() => {
     if (!isDataLoaded || calculatedResults.length === 0) return;
     const fiscalYearInt = parseInt(fiscalYear.split('-')[0], 10);
