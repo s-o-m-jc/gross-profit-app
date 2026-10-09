@@ -489,6 +489,11 @@ export interface FiscalYearSummary {
   // 有給残日数アラート用: スタッフごとの直近(対象期間内で最も新しい対象月)の有給残日数一覧。
   // 閾値でのフィルタ・表示はUI側(FiscalYearAnalytics)で行う。
   staffPaidLeaveBalances: { staffNo: string; staffName: string; targetMonth: string; paidLeaveRemainingDays: number }[];
+  // ★2026-10-09追加: 他拠点の決算期集計(fiscal_year_summary_cache経由、get_fiscal_year_summary())を
+  // 表示する場合にtrueにする。スタッフ氏名を含むstaffPaidLeaveBalancesは、他拠点への個人情報の
+  // 越境を防ぐため保存・読み取りの両方で意図的に除かれており(空配列になる)、その旨をUI側で
+  // 「データが無い(=有給残日数列が無い)」と誤って区別させないためのフラグ。
+  staffPaidLeaveBalancesRedacted?: boolean;
 
   // 離職率(%): 給与CSVの「スタッフ区分」列の月次推移から算出。ある月に存在した(在籍していた)
   // スタッフNoが、翌月以降のデータで見られなくなった割合の対象期間内平均。

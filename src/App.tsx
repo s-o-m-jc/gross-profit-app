@@ -34,7 +34,6 @@ import { ExportModal } from './components/ExportModal';
 import { LoginPage } from './components/LoginPage';
 import { AccessStatusScreen } from './components/AccessStatusScreen';
 import { ApprovalInboxModal } from './components/ApprovalInboxModal';
-import { CompanyFiscalComparisonPanel } from './components/CompanyFiscalComparisonPanel';
 import { supabase } from './lib/supabaseClient';
 
 import {
@@ -49,6 +48,7 @@ import {
   PaidLeaveOverrideRow,
   PersonInChargeRow,
   TransportExTaxOverrideRow,
+  FiscalYearSummary,
 } from './types';
 import { calculateGrossProfit, calculateFiscalYearSummary, getFiscalYearMonths } from './utils/calculator';
 import { COMPANIES, DEFAULT_COMPANY_ID, getCompanyConfig, CompanyId } from './config/companies';
@@ -209,7 +209,10 @@ function buildFiscalSummaryForCompany(
     WORKERS_COMP_RATES_IN_SOCIAL_INSURANCE[companyId]
   );
   const effectiveTransportExTaxRows = buildEffectiveTransportExTaxRows(companyMonths, results);
-  return calculateFiscalYearSummary(results, flat.payrollRows, fiscalYear, 12, effectiveTransportExTaxRows);
+  return {
+    summary: calculateFiscalYearSummary(results, flat.payrollRows, fiscalYear, 12, effectiveTransportExTaxRows),
+    manualTransportExTaxMonths: effectiveTransportExTaxRows.filter((r) => r.source === 'manual').map((r) => r.targetMonth),
+  };
 }
 
 function AppShell({ profile, onSignOut }: AppShellProps) {
@@ -450,7 +453,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             // キャッシュの内容が常に一致する(保存が失敗した場合はこのブロックに到達せず、
             // キャッシュも更新されない)。会社ごとの書き込み権限はRLS側(company_id=自社のみ、
             // またはsuper_admin/branch_adminは全社)でも強制している。
-            const companyFiscalSummary = buildFiscalSummaryForCompany(
+            const { summary: companyFiscalSummary } = buildFiscalSummaryForCompany(
               company.id,
               monthlyData[company.id],
               fiscalYear,
@@ -458,9 +461,16 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             );
             const fiscalYearInt = parseInt(fiscalYear.split('-')[0], 10);
             if (Number.isFinite(fiscalYearInt)) {
+              // ★2026-10-09追加(はまさんの指摘「個人情報の越境」への対応): キャッシュに保存する
+              // 内容自体からも、他拠点に出る可能性のあるstaffPaidLeaveBalances(スタッフ氏名入り)を
+              // 除いておく(読み取り側のget_fiscal_year_summary()でも除いているが、保存側でも
+              // 二重に防御する。自社分の直接SELECT(fiscal_year_summary_cache_select)では
+              // 必要ないため、画面側のstaffPaidLeaveBalancesはこのキャッシュ経由ではなく
+              // 既存のローカル計算(fiscalSummary)からそのまま使う)。
+              const { staffPaidLeaveBalances: _omit, ...cacheSafeSummary } = companyFiscalSummary;
               const { error: cacheError } = await supabase
                 .from('fiscal_year_summary_cache')
-                .upsert({ company_id: company.id, fiscal_year: fiscalYearInt, summary: companyFiscalSummary as unknown as object });
+                .upsert({ company_id: company.id, fiscal_year: fiscalYearInt, summary: cacheSafeSummary as unknown as object });
               if (cacheError) console.warn('決算期集計キャッシュの更新に失敗しました:', cacheError.message);
             }
           } catch (e) {
@@ -723,9 +733,10 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     if (!isDataLoaded || calculatedResults.length === 0) return;
     const fiscalYearInt = parseInt(fiscalYear.split('-')[0], 10);
     if (!Number.isFinite(fiscalYearInt)) return;
+    const { staffPaidLeaveBalances: _omit, ...cacheSafeSummary } = fiscalSummary;
     void supabase
       .from('fiscal_year_summary_cache')
-      .upsert({ company_id: selectedCompanyId, fiscal_year: fiscalYearInt, summary: fiscalSummary as unknown as object })
+      .upsert({ company_id: selectedCompanyId, fiscal_year: fiscalYearInt, summary: cacheSafeSummary as unknown as object })
       .then(({ error }) => {
         if (error) console.warn('決算期集計キャッシュの更新に失敗しました:', error.message);
       });
@@ -755,6 +766,115 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   const previousPreviousFiscalSummary = useMemo(() => {
     return calculateFiscalYearSummary(calculatedResults, payrollRows, previousPreviousFiscalYearStart, 12, effectiveTransportExTaxRows);
   }, [calculatedResults, payrollRows, previousPreviousFiscalYearStart, effectiveTransportExTaxRows]);
+
+  // ★2026-10-09追加(はまさんの依頼「決算期集計・グラフは、自拠点と同じ詳細度で全拠点を
+  // 見られるようにしてほしい」): 決算期タブだけの独立した会社選択(fiscalViewCompanyId)。
+  // super_admin・branch_adminはvisibleCompaniesが既に全3社のため、ここで選んだ会社のraw dataが
+  // monthlyDataに読み込み済みで、既存の計算パイプライン(buildFiscalSummaryForCompany、上の
+  // selectedCompanyId用のuseMemo群と同じロジック)でその場で計算できる。general・accountingが
+  // 自社以外を選んだ場合だけ、生データを持たないため、get_fiscal_year_summary()(集計済みの
+  // 数値のみを返すSECURITY DEFINER関数)経由で取得する(スタッフ個人名を含むstaffPaidLeaveBalances
+  // は保存・読み取りの両方で除かれているため、この経路では常に含まれない)。
+  const [fiscalViewCompanyId, setFiscalViewCompanyId] = useState<CompanyId>(selectedCompanyId);
+  useEffect(() => {
+    setFiscalViewCompanyId(selectedCompanyId);
+  }, [selectedCompanyId]);
+  const isFiscalViewLocal = visibleCompanies.some((c) => c.id === fiscalViewCompanyId);
+  const fiscalViewCompanyConfig = useMemo(() => getCompanyConfig(fiscalViewCompanyId), [fiscalViewCompanyId]);
+  // 「2026年度」のような決算年度の年の数字はそのままに、選んだ会社自身の決算開始月に組み替える
+  // (大阪=07・四国=10・松山=09で決算期間の実際の範囲が異なるため、会社を切り替えたら月も
+  // 切り替える必要がある)。
+  const fiscalViewYearStr = `${fiscalYear.split('-')[0]}-${fiscalViewCompanyConfig.fiscalStartMonth}`;
+
+  const [remoteFiscalState, setRemoteFiscalState] = useState<{
+    companyId: CompanyId;
+    fiscalYearStr: string;
+    summary: FiscalYearSummary;
+    previousSummary: FiscalYearSummary;
+    previousPreviousSummary: FiscalYearSummary;
+  } | null>(null);
+  const [remoteFiscalError, setRemoteFiscalError] = useState<string>('');
+
+  useEffect(() => {
+    if (isFiscalViewLocal) return;
+    let cancelled = false;
+    setRemoteFiscalError('');
+    const yearInt = parseInt(fiscalViewYearStr.split('-')[0], 10);
+    (async () => {
+      const [cur, prev, prevPrev] = await Promise.all(
+        [yearInt, yearInt - 1, yearInt - 2].map((y) =>
+          supabase.rpc('get_fiscal_year_summary', { p_company_id: fiscalViewCompanyId, p_fiscal_year: y })
+        )
+      );
+      if (cancelled) return;
+      const err = cur.error || prev.error || prevPrev.error;
+      if (err) {
+        setRemoteFiscalError(err.message);
+        return;
+      }
+      // ★キャッシュが無い(まだ誰もこの拠点・決算期を見ていない)場合のフォールバック。
+      // fiscalSummary(選択中の別会社の値)をスプレッドで流用すると値が混ざるバグになるため、
+      // calculateFiscalYearSummaryに空配列を渡して「データ無し」の正しい全項目0埋めの値を
+      // 生成する(この関数は本来そのために設計されている。上のコメント「データが存在しない
+      // 過去期間を渡しても…全月0埋めのMonthlyTrendを返す設計」参照)。
+      const emptyFor = (y: number): FiscalYearSummary => ({
+        ...calculateFiscalYearSummary([], [], `${y}-${fiscalViewCompanyConfig.fiscalStartMonth}`, 12, []),
+        staffPaidLeaveBalancesRedacted: true,
+      });
+      const toSummary = (data: unknown, y: number): FiscalYearSummary =>
+        data ? ({ ...(data as FiscalYearSummary), staffPaidLeaveBalances: [], staffPaidLeaveBalancesRedacted: true }) : emptyFor(y);
+      setRemoteFiscalState({
+        companyId: fiscalViewCompanyId,
+        fiscalYearStr: fiscalViewYearStr,
+        summary: toSummary(cur.data, yearInt),
+        previousSummary: toSummary(prev.data, yearInt - 1),
+        previousPreviousSummary: toSummary(prevPrev.data, yearInt - 2),
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isFiscalViewLocal, fiscalViewCompanyId, fiscalViewYearStr]);
+
+  const localFiscalView = useMemo(() => {
+    if (!isFiscalViewLocal) return null;
+    if (fiscalViewCompanyId === selectedCompanyId) {
+      return {
+        summary: fiscalSummary,
+        previousSummary: previousFiscalSummary,
+        previousPreviousSummary: previousPreviousFiscalSummary,
+        manualTransportExTaxMonths: effectiveTransportExTaxRows.filter((r) => r.source === 'manual').map((r) => r.targetMonth),
+      };
+    }
+    const companyMonths = monthlyData[fiscalViewCompanyId];
+    const [y] = fiscalViewYearStr.split('-');
+    const yearInt = parseInt(y, 10);
+    const cur = buildFiscalSummaryForCompany(fiscalViewCompanyId, companyMonths, fiscalViewYearStr, taxRate);
+    const prev = buildFiscalSummaryForCompany(fiscalViewCompanyId, companyMonths, `${yearInt - 1}-${fiscalViewCompanyConfig.fiscalStartMonth}`, taxRate);
+    const prevPrev = buildFiscalSummaryForCompany(fiscalViewCompanyId, companyMonths, `${yearInt - 2}-${fiscalViewCompanyConfig.fiscalStartMonth}`, taxRate);
+    return {
+      summary: cur.summary,
+      previousSummary: prev.summary,
+      previousPreviousSummary: prevPrev.summary,
+      manualTransportExTaxMonths: cur.manualTransportExTaxMonths,
+    };
+  }, [
+    isFiscalViewLocal,
+    fiscalViewCompanyId,
+    selectedCompanyId,
+    fiscalSummary,
+    previousFiscalSummary,
+    previousPreviousFiscalSummary,
+    effectiveTransportExTaxRows,
+    monthlyData,
+    fiscalViewYearStr,
+    fiscalViewCompanyConfig.fiscalStartMonth,
+    taxRate,
+  ]);
+
+  const fiscalViewReady = isFiscalViewLocal
+    ? true
+    : remoteFiscalState?.companyId === fiscalViewCompanyId && remoteFiscalState?.fiscalYearStr === fiscalViewYearStr;
 
   if (!isDataLoaded) {
     return (
@@ -1054,17 +1174,64 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         )}
 
         {/* タブ 3: 決算期 (年間) 集計 */}
+        {/* ★2026-10-09変更(はまさんの依頼): 「全拠点比較(集計値のみ)」パネルを廃止し、自拠点を
+            見るときと同じ詳細度(グラフ・内訳も含む全部)で、ロールに関わらず全拠点を切り替えて
+            見られるようにした。拠点切替はこのタブ専用(fiscalViewCompanyId、メインのcompany切替
+            とは独立)。自分が通常閲覧できる拠点(isFiscalViewLocal)はローカルの生データからその場で
+            計算し、それ以外(general/accountingが自拠点以外を選んだ場合)はget_fiscal_year_summary()
+            (集計済みの数値のみを返すSECURITY DEFINER関数)経由で取得する。 */}
         {activeTab === 'fiscal' && (
-          <CompanyFiscalComparisonPanel fiscalYear={fiscalYear} />
-        )}
-        {activeTab === 'fiscal' && (
-          <FiscalYearAnalytics
-            summary={fiscalSummary}
-            previousSummary={previousFiscalSummary}
-            previousPreviousSummary={previousPreviousFiscalSummary}
-            companyId={selectedCompanyId}
-            manualTransportExTaxMonths={effectiveTransportExTaxRows.filter((r) => r.source === 'manual').map((r) => r.targetMonth)}
-          />
+          <>
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-4 flex items-center gap-3">
+              <label className="text-xs font-bold text-slate-600 shrink-0">決算期集計を表示する拠点:</label>
+              <select
+                value={fiscalViewCompanyId}
+                onChange={(e) => setFiscalViewCompanyId(e.target.value as CompanyId)}
+                className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                {COMPANIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              {!isFiscalViewLocal && (
+                <span className="text-[11px] text-slate-400">
+                  (この拠点の明細データは閲覧権限が無いため、集計済みの数値のみを表示しています)
+                </span>
+              )}
+            </div>
+            {!fiscalViewReady ? (
+              <div className="flex items-center justify-center py-16 text-slate-400 text-sm">
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                読み込み中...
+              </div>
+            ) : remoteFiscalError ? (
+              <div className="bg-white rounded-xl shadow-sm border border-rose-200 p-6 text-sm text-rose-600">
+                決算期集計の取得に失敗しました: {remoteFiscalError}
+              </div>
+            ) : isFiscalViewLocal ? (
+              localFiscalView && (
+                <FiscalYearAnalytics
+                  summary={localFiscalView.summary}
+                  previousSummary={localFiscalView.previousSummary}
+                  previousPreviousSummary={localFiscalView.previousPreviousSummary}
+                  companyId={fiscalViewCompanyId}
+                  manualTransportExTaxMonths={localFiscalView.manualTransportExTaxMonths}
+                />
+              )
+            ) : (
+              remoteFiscalState && (
+                <FiscalYearAnalytics
+                  summary={remoteFiscalState.summary}
+                  previousSummary={remoteFiscalState.previousSummary}
+                  previousPreviousSummary={remoteFiscalState.previousPreviousSummary}
+                  companyId={fiscalViewCompanyId}
+                  manualTransportExTaxMonths={[]}
+                />
+              )
+            )}
+          </>
         )}
       </main>
 

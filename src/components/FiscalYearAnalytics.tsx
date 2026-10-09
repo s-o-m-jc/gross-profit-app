@@ -1472,7 +1472,11 @@ export const FiscalYearAnalytics: React.FC<FiscalYearAnalyticsProps> = ({
         <p className="text-[11px] text-slate-400 mb-3">
           給与CSVの「有給残日数」列(対象期間内で最も新しい対象月の値)が閾値以上のスタッフを表示します。年5日の有給取得義務を踏まえた労務管理目的の参考情報です。
         </p>
-        {summary.staffPaidLeaveBalances.length === 0 ? (
+        {summary.staffPaidLeaveBalancesRedacted ? (
+          <p className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg py-3 px-4">
+            他拠点のスタッフ個人情報(氏名・有給残日数)は表示できません。
+          </p>
+        ) : summary.staffPaidLeaveBalances.length === 0 ? (
           <p className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg py-3 px-4">
             給与CSVに「有給残日数」列のデータがありません。
           </p>
