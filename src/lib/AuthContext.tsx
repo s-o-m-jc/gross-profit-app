@@ -2,11 +2,13 @@
  * 派遣事業 粗利・経理管理システム
  * Supabase認証コンテキスト
  *
- * セッション(ログイン状態)と、profilesテーブルから取得したrole('admin'|'viewer')・
- * company_id(viewerの場合のみ)を一元管理する。
+ * セッション(ログイン状態)と、profilesテーブルから取得したrole('super_admin'|'branch_admin'|
+ * 'general'|'accounting')・company_id(super_admin以外は必須)を一元管理する。
  * - 未ログイン: session === null
- * - ログイン済だがprofilesレコードが未作成: profile === null かつ profileError あり
- *   (管理者がSupabaseダッシュボードでprofilesレコードを作成するまでアプリを使えない)
+ * - ログイン済だがprofilesレコードが未作成: profile === null
+ *   (★2026-10-09追加: この場合、myRegistrationRequestで申請状況(無し/承認待ち/却下)を判別する。
+ *   「無し」なら本人がロール・拠点を選んで申請するフォームを、「承認待ち」なら待機画面を、
+ *   「却下」なら却下理由と再申請ボタンを、App.tsx側で表示する。)
  *
  * ★2026-09-26修正(本番のremoveChildクラッシュ対策・調査結果に基づく):
  * 本番で繰り返し発生していた "NotFoundError: Failed to execute 'removeChild'" は、
@@ -31,13 +33,25 @@ import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
 import { CompanyId } from '../config/companies';
 
-export type UserRole = 'admin' | 'viewer';
+export type UserRole = 'super_admin' | 'branch_admin' | 'general' | 'accounting';
+
+/** 本人が申請できるロール(super_adminは既存の全管理者が直接付与するため申請対象外) */
+export type RequestableRole = 'branch_admin' | 'general' | 'accounting';
 
 export interface Profile {
   id: string;
   email: string | null;
   role: UserRole;
   companyId: CompanyId | null;
+}
+
+export interface MyRegistrationRequest {
+  id: string;
+  requestedRole: RequestableRole;
+  requestedCompanyId: CompanyId;
+  status: 'pending' | 'approved' | 'rejected';
+  rejectionReason: string | null;
+  createdAt: string;
 }
 
 interface AuthContextValue {
@@ -48,8 +62,16 @@ interface AuthContextValue {
   loading: boolean;
   /** profilesテーブルの取得に失敗した場合(未作成 or 権限エラー)のメッセージ */
   profileError: string | null;
+  /** profile===nullの場合の、本人の最新の登録申請(無ければnull)。2026-10-09追加。 */
+  myRegistrationRequest: MyRegistrationRequest | null;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  /** メール確認付きのサインアップ(2026-10-09追加)。確認メールのリンクをクリックするまでログインできない。 */
+  signUp: (email: string, password: string) => Promise<{ error: string | null }>;
+  /** 希望ロール・拠点を指定して登録申請する(2026-10-09追加)。却下後の再申請もこれで行う。 */
+  submitRegistrationRequest: (role: RequestableRole, companyId: CompanyId) => Promise<{ error: string | null }>;
+  /** profile・myRegistrationRequestを再取得する(承認待ち画面のポーリング・手動再確認用)。 */
+  refreshAccessStatus: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -81,8 +103,7 @@ async function fetchProfile(userId: string, email: string | null): Promise<{ pro
     return {
       profile: null,
       error:
-        'このアカウントにはprofilesレコードが設定されていません。管理者にSupabaseダッシュボードでの' +
-        'アカウント設定(role・company_id)を依頼してください。',
+        'このアカウントにはまだ利用権限が設定されていません。希望するロール・拠点を指定して申請してください。',
     };
   }
   return {
@@ -96,10 +117,34 @@ async function fetchProfile(userId: string, email: string | null): Promise<{ pro
   };
 }
 
+/**
+ * 本人の最新の登録申請を1件取得する(無ければnull)。profileが取得できなかった場合にのみ呼ぶ
+ * (承認済みなら通常はprofilesが存在するはずだが、念のためstatusも見て判定する)。
+ */
+async function fetchMyRegistrationRequest(userId: string): Promise<MyRegistrationRequest | null> {
+  const { data, error } = await supabase
+    .from('registration_requests')
+    .select('id, requested_role, requested_company_id, status, rejection_reason, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    id: data.id,
+    requestedRole: data.requested_role as RequestableRole,
+    requestedCompanyId: data.requested_company_id as CompanyId,
+    status: data.status as 'pending' | 'approved' | 'rejected',
+    rejectionReason: data.rejection_reason ?? null,
+    createdAt: data.created_at,
+  };
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [myRegistrationRequest, setMyRegistrationRequest] = useState<MyRegistrationRequest | null>(null);
   // 初回読み込み(getSession + 必要ならprofiles取得)が完了するまでtrue。
   // ★一度falseになった後は二度とtrueに戻さない(下記finishInitialLoading参照)。
   const [initialLoading, setInitialLoading] = useState(true);
@@ -160,6 +205,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           profileRef.current = p;
           setProfile(p);
           setProfileError(null);
+          setMyRegistrationRequest(null);
           return;
         }
         if (profileRef.current) {
@@ -172,6 +218,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loadedProfileUserIdRef.current = null;
         setProfile(null);
         setProfileError(error);
+        // ★2026-10-09追加: 本人の登録申請の状況も取得する(申請フォーム/承認待ち/却下のどれを
+        // 出すかをApp.tsx側で判定するため)。
+        const myReq = await fetchMyRegistrationRequest(nextSession.user.id);
+        if (!cancelled) setMyRegistrationRequest(myReq);
       } finally {
         if (fetchingUserId === nextSession.user.id) {
           fetchingUserId = null;
@@ -193,6 +243,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!data.session) {
         setProfile(null);
         setProfileError(null);
+        setMyRegistrationRequest(null);
         finishInitialLoading();
         return;
       }
@@ -212,6 +263,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profileRef.current = null;
         setProfile(null);
         setProfileError(null);
+        setMyRegistrationRequest(null);
         finishInitialLoading();
         return;
       }
@@ -256,6 +308,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await supabase.auth.signOut();
   }, []);
 
+  // ★2026-10-09追加: メール確認付きサインアップ。確認メールのリンクをクリックするまで
+  // supabase.auth側でログイン不可(セッションが発行されない)。
+  const signUp = useCallback(async (email: string, password: string) => {
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { emailRedirectTo: window.location.origin },
+    });
+    if (error) {
+      return { error: error.message };
+    }
+    return { error: null };
+  }, []);
+
+  // ★2026-10-09追加: profile・myRegistrationRequestを明示的に再取得する。承認待ち画面の
+  // ポーリング・「再確認」ボタン・申請直後の表示切替に使う。applyProfile(useEffect内)とは別の
+  // 独立した実装にしてあり、認証クラッシュ対策の既存ロジック(ファイル冒頭コメント参照)には触れない。
+  const refreshAccessStatus = useCallback(async () => {
+    if (!session) return;
+    const { profile: p, error } = await fetchProfile(session.user.id, session.user.email ?? null);
+    if (p) {
+      loadedProfileUserIdRef.current = session.user.id;
+      profileRef.current = p;
+      setProfile(p);
+      setProfileError(null);
+      setMyRegistrationRequest(null);
+      return;
+    }
+    setProfileError(error);
+    const myReq = await fetchMyRegistrationRequest(session.user.id);
+    setMyRegistrationRequest(myReq);
+  }, [session]);
+
+  // ★2026-10-09追加: 希望ロール・拠点を指定して登録申請する。却下後の再申請もこれで行う
+  // (却下済みの行はstatus='rejected'のまま残るため、新しいpending行を作れる)。
+  const submitRegistrationRequest = useCallback(
+    async (role: RequestableRole, companyId: CompanyId) => {
+      if (!session) return { error: 'ログインしていません。' };
+      const { error } = await supabase.from('registration_requests').insert({
+        user_id: session.user.id,
+        email: session.user.email ?? '',
+        requested_role: role,
+        requested_company_id: companyId,
+      });
+      if (error) {
+        return { error: error.message };
+      }
+      await refreshAccessStatus();
+      return { error: null };
+    },
+    [session, refreshAccessStatus]
+  );
+
   const value: AuthContextValue = {
     session,
     user: session?.user ?? null,
@@ -264,8 +369,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 画面が一瞬表示されてから本体に切り替わる(不要なマウント/アンマウント)のを防ぐ。
     loading: initialLoading || (profileFetching && profile === null),
     profileError,
+    myRegistrationRequest,
     signIn,
     signOut,
+    signUp,
+    submitRegistrationRequest,
+    refreshAccessStatus,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

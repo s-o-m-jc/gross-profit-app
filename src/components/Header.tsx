@@ -20,6 +20,14 @@ import {
 import { CompanyConfig, CompanyId } from '../config/companies';
 import { UserRole } from '../lib/AuthContext';
 
+/** ロールの表示ラベル(2026-10-09追加、4ロール化)。 */
+export const ROLE_LABELS: Record<UserRole, string> = {
+  super_admin: '全管理者',
+  branch_admin: '拠点管理者',
+  general: '一般',
+  accounting: '経理担当者',
+};
+
 interface HeaderProps {
   companyName: string;
   companies: CompanyConfig[];
@@ -39,6 +47,10 @@ interface HeaderProps {
   userEmail: string | null;
   userRole: UserRole;
   onSignOut: () => void;
+  /** 承認待ちの登録申請の件数(2026-10-09追加)。undefinedの場合、承認ボタン自体を表示しない
+      (super_admin・branch_admin以外には表示しない想定)。 */
+  pendingApprovalCount?: number;
+  onOpenApprovalInbox?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -59,6 +71,8 @@ export const Header: React.FC<HeaderProps> = ({
   userEmail,
   userRole,
   onSignOut,
+  pendingApprovalCount,
+  onOpenApprovalInbox,
 }) => {
   return (
     <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
@@ -146,15 +160,36 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden xl:inline">Mコード変換仕様</span>
             </button>
 
+            {/* 登録申請の承認(2026-10-09追加、super_admin・branch_adminにのみ表示) */}
+            {onOpenApprovalInbox && (
+              <button
+                onClick={onOpenApprovalInbox}
+                className="relative inline-flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex-shrink-0"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                <span className="hidden xl:inline">登録申請</span>
+                {!!pendingApprovalCount && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {pendingApprovalCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             {/* ログインユーザー情報 & ログアウト */}
+            {/* ★2026-10-09変更(4ロール化): canEdit(編集可否)だけでは「全拠点閲覧可だが編集不可」の
+                branch_adminを「閲覧専用」としか表せないため、userRoleから直接ラベルを出す。 */}
             <div className="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 text-xs flex-shrink-0">
               {canEdit ? (
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" title="管理者(全社・編集可)" />
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" title={ROLE_LABELS[userRole]} />
               ) : (
-                <Eye className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" title="閲覧専用" />
+                <Eye className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" title={ROLE_LABELS[userRole]} />
               )}
               <span className="hidden md:inline text-slate-300 max-w-[10rem] truncate" title={userEmail ?? undefined}>
-                {userEmail ?? (canEdit ? '管理者' : '閲覧専用')}
+                {userEmail ?? ROLE_LABELS[userRole]}
+              </span>
+              <span className="hidden lg:inline text-[10px] text-slate-500 border border-slate-600 rounded px-1.5 py-0.5">
+                {ROLE_LABELS[userRole]}
               </span>
               <button
                 onClick={onSignOut}

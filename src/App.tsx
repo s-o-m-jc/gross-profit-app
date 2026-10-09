@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Calculator,
   Table,
@@ -32,6 +32,10 @@ import { FiscalYearAnalytics } from './components/FiscalYearAnalytics';
 import { MCodeReferenceModal } from './components/MCodeReferenceModal';
 import { ExportModal } from './components/ExportModal';
 import { LoginPage } from './components/LoginPage';
+import { AccessStatusScreen } from './components/AccessStatusScreen';
+import { ApprovalInboxModal } from './components/ApprovalInboxModal';
+import { CompanyFiscalComparisonPanel } from './components/CompanyFiscalComparisonPanel';
+import { supabase } from './lib/supabaseClient';
 
 import {
   PayrollRow,
@@ -143,7 +147,7 @@ function buildFiscalYearOptions(
  * ログイン済み・権限確定後のみ本体(AppShell)を描画する。
  */
 export default function App() {
-  const { session, profile, loading, profileError, signOut } = useAuth();
+  const { session, profile, loading, signOut } = useAuth();
 
   if (loading) {
     return (
@@ -158,24 +162,11 @@ export default function App() {
     return <LoginPage />;
   }
 
+  // ★2026-10-09変更: profile===nullの場合、以前は一律で「アカウント設定が未完了です」エラー画面
+  // (管理者への問い合わせ待ち)だったが、本人申請フローの新設により、申請状況(無し/承認待ち/却下)に
+  // 応じた画面(AccessStatusScreen)に差し替えた。
   if (!profile) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 px-4">
-        <div className="max-w-md bg-white rounded-xl shadow-sm border border-rose-200 p-6 text-center">
-          <AlertTriangle className="w-8 h-8 text-rose-500 mx-auto mb-3" />
-          <h1 className="text-sm font-bold text-slate-900 mb-2">アカウント設定が未完了です</h1>
-          <p className="text-xs text-slate-600 mb-4">
-            {profileError || 'このアカウントには利用権限が設定されていません。'}
-          </p>
-          <button
-            onClick={() => signOut()}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold"
-          >
-            ログアウト
-          </button>
-        </div>
-      </div>
-    );
+    return <AccessStatusScreen />;
   }
 
   return <AppShell profile={profile} onSignOut={signOut} />;
@@ -187,11 +178,12 @@ interface AppShellProps {
 }
 
 function AppShell({ profile, onSignOut }: AppShellProps) {
-  // adminは全社・全機能(編集含む)。viewerは自分のcompany_idの会社のみ・閲覧専用。
-  const canEdit = profile.role === 'admin';
+  // ★2026-10-09変更(4ロール化): super_admin・branch_adminは全拠点閲覧可(編集は別軸)。
+  // general・accountingは自分のcompany_idの会社のみ閲覧可。
+  const canViewAllCompanies = profile.role === 'super_admin' || profile.role === 'branch_admin';
   const visibleCompanies = useMemo(
-    () => (canEdit ? COMPANIES : COMPANIES.filter((c) => c.id === profile.companyId)),
-    [canEdit, profile.companyId]
+    () => (canViewAllCompanies ? COMPANIES : COMPANIES.filter((c) => c.id === profile.companyId)),
+    [canViewAllCompanies, profile.companyId]
   );
 
   // Vite環境変数からの読み込み (Vite環境ルール厳守)。会社名・決算開始月は会社ごとに切り替える値のため、
@@ -201,11 +193,19 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     import.meta.env.VITE_LOW_MARGIN_THRESHOLD || '10'
   );
 
-  // 選択中の会社 (adminは3社を切り替え、viewerは自社に固定)
+  // 選択中の会社 (super_admin・branch_adminは3社を切り替え、general・accountingは自社に固定)
   const [selectedCompanyId, setSelectedCompanyId] = useState<CompanyId>(
-    canEdit ? DEFAULT_COMPANY_ID : (profile.companyId as CompanyId) || DEFAULT_COMPANY_ID
+    canViewAllCompanies ? DEFAULT_COMPANY_ID : (profile.companyId as CompanyId) || DEFAULT_COMPANY_ID
   );
   const selectedCompany = useMemo(() => getCompanyConfig(selectedCompanyId), [selectedCompanyId]);
+
+  // ★2026-10-09追加: 編集可否は「全社編集可(super_admin)」か「自社かつaccounting」かで決まり、
+  // 選択中の会社によって変わる(従来のcanEditは会社に関わらず一定の1個のbooleanだったため、
+  // 4ロール化に伴いselectedCompanyIdに依存する値に変更した)。CSV入出力も同じ条件で許可する
+  // (この2ロールともCSV入出力可、他の2ロールともCSV入出力不可で一致するため、別フラグにしていない)。
+  const canEditCurrentCompany =
+    profile.role === 'super_admin' ||
+    (profile.role === 'accounting' && selectedCompanyId === profile.companyId);
 
   // ステート
   // 会社ID → 対象月(YYYY-MM) → {payrollRows, billingRows, invoiceRows, retirementRows} の
@@ -295,6 +295,21 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
   // モーダル表示フラグ
   const [isMCodeGuideOpen, setIsMCodeGuideOpen] = useState(false);
+  // ★2026-10-09追加: 登録申請の承認待ち一覧(super_admin・branch_adminのみ)
+  const [isApprovalInboxOpen, setIsApprovalInboxOpen] = useState(false);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  const canApproveRegistrations = profile.role === 'super_admin' || profile.role === 'branch_admin';
+  const refreshPendingApprovalCount = useCallback(() => {
+    if (!canApproveRegistrations) return;
+    supabase
+      .from('registration_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .then(({ count }) => setPendingApprovalCount(count ?? 0));
+  }, [canApproveRegistrations]);
+  useEffect(() => {
+    refreshPendingApprovalCount();
+  }, [refreshPendingApprovalCount]);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   // 選択中の会社の決算期開始月が変わった(=会社を切り替えた)ら、決算期セレクタの値が
@@ -384,7 +399,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   useEffect(() => {
     if (!isDataLoaded) return;
     const timer = setTimeout(async () => {
-      if (canEdit && !isOffline) {
+      if (canEditCurrentCompany && !isOffline) {
         const prev = prevMonthlyDataRef.current;
         const changedCompanies = COMPANIES.filter((c) => monthlyData[c.id] !== prev[c.id]);
         for (const company of changedCompanies) {
@@ -401,7 +416,29 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       saveAppState({ monthlyData, selectedCompanyId });
     }, 500);
     return () => clearTimeout(timer);
-  }, [monthlyData, selectedCompanyId, isDataLoaded, canEdit, isOffline]);
+  }, [monthlyData, selectedCompanyId, isDataLoaded, canEditCurrentCompany, isOffline]);
+
+  // ★2026-10-09追加(はまさんの依頼): CSV/Excel取込みの履歴(誰が・いつ・どの拠点・どの期間・
+  // 何件)をcsv_operation_logへ記録する。handlePayrollLoaded/handleBillingLoaded/
+  // handleInvoiceLoadedは、通常のCSVアップロード(CsvUploader)・過去実績Excel取込み
+  // (PastExcelImportPanel)の両方が最終的に通る共通の1箇所なので、ここに仕込めば両方をまとめて
+  // カバーできる。失敗しても取込み自体は継続する(コンソールログのみ)。
+  const logCsvImport = (detail: string, rows: { targetMonth: string }[]) => {
+    if (rows.length === 0) return;
+    const months = rows.map((r) => r.targetMonth).sort();
+    void supabase
+      .from('csv_operation_log')
+      .insert({
+        action: 'import',
+        company_id: selectedCompanyId,
+        target_month_start: months[0],
+        target_month_end: months[months.length - 1],
+        detail: `${detail} / ${rows.length}件`,
+      })
+      .then(({ error }) => {
+        if (error) console.warn('CSV取込み履歴の記録に失敗しました:', error.message);
+      });
+  };
 
   // 選択中の会社・該当する対象月のバケツだけを更新するアップロードハンドラ群。
   // 同一月への再アップロードは、その月のそのカテゴリだけをクリーンに置き換える
@@ -409,6 +446,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // ★2026-08-26: 誤って別のCSVをアップロードした場合に備え、適用前の状態を1操作分だけ
   // undoSnapshotに保持しておく(CsvUploaderの「直前のアップロードを取り消す」ボタン用)。
   const handlePayrollLoaded = (rows: PayrollRow[]) => {
+    logCsvImport('給与データ', rows);
     setUndoSnapshot({ companyId: selectedCompanyId, companyMonths: selectedCompanyMonths, label: `給与データCSV読込 (${selectedCompany.name})` });
     setMonthlyData((prev) => ({
       ...prev,
@@ -420,6 +458,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     }));
   };
   const handleBillingLoaded = (rows: BillingRow[]) => {
+    logCsvImport('請求データ', rows);
     setUndoSnapshot({ companyId: selectedCompanyId, companyMonths: selectedCompanyMonths, label: `請求データCSV読込 (${selectedCompany.name})` });
     setMonthlyData((prev) => ({
       ...prev,
@@ -433,6 +472,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // 請求書印刷CSVも、請求支払一覧CSVと同じくファイル名から対象月を取得し(11-2章)、
   // 他の3カテゴリと同じ月バケツ方式で保持する。
   const handleInvoiceLoaded = (rows: InvoicePrintRow[]) => {
+    logCsvImport('請求書印刷データ', rows);
     setUndoSnapshot({ companyId: selectedCompanyId, companyMonths: selectedCompanyMonths, label: `請求書印刷CSV読込 (${selectedCompany.name})` });
     setMonthlyData((prev) => ({
       ...prev,
@@ -610,6 +650,24 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     return calculateFiscalYearSummary(calculatedResults, payrollRows, fiscalYear, 12, effectiveTransportExTaxRows);
   }, [calculatedResults, payrollRows, fiscalYear, effectiveTransportExTaxRows]);
 
+  // ★2026-10-09追加(はまさんの依頼「決算期集計はロールに関わらず全拠点分を閲覧できるように」):
+  // 生データ(billingRows/payrollRows)は一切送らず、既にクライアント側で正しく計算済みの
+  // fiscalSummary(集計済みの数値のみ)をfiscal_year_summary_cacheへ書き込む。これにより、
+  // 他拠点の生データにアクセスできないロール(general/accounting)でも、
+  // get_fiscal_year_summary()経由でこの値を読める。この画面を開いている間、選択中の会社・
+  // 決算期の値を常に最新化し続ける(データを編集した本人が最も正確な値を持っているため)。
+  useEffect(() => {
+    if (!isDataLoaded || calculatedResults.length === 0) return;
+    const fiscalYearInt = parseInt(fiscalYear.split('-')[0], 10);
+    if (!Number.isFinite(fiscalYearInt)) return;
+    void supabase
+      .from('fiscal_year_summary_cache')
+      .upsert({ company_id: selectedCompanyId, fiscal_year: fiscalYearInt, summary: fiscalSummary as unknown as object })
+      .then(({ error }) => {
+        if (error) console.warn('決算期集計キャッシュの更新に失敗しました:', error.message);
+      });
+  }, [isDataLoaded, selectedCompanyId, fiscalYear, fiscalSummary, calculatedResults.length]);
+
   // ★2026-09-20追加(はまさんのご要望「決算期グラフに前年対比を追加」): 選択中の決算期の
   // 1年前(開始年月の年だけ-1した決算期)のサマリーを、前年対比グラフ用に同じ関数
   // (calculateFiscalYearSummary)で計算する。新しい計算ロジックは追加せず、開始年月を
@@ -652,7 +710,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         companies={visibleCompanies}
         selectedCompanyId={selectedCompanyId}
         onCompanyChange={setSelectedCompanyId}
-        canSwitchCompany={canEdit}
+        canSwitchCompany={canViewAllCompanies}
         taxRate={taxRate}
         onTaxRateChange={setTaxRate}
         fiscalYear={fiscalYear}
@@ -661,10 +719,12 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         onOpenMCodeGuide={() => setIsMCodeGuideOpen(true)}
         alertCount={fiscalSummary.alertCount}
         totalBillingCount={calculatedResults.length}
-        canEdit={canEdit}
+        canEdit={canEditCurrentCompany}
         userEmail={profile.email}
         userRole={profile.role}
         onSignOut={onSignOut}
+        pendingApprovalCount={canApproveRegistrations ? pendingApprovalCount : undefined}
+        onOpenApprovalInbox={canApproveRegistrations ? () => setIsApprovalInboxOpen(true) : undefined}
       />
 
       {/* オフライン/同期エラーの通知バナー */}
@@ -784,8 +844,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
           </div>
 
           {/* ★2026-09-01修正(20-2章の既知バグ): viewer(閲覧専用)権限でもCSV/Excelダウンロードが
-              できてしまっていた不具合を修正。canEdit(=admin判定)でボタン自体を非表示にする。 */}
-          {canEdit && (
+              できてしまっていた不具合を修正。canEditCurrentCompany(編集可否)でボタン自体を非表示にする。 */}
+          {canEditCurrentCompany && (
             <button
               onClick={() => setIsExportModalOpen(true)}
               className="hidden sm:inline-flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition-colors"
@@ -805,13 +865,13 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               companyMonths={selectedCompanyMonths}
               onUpsert={handleUpsertPersonInCharge}
               onRemove={handleRemovePersonInCharge}
-              canEdit={canEdit}
+              canEdit={canEditCurrentCompany}
             />
             <MonthlyCalculationTable
               results={calculatedResults}
               taxRate={taxRate}
               lowMarginThreshold={defaultLowMarginThreshold}
-              canExportCsv={canEdit}
+              canExportCsv={canEditCurrentCompany}
               onExportCsv={() => setIsExportModalOpen(true)}
               fiscalYearMonths={fiscalYearMonths}
               fiscalYearLabel={fiscalYearLabel}
@@ -833,7 +893,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             paidLeaveOverrideRows={paidLeaveOverrideRows}
             onAddPaidLeaveOverride={handleAddPaidLeaveOverride}
             onRemovePaidLeaveOverride={handleRemovePaidLeaveOverride}
-            canEdit={canEdit}
+            canEdit={canEditCurrentCompany}
           />
         )}
 
@@ -844,7 +904,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             companyMonths={selectedCompanyMonths}
             onAdd={handleAddRetirement}
             onRemove={handleRemoveRetirement}
-            canEdit={canEdit}
+            canEdit={canEditCurrentCompany}
           />
         )}
 
@@ -869,7 +929,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             companyId={selectedCompanyId}
             onUpsertTransportExTaxOverride={handleUpsertTransportExTaxOverride}
             onRemoveTransportExTaxOverride={handleRemoveTransportExTaxOverride}
-            canEdit={canEdit}
+            canEdit={canEditCurrentCompany}
           />
         )}
 
@@ -879,7 +939,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
           <>
             {/* 過去実績Excel取り込み(フェーズ2、四国・松山のみ対象。閲覧専用ユーザーには表示しない)
                 ★2026-09-02: 全タブ共通エリアから、このデータ管理タブへ移動(理由は上記コメント参照) */}
-            {canEdit && (
+            {canEditCurrentCompany && (
               <PastExcelImportPanel
                 selectedCompanyId={selectedCompanyId}
                 onPayrollLoaded={handlePayrollLoaded}
@@ -891,7 +951,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
             {/* CSVアップローダー (閲覧専用ユーザーには表示しない)
                 ★2026-09-02: 全タブ共通エリアから、このデータ管理タブへ移動(理由は上記コメント参照) */}
-            {canEdit && (
+            {canEditCurrentCompany && (
               <CsvUploader
                 payrollRows={payrollRows}
                 billingRows={billingRows}
@@ -911,12 +971,12 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               companyMonths={selectedCompanyMonths}
               onSaveToFile={handleSaveToFile}
               onLoadFromFile={handleLoadFromFile}
-              canEdit={canEdit}
+              canEdit={canEditCurrentCompany}
               fiscalYearMonths={fiscalYearMonths}
               fiscalYearLabel={fiscalYearLabel}
               onDeleteMonth={handleDeleteMonth}
             />
-            {canEdit && !isOffline && (
+            {canEditCurrentCompany && !isOffline && (
               <ChangeHistoryPanel companyId={selectedCompanyId} companyName={selectedCompany.name} />
             )}
           </>
@@ -931,6 +991,9 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         )}
 
         {/* タブ 3: 決算期 (年間) 集計 */}
+        {activeTab === 'fiscal' && (
+          <CompanyFiscalComparisonPanel fiscalYear={fiscalYear} />
+        )}
         {activeTab === 'fiscal' && (
           <FiscalYearAnalytics
             summary={fiscalSummary}
@@ -967,13 +1030,23 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         onClose={() => setIsMCodeGuideOpen(false)}
       />
 
+      {/* 登録申請の承認待ち一覧(2026-10-09追加) */}
+      {canApproveRegistrations && (
+        <ApprovalInboxModal
+          isOpen={isApprovalInboxOpen}
+          onClose={() => setIsApprovalInboxOpen(false)}
+          onChanged={refreshPendingApprovalCount}
+        />
+      )}
+
       {/* エクスポートモーダル (★2026-09-01: 万一ボタン以外の経路で開かれても、
           viewer(閲覧専用)には出さないよう二重に防御する) */}
-      {canEdit && (
+      {canEditCurrentCompany && (
         <ExportModal
           isOpen={isExportModalOpen}
           onClose={() => setIsExportModalOpen(false)}
           results={calculatedResults}
+          companyId={selectedCompanyId}
         />
       )}
     </div>
