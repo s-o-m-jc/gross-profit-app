@@ -8,17 +8,22 @@ import { X, Download, FileSpreadsheet, Check } from 'lucide-react';
 import Papa from 'papaparse';
 import { GrossProfitResult } from '../types';
 import { hasActionableAlerts } from '../utils/calculator';
+import { supabase } from '../lib/supabaseClient';
+import { CompanyId } from '../config/companies';
 
 interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   results: GrossProfitResult[];
+  /** CSV操作履歴(csv_operation_log)の記録用(2026-10-09追加)。 */
+  companyId: CompanyId;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
   results,
+  companyId,
 }) => {
   const [exportType, setExportType] = useState<'ALL' | 'ALERTS_ONLY' | 'TRANSPORT_MISMATCH'>('ALL');
   const [includeBOM, setIncludeBOM] = useState(true);
@@ -88,6 +93,24 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
+    // ★2026-10-09追加(はまさんの依頼): 誰が・いつ・どの拠点・どの期間を出力したかの履歴を残す。
+    // 失敗してもダウンロード自体は既に完了しているため、ログ記録のエラーはコンソールのみに出す。
+    const months = dataToExport.map((r) => r.targetMonth).sort();
+    if (months.length > 0) {
+      void supabase
+        .from('csv_operation_log')
+        .insert({
+          action: 'export',
+          company_id: companyId,
+          target_month_start: months[0],
+          target_month_end: months[months.length - 1],
+          detail: `${exportType} / ${dataToExport.length}件`,
+        })
+        .then(({ error }) => {
+          if (error) console.warn('CSV出力履歴の記録に失敗しました:', error.message);
+        });
+    }
 
     onClose();
   };
