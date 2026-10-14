@@ -135,6 +135,20 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
   const [showSalaryBreakdown, setShowSalaryBreakdown] = useState(false);
   const [showSocialBreakdown, setShowSocialBreakdown] = useState(false);
   const anyBreakdownOpen = showSalesBreakdown || showSalaryBreakdown || showSocialBreakdown;
+  // ★2026-10-14追加(はまさんの依頼): 列見出しクリックによる並べ替えを「スタッフ」「派遣先企業」の
+  // 2列だけに絞って復活させる(2026-09-19に撤去した全列並べ替えとは異なり、内訳の開閉トグル用見出し
+  // とは別の専用の2列だけなので、トグルとの誤操作は起きない)。
+  type SortableColumn = 'staffName' | 'clientName';
+  const [sortColumn, setSortColumn] = useState<SortableColumn | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const handleSort = (col: SortableColumn) => {
+    if (sortColumn === col) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(col);
+      setSortDir('asc');
+    }
+  };
   // ★2026-09-19修正(はまさんの指摘「合計行がズレて表示される」): 見出し1段目(常時表示の各列)を
   // 常にrowSpan={2}にしていたが、内訳がすべて閉じている(anyBreakdownOpen===false)場合、
   // 見出し2段目(内訳の個別列名)の<tr>自体を描画しないため、rowSpan=2が「存在しない2段目」を
@@ -161,7 +175,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
 
   // フィルタリング処理
   const filteredResults = useMemo(() => {
-    return results.filter((item) => {
+    const filtered = results.filter((item) => {
       // 表示範囲フィルタ: 月ごと(選択した1ヶ月) / 年間(決算期、選択中の決算期の12ヶ月分)
       if (!fiscalYearMonthSet.has(item.targetMonth)) return false;
       if (viewScope === 'month' && item.targetMonth !== selectedMonth) {
@@ -194,7 +208,17 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
     // クリックは引き続き内訳の表示/非表示のみを行う)。並び順はresults(calculator.tsの
     // calculateGrossProfitが対象月→スタッフNoの順で返す、既にソート済みの配列)の順序をそのまま
     // 使う。
-  }, [results, searchQuery, viewScope, selectedMonth, fiscalYearMonthSet, filterType, lowMarginThreshold]);
+    // ★2026-10-14追加(はまさんの依頼): 「スタッフ」「派遣先企業」の2列だけ、列見出しクリックでの
+    // 並べ替えを復活させる(内訳開閉トグルとは別の専用の2列のため、上記の誤操作問題は起きない)。
+    // 未選択(sortColumn===null)の場合は従来通りresultsの順序のまま。
+    if (!sortColumn) return filtered;
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      const cmp = a[sortColumn].localeCompare(b[sortColumn], 'ja');
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+  }, [results, searchQuery, viewScope, selectedMonth, fiscalYearMonthSet, filterType, lowMarginThreshold, sortColumn, sortDir]);
 
   // ★2026-09-29追加: 「交通費(税抜)」合計行。以前は個別行・合計行とも「不明」固定の文字列で、
   // 登録済みの月次値(TransportExTaxOverrideRow)をまったく参照していなかった。絞り込み中は表示中の行の合計。
@@ -436,20 +460,44 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
               撤去した(開閉トグル用見出しのクリックは、引き続き内訳の表示/非表示のみを行う)。 */}
           <thead className="sticky top-0 z-20 shadow-sm">
             <tr className={`bg-slate-100 text-slate-700 font-bold ${anyBreakdownOpen ? '' : 'border-b border-slate-200'}`}>
-              <th className="py-3 px-3 whitespace-nowrap bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
+              <th className="py-2 px-3 whitespace-nowrap bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 年月
               </th>
-              <th className="py-3 px-3 whitespace-nowrap bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
+              <th className="py-2 px-3 whitespace-nowrap bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 請求No
               </th>
-              <th className="py-3 px-3 whitespace-nowrap bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
-                スタッフ
-              </th>
-              <th className="py-3 px-3 whitespace-nowrap bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
-                派遣先企業
+              <th
+                className="py-2 px-3 whitespace-nowrap bg-slate-100 sticky left-0 z-30 border-r border-slate-200 cursor-pointer select-none hover:bg-slate-200"
+                rowSpan={anyBreakdownOpen ? 2 : 1}
+                onClick={() => handleSort('staffName')}
+              >
+                <span className="inline-flex items-center gap-0.5">
+                  <span>スタッフ</span>
+                  {sortColumn === 'staffName' &&
+                    (sortDir === 'asc' ? (
+                      <ChevronUp className="w-3 h-3 text-indigo-600" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3 text-indigo-600" />
+                    ))}
+                </span>
               </th>
               <th
-                className="py-3 px-3 whitespace-nowrap text-right cursor-pointer bg-slate-100 hover:bg-slate-200 select-none"
+                className="py-2 px-3 whitespace-nowrap bg-slate-100 cursor-pointer select-none hover:bg-slate-200"
+                rowSpan={anyBreakdownOpen ? 2 : 1}
+                onClick={() => handleSort('clientName')}
+              >
+                <span className="inline-flex items-center gap-0.5">
+                  <span>派遣先企業</span>
+                  {sortColumn === 'clientName' &&
+                    (sortDir === 'asc' ? (
+                      <ChevronUp className="w-3 h-3 text-indigo-600" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3 text-indigo-600" />
+                    ))}
+                </span>
+              </th>
+              <th
+                className="py-2 px-3 whitespace-nowrap text-right cursor-pointer bg-slate-100 hover:bg-slate-200 select-none"
                 rowSpan={anyBreakdownOpen ? 2 : 1}
                 onClick={() => setShowSalesBreakdown((v) => !v)}
                 title="クリックして内訳(派遣・交通費(相手企業負担)・休業分補償)の表示/非表示を切り替え(内訳は税抜/税込表示に連動します)"
@@ -468,12 +516,12 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                   売上内訳
                 </th>
               )}
-              <th className="py-3 px-3 whitespace-nowrap text-right bg-amber-50/50" rowSpan={anyBreakdownOpen ? 2 : 1} title="粗利非算入・売上算入。消費税計算の対象外(既存仕様のまま)">
+              <th className="py-2 px-3 whitespace-nowrap text-right bg-amber-50/50" rowSpan={anyBreakdownOpen ? 2 : 1} title="粗利非算入・売上算入。消費税計算の対象外(既存仕様のまま)">
                 紹介手数料 <span className="text-amber-600">ⓘ</span>
               </th>
-              <th className="py-3 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>総売上</th>
+              <th className="py-2 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>総売上</th>
               <th
-                className="py-3 px-3 whitespace-nowrap text-right cursor-pointer bg-slate-100 hover:bg-slate-200 select-none"
+                className="py-2 px-3 whitespace-nowrap text-right cursor-pointer bg-slate-100 hover:bg-slate-200 select-none"
                 rowSpan={anyBreakdownOpen ? 2 : 1}
                 onClick={() => setShowSalaryBreakdown((v) => !v)}
                 title="クリックして内訳(給与・休業手当・退職金配賦)の表示/非表示を切り替え"
@@ -492,31 +540,31 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                   給与内訳
                 </th>
               )}
-              <th className="py-3 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
+              <th className="py-2 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 請求＠
               </th>
-              <th className="py-3 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
+              <th className="py-2 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 支払＠
               </th>
               {/* ★2026-09-15追加(23章「集計」シート方式の名目指標を行レベルにも拡張)。
                   ★2026-09-16修正(はまさんの指摘): 「名目粗利額」列は元データ(大阪の契約別売上
                   実績表シート)に存在しない独自追加だったため削除し、実在する「名目粗利率」のみ残す。 */}
               <th
-                className="py-3 px-3 whitespace-nowrap text-center bg-sky-50/50"
+                className="py-2 px-3 whitespace-nowrap text-center bg-sky-50/50"
                 rowSpan={anyBreakdownOpen ? 2 : 1}
                 title="1−支払＠/請求＠。大阪人材の集計シート方式による名目上の粗利率です。請求書印刷CSV未読込・未紐付けの行は「データなし」になります"
               >
                 名目粗利率 <span className="text-sky-600">ⓘ</span>
               </th>
               <th
-                className="py-3 px-3 whitespace-nowrap text-right bg-slate-100"
+                className="py-2 px-3 whitespace-nowrap text-right bg-slate-100"
                 rowSpan={anyBreakdownOpen ? 2 : 1}
                 title={TRANSPORT_EX_TAX_DEFINITIONS[companyId].tooltip}
               >
                 交通費(税抜) <span className="text-amber-500">ⓘ</span>
               </th>
               <th
-                className="py-3 px-3 whitespace-nowrap text-right cursor-pointer bg-slate-100 hover:bg-slate-200 select-none"
+                className="py-2 px-3 whitespace-nowrap text-right cursor-pointer bg-slate-100 hover:bg-slate-200 select-none"
                 rowSpan={anyBreakdownOpen ? 2 : 1}
                 onClick={() => setShowSocialBreakdown((v) => !v)}
                 title="クリックして内訳(雇保・社保・交通費(自社負担)・駐車場代)の表示/非表示を切り替え。雇保+社保+交通費(自社負担)+駐車場代の4項目が社保他小計と一致します"
@@ -535,27 +583,27 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                   社保他内訳
                 </th>
               )}
-              <th className="py-3 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1} title="給与CSV由来の参考値。粗利計算には影響しません">
+              <th className="py-2 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1} title="給与CSV由来の参考値。粗利計算には影響しません">
                 有給金額
               </th>
-              <th className="py-3 px-3 whitespace-nowrap text-right bg-indigo-50/50" rowSpan={anyBreakdownOpen ? 2 : 1}>
+              <th className="py-2 px-3 whitespace-nowrap text-right bg-indigo-50/50" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 {grossProfitLabel}
               </th>
-              <th className="py-3 px-3 whitespace-nowrap text-center bg-indigo-50/50" rowSpan={anyBreakdownOpen ? 2 : 1}>
+              <th className="py-2 px-3 whitespace-nowrap text-center bg-indigo-50/50" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 実質粗利率
               </th>
-              <th className="py-3 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
+              <th className="py-2 px-3 whitespace-nowrap text-right bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 有給(日)
               </th>
               {/* ★2026-10-08追加(はまさんの依頼): 四国はtransportDataAvailableが常にfalse(billingTransportを
                   持たない取込み形式のため)で、この列は毎行「対象外（交通費データなし）」にしかならない。
                   四国の交通費突合は別の仕組み(交通費(税抜)、transportExTax)で行っているため、この列は非表示にする。 */}
               {companyId !== 'shikoku' && (
-                <th className="py-3 px-3 whitespace-nowrap text-center bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
+                <th className="py-2 px-3 whitespace-nowrap text-center bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
                   交通費突合
                 </th>
               )}
-              <th className="py-3 px-3 whitespace-nowrap text-center bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>監査ステータス</th>
+              <th className="py-2 px-3 whitespace-nowrap text-center bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>監査ステータス</th>
               {/* ★2026-09-11追加(23章タスクB「担当者」列復活)。クライアント×対象月単位の担当者。
                   手入力(PersonInChargePanel)があればそちらを優先し、なければ取り込み元
                   (現状は松山のみ)の値を表示する(calculator.ts参照)。未設定の場合は「-」表示。
@@ -563,7 +611,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                   移動した(当時はソート用の項目だったため。★2026-09-19: 列見出しクリックでの
                   並べ替え機能自体を撤去したため、現在はソート目的ではないが、位置はそのまま
                   維持している)。 */}
-              <th className="py-3 px-3 whitespace-nowrap bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
+              <th className="py-2 px-3 whitespace-nowrap bg-slate-100" rowSpan={anyBreakdownOpen ? 2 : 1}>
                 担当者
               </th>
             </tr>
@@ -619,78 +667,78 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                 whitespace-nowrapを付け(有給(日)セルに付いていなかったため「247.5」「日」が
                 2行に折り返されていた)、数値が折り返されないようにした。 */}
             <tr className="bg-indigo-50 text-indigo-900 font-extrabold border-b-2 border-indigo-200">
-              <td className="py-2.5 px-3 bg-indigo-50"></td>
-              <td className="py-2.5 px-3 bg-indigo-50"></td>
-              <td className="py-2.5 px-3 bg-indigo-50 whitespace-nowrap">
+              <td className="py-1.5 px-3 bg-indigo-50"></td>
+              <td className="py-1.5 px-3 bg-indigo-50"></td>
+              <td className="py-1.5 px-3 bg-indigo-50 whitespace-nowrap sticky left-0 z-30 border-r border-indigo-200">
                 <div className="flex items-center space-x-1.5">
                   <Users className="w-3.5 h-3.5 text-indigo-600" />
                   <span>合計 ({totals.count}件)</span>
                 </div>
               </td>
-              <td className="py-2.5 px-3 bg-indigo-50"></td>
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">
+              <td className="py-1.5 px-3 bg-indigo-50"></td>
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">
                 ¥{(amountDisplay === 'incTax' ? totals.billingAmountIncTax : totals.billingAmountExTax).toLocaleString()}
               </td>
               {showSalesBreakdown && (
                 <>
-                  <td className="py-2.5 px-3 text-right font-mono bg-emerald-50/40 whitespace-nowrap">
+                  <td className="py-1.5 px-3 text-right font-mono bg-emerald-50/40 whitespace-nowrap">
                     ¥{(amountDisplay === 'incTax' ? totals.dispatchIncTax : totals.dispatchExTax).toLocaleString()}
                   </td>
-                  <td className="py-2.5 px-3 text-right font-mono bg-emerald-50/40 whitespace-nowrap">
+                  <td className="py-1.5 px-3 text-right font-mono bg-emerald-50/40 whitespace-nowrap">
                     ¥{(amountDisplay === 'incTax' ? totals.billingTransportIncTax : totals.billingTransportExTax).toLocaleString()}
                   </td>
-                  <td className="py-2.5 px-3 text-right font-mono bg-emerald-50/40 whitespace-nowrap">
+                  <td className="py-1.5 px-3 text-right font-mono bg-emerald-50/40 whitespace-nowrap">
                     ¥{(amountDisplay === 'incTax' ? totals.leaveCompensationAmountIncTax : totals.leaveCompensationAmountExTax).toLocaleString()}
                   </td>
                 </>
               )}
-              <td className="py-2.5 px-3 text-right font-mono bg-amber-50/60 whitespace-nowrap">¥{totals.referralFee.toLocaleString()}</td>
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">
+              <td className="py-1.5 px-3 text-right font-mono bg-amber-50/60 whitespace-nowrap">¥{totals.referralFee.toLocaleString()}</td>
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">
                 ¥{((amountDisplay === 'incTax' ? totals.billingAmountIncTax : totals.billingAmountExTax) + totals.referralFee).toLocaleString()}
               </td>
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">¥{totals.totalSalaryRow.toLocaleString()}</td>
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">¥{totals.totalSalaryRow.toLocaleString()}</td>
               {showSalaryBreakdown && (
                 <>
-                  <td className="py-2.5 px-3 text-right font-mono bg-amber-50/40 whitespace-nowrap">¥{totals.salary.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono bg-amber-50/40 whitespace-nowrap">¥{totals.leaveAllowanceAmount.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono bg-amber-50/40 whitespace-nowrap">¥{totals.retirementAmount.toLocaleString()}</td>
+                  <td className="py-1.5 px-3 text-right font-mono bg-amber-50/40 whitespace-nowrap">¥{totals.salary.toLocaleString()}</td>
+                  <td className="py-1.5 px-3 text-right font-mono bg-amber-50/40 whitespace-nowrap">¥{totals.leaveAllowanceAmount.toLocaleString()}</td>
+                  <td className="py-1.5 px-3 text-right font-mono bg-amber-50/40 whitespace-nowrap">¥{totals.retirementAmount.toLocaleString()}</td>
                 </>
               )}
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">¥{totals.billingUnitPrice.toLocaleString()}</td>
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">¥{totals.payUnitPrice.toLocaleString()}</td>
-              <td className="py-2.5 px-3 text-right font-mono bg-sky-50/60 whitespace-nowrap">
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">¥{totals.billingUnitPrice.toLocaleString()}</td>
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">¥{totals.payUnitPrice.toLocaleString()}</td>
+              <td className="py-1.5 px-3 text-right font-mono bg-sky-50/60 whitespace-nowrap">
                 {totals.nominalGrossMarginRateDataAvailable ? `${totals.nominalGrossMarginRate}%` : 'データなし'}
               </td>
               <td
                 data-testid="transport-extax-total"
-                className={`py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap ${transportExTaxTotal.kind === 'value' ? '' : 'text-slate-400'}`}
+                className={`py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap ${transportExTaxTotal.kind === 'value' ? '' : 'text-slate-400'}`}
               >
                 {formatTransportExTaxTotal(transportExTaxTotal)}
               </td>
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">¥{totals.socialInsuranceOther.toLocaleString()}</td>
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">¥{totals.socialInsuranceOther.toLocaleString()}</td>
               {showSocialBreakdown && (
                 <>
-                  <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.employmentInsurance.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{(totals.socialInsurance - totals.employmentInsurance).toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.salaryTransport.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.parkingFee.toLocaleString()}</td>
+                  <td className="py-1.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.employmentInsurance.toLocaleString()}</td>
+                  <td className="py-1.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{(totals.socialInsurance - totals.employmentInsurance).toLocaleString()}</td>
+                  <td className="py-1.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.salaryTransport.toLocaleString()}</td>
+                  <td className="py-1.5 px-3 text-right font-mono bg-violet-50/40 whitespace-nowrap">¥{totals.parkingFee.toLocaleString()}</td>
                 </>
               )}
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">
                 ¥{totals.paidLeaveAllowance.toLocaleString()}
               </td>
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-100 whitespace-nowrap">
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-100 whitespace-nowrap">
                 ¥{(amountDisplay === 'incTax' ? totals.grossProfitIncTax : totals.grossProfitExTax).toLocaleString()}
               </td>
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-100 whitespace-nowrap">{totals.grossMarginRate}%</td>
-              <td className="py-2.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">{totals.paidLeaveDays}日</td>
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-100 whitespace-nowrap">{totals.grossMarginRate}%</td>
+              <td className="py-1.5 px-3 text-right font-mono bg-indigo-50 whitespace-nowrap">{totals.paidLeaveDays}日</td>
               {companyId !== 'shikoku' && (
-                <td className="py-2.5 px-3 text-center font-mono bg-indigo-50 text-slate-400 whitespace-nowrap">-</td>
+                <td className="py-1.5 px-3 text-center font-mono bg-indigo-50 text-slate-400 whitespace-nowrap">-</td>
               )}
-              <td className="py-2.5 px-3 text-center font-mono bg-indigo-50 whitespace-nowrap">
+              <td className="py-1.5 px-3 text-center font-mono bg-indigo-50 whitespace-nowrap">
                 {totals.actionableAlertCount === 0 ? '正常' : `要確認 ${totals.actionableAlertCount}件`}
               </td>
-              <td className="py-2.5 px-3 bg-indigo-50"></td>
+              <td className="py-1.5 px-3 bg-indigo-50"></td>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
@@ -716,27 +764,40 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                 const dispatchDisplay = amountDisplay === 'incTax' ? breakdown.dispatchIncTax : breakdown.dispatchExTax;
                 const billingTransportDisplay = amountDisplay === 'incTax' ? breakdown.billingTransportIncTax : breakdown.billingTransportExTax;
                 const leaveCompensationAmountDisplay = amountDisplay === 'incTax' ? breakdown.leaveCompensationAmountIncTax : breakdown.leaveCompensationAmountExTax;
+                // ★2026-10-14追加: スタッフ列をsticky left-0で固定するため、行の背景色を
+                // (border-collapseの行背景の透過頼みではなく)そのセル自身にも明示的に持たせる必要がある
+                // (合計行で同種の問題が起きたのと同じ理由。上記合計行コメント参照)。
+                // ★2026-10-14修正(はまさんの指摘): 行全体に使っているbg-rose-50/40等は不透明度
+                // (/40等)付きで、下地の白を透かして淡い色に見せる前提の指定。スクロール時はこの
+                // セルの下を他の列の中身(文字・数値)が通過するため、半透明のままでは透けて見えて
+                // しまう。スタッフ列のセル自身には、同じ配色を白地に合成した不透明色(算出済みの
+                // 近似hex値)を別途用意し、透過が起きないようにする。
+                const rowTintClass = isNegative
+                  ? 'bg-rose-50/40'
+                  : isLowMargin
+                  ? 'bg-amber-50/30'
+                  : row.transportDiff !== 0
+                  ? 'bg-blue-50/20'
+                  : '';
+                const stickyBgClass = isNegative
+                  ? 'bg-[#fff9fa]'
+                  : isLowMargin
+                  ? 'bg-[#fffef9]'
+                  : row.transportDiff !== 0
+                  ? 'bg-[#fcfdff]'
+                  : 'bg-white';
 
                 return (
-                  <tr
-                    key={row.id}
-                    className={`hover:bg-slate-50 transition-colors ${
-                      isNegative
-                        ? 'bg-rose-50/40'
-                        : isLowMargin
-                        ? 'bg-amber-50/30'
-                        : row.transportDiff !== 0
-                        ? 'bg-blue-50/20'
-                        : ''
-                    }`}
-                  >
-                    <td className="py-2.5 px-3 font-semibold text-slate-600 whitespace-nowrap">
+                  <tr key={row.id} className={`group hover:bg-slate-50 transition-colors ${rowTintClass}`}>
+                    <td className="py-1.5 px-3 font-semibold text-slate-600 whitespace-nowrap">
                       {row.targetMonth}
                     </td>
-                    <td className="py-2.5 px-3 font-mono text-slate-500 text-[11px] whitespace-nowrap">
+                    <td className="py-1.5 px-3 font-mono text-slate-500 text-[11px] whitespace-nowrap">
                       {row.billingNo}
                     </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap">
+                    <td
+                      className={`py-1.5 px-3 whitespace-nowrap sticky left-0 z-10 border-r border-slate-200 ${stickyBgClass} group-hover:bg-slate-50`}
+                    >
                       <div className="flex items-center space-x-1.5">
                         <User className="w-3.5 h-3.5 text-slate-400" />
                         <div>
@@ -763,65 +824,65 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap max-w-[160px] truncate" title={row.clientName}>
+                    <td className="py-1.5 px-3 whitespace-nowrap max-w-[160px] truncate" title={row.clientName}>
                       <div className="flex items-center space-x-1">
                         <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span className="font-semibold text-slate-700">{row.clientName}</span>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                       ¥{displayBillingAmount.toLocaleString()}
                     </td>
                     {/* 売上内訳 (派遣売上の内訳。ヘッダーのグループ見出し参照) */}
                     {showSalesBreakdown && (
                       <>
-                        <td className="py-2.5 px-3 text-right font-mono bg-emerald-50/30 border-l border-emerald-200">
+                        <td className="py-1.5 px-3 text-right font-mono bg-emerald-50/30 border-l border-emerald-200">
                           ¥{dispatchDisplay.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-mono bg-emerald-50/30">¥{billingTransportDisplay.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-right font-mono bg-emerald-50/30 border-r border-emerald-200">
+                        <td className="py-1.5 px-3 text-right font-mono bg-emerald-50/30">¥{billingTransportDisplay.toLocaleString()}</td>
+                        <td className="py-1.5 px-3 text-right font-mono bg-emerald-50/30 border-r border-emerald-200">
                           ¥{leaveCompensationAmountDisplay.toLocaleString()}
                         </td>
                       </>
                     )}
-                    <td className="py-2.5 px-3 text-right font-mono bg-amber-50/40 text-amber-800 font-semibold whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-right font-mono bg-amber-50/40 text-amber-800 font-semibold whitespace-nowrap">
                       {row.referralFee > 0 ? `¥${row.referralFee.toLocaleString()}` : '-'}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-700 whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-right font-mono text-slate-700 whitespace-nowrap">
                       ¥{(displayBillingAmount + row.referralFee).toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-700 whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-right font-mono text-slate-700 whitespace-nowrap">
                       ¥{breakdown.totalSalaryRow.toLocaleString()}
                     </td>
                     {/* 給与内訳 (給与総額の内訳。ヘッダーのグループ見出し参照) */}
                     {showSalaryBreakdown && (
                       <>
-                        <td className="py-2.5 px-3 text-right font-mono bg-amber-50/30 border-l border-amber-200">
+                        <td className="py-1.5 px-3 text-right font-mono bg-amber-50/30 border-l border-amber-200">
                           ¥{breakdown.salary.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-mono bg-amber-50/30">¥{breakdown.leaveAllowanceAmount.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-right font-mono bg-amber-50/30 border-r border-amber-200">
+                        <td className="py-1.5 px-3 text-right font-mono bg-amber-50/30">¥{breakdown.leaveAllowanceAmount.toLocaleString()}</td>
+                        <td className="py-1.5 px-3 text-right font-mono bg-amber-50/30 border-r border-amber-200">
                           ¥{row.retirementAmount.toLocaleString()}
                         </td>
                       </>
                     )}
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
                       ¥{row.billingUnitPrice.toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
                       ¥{row.payUnitPrice.toLocaleString()}
                     </td>
                     {/* 名目粗利率 (★2026-09-15追加。ヘッダーのツールチップ参照) */}
-                    <td className="py-2.5 px-3 text-center font-mono text-sky-800 bg-sky-50/30 whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-center font-mono text-sky-800 bg-sky-50/30 whitespace-nowrap">
                       {row.nominalGrossMarginRateDataAvailable ? (
                         `${row.nominalGrossMarginRate}%`
                       ) : (
                         <span className="text-slate-300">データなし</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">¥{(row.transportExTax || 0).toLocaleString()}</td>
+                    <td className="py-1.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">¥{(row.transportExTax || 0).toLocaleString()}</td>
                     <td
-                      className="py-2.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap"
+                      className="py-1.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap"
                       title={`社保負担額(会社負担、雇保込み): ¥${row.socialInsurance.toLocaleString()}(うち雇保 ¥${row.employmentInsurance.toLocaleString()}), 交通費(自社負担): ¥${row.salaryTransport.toLocaleString()}, 駐車場: ¥${row.parkingFee.toLocaleString()}`}
                     >
                       ¥{breakdown.socialInsuranceOther.toLocaleString()}
@@ -829,27 +890,27 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                     {/* 社保他内訳 (社保他小計の内訳。ヘッダーのグループ見出し参照) */}
                     {showSocialBreakdown && (
                       <>
-                        <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30 border-l border-violet-200">
+                        <td className="py-1.5 px-3 text-right font-mono bg-violet-50/30 border-l border-violet-200">
                           ¥{row.employmentInsurance.toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30">¥{(row.socialInsurance - row.employmentInsurance).toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30">¥{row.salaryTransport.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-right font-mono bg-violet-50/30 border-r border-violet-200">
+                        <td className="py-1.5 px-3 text-right font-mono bg-violet-50/30">¥{(row.socialInsurance - row.employmentInsurance).toLocaleString()}</td>
+                        <td className="py-1.5 px-3 text-right font-mono bg-violet-50/30">¥{row.salaryTransport.toLocaleString()}</td>
+                        <td className="py-1.5 px-3 text-right font-mono bg-violet-50/30 border-r border-violet-200">
                           ¥{row.parkingFee.toLocaleString()}
                         </td>
                       </>
                     )}
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
                       ¥{row.paidLeaveAllowance.toLocaleString()}
                     </td>
                     <td
-                      className={`py-2.5 px-3 text-right font-mono font-extrabold whitespace-nowrap bg-indigo-50/30 ${
+                      className={`py-1.5 px-3 text-right font-mono font-extrabold whitespace-nowrap bg-indigo-50/30 ${
                         isNegative ? 'text-rose-600' : 'text-emerald-700'
                       }`}
                     >
                       ¥{displayGrossProfit.toLocaleString()}
                     </td>
-                    <td className="py-2.5 px-3 text-center whitespace-nowrap bg-indigo-50/30">
+                    <td className="py-1.5 px-3 text-center whitespace-nowrap bg-indigo-50/30">
                       <span
                         className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${
                           isNegative
@@ -862,13 +923,13 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                         {row.grossProfitRate}%
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
                       {row.paidLeaveDays}日
                     </td>
 
                     {/* 交通費突合(四国は常に「対象外」にしかならないため非表示、上のヘッダーと合わせる) */}
                     {companyId !== 'shikoku' && (
-                    <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-center whitespace-nowrap">
                       {!row.transportDataAvailable ? (
                         <span
                           className="text-[11px] font-medium text-slate-400"
@@ -907,7 +968,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                     )}
 
                     {/* 監査ステータス (★2026-08-26修正: info severityは含めず、warning/errorのみで判定) */}
-                    <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                    <td className="py-1.5 px-3 text-center whitespace-nowrap">
                       {actionableAlertCount === 0 ? (
                         <span className="inline-flex items-center space-x-1 text-emerald-600 text-[11px] font-medium">
                           <CheckCircle className="w-3.5 h-3.5" />
@@ -923,7 +984,7 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
                       )}
                     </td>
                     {/* 担当者 (★2026-09-17修正: 表の最後尾に配置。ヘッダー参照) */}
-                    <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">
+                    <td className="py-1.5 px-3 whitespace-nowrap text-slate-600">
                       {row.personInCharge || <span className="text-slate-300">-</span>}
                     </td>
                   </tr>

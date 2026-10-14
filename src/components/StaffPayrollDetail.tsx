@@ -486,6 +486,11 @@ const PaidLeaveOverrideEditor: React.FC<{
 // ★2026-09-02追加(スタッフ給与明細バグ報告「検索がしやすくなるためソート機能をつけてほしい」):
 // 一覧テーブルの列見出しクリックでソートできるようにする。列は一覧テーブルの列構成
 // (スタッフ/対象月 + computeSummary()が返す13項目)とそのまま対応させる。
+// ★2026-10-14修正(はまさんの依頼): 列見出しクリックでの並べ替えを「スタッフ」列だけに絞った
+// (月次粗利明細一覧と同様「スタッフ」「派遣先企業」の2列に絞る依頼だったが、このテーブルは
+// スタッフ×対象月単位の給与明細で「派遣先企業」列自体が存在しないため、スタッフ列のみとした)。
+// 内部の並べ替えロジック(sortKey/sortDir/handleSort)自体は変更せず、renderSortTh()に
+// sortable=falseを渡して他の列の見出しクリックだけ無効化している。
 type SortKey =
   | 'staffName'
   | 'targetMonth'
@@ -557,11 +562,20 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
 
   // ソート可能な列見出しセルを描画する共通ヘルパー。クリックで昇順⇔降順をトグルし、
   // 現在ソート中の列にだけ矢印アイコンを表示する。
-  const renderSortTh = (label: string, key: SortKey, alignRight = true, extraClass = '') => {
+  // ★2026-10-14追加: sortable=falseの列は、見出しクリック・矢印アイコン表示なしの
+  // 通常の静的見出し(renderSortThの枠だけ再利用)にする。
+  const renderSortTh = (label: string, key: SortKey, alignRight = true, extraClass = '', sortable = true) => {
+    if (!sortable) {
+      return (
+        <th className={`py-2 px-3 whitespace-nowrap ${alignRight ? 'text-right' : ''} ${extraClass}`}>
+          {label}
+        </th>
+      );
+    }
     const active = sortKey === key;
     return (
       <th
-        className={`py-3 px-3 whitespace-nowrap cursor-pointer select-none hover:bg-slate-200/70 transition-colors ${
+        className={`py-2 px-3 whitespace-nowrap cursor-pointer select-none hover:bg-slate-200/70 transition-colors ${
           alignRight ? 'text-right' : ''
         } ${extraClass}`}
         onClick={() => handleSort(key)}
@@ -789,63 +803,63 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                 半透明のままにすると固定時にスクロール中の本文が透けるため、不透明色にしている。 */}
             <thead className="sticky top-0 z-20 shadow-sm">
               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                <th className="py-3 px-3 whitespace-nowrap w-6"></th>
-                {renderSortTh('スタッフ', 'staffName', false)}
-                {renderSortTh('対象月', 'targetMonth', false)}
-                {renderSortTh('出勤日数', 'workDays')}
-                {renderSortTh('有給日数', 'paidLeaveDays')}
-                {renderSortTh('労働時間(合計)', 'totalWorkHours')}
-                {renderSortTh('時間内時間', 'regularHours')}
-                {renderSortTh('基本給', 'regularAmount')}
-                {renderSortTh('時間外時間', 'overtimeHours')}
-                {renderSortTh('休出時間', 'holidayWorkHours')}
-                {renderSortTh('交通費', 'transportSummary')}
-                {renderSortTh('通信費・非課税他', 'otherNonTaxable')}
-                {renderSortTh('立替金', 'reimbursement')}
-                {renderSortTh('研修手当', 'trainingAllowance')}
-                {renderSortTh('総支給額', 'paymentAmount')}
-                {renderSortTh('社保合計額', 'socialInsurance')}
-                {renderSortTh('控除額計', 'totalDeduction')}
-                {renderSortTh('差引支給額', 'netPayment', true, 'bg-indigo-100/70')}
+                <th className="py-2 px-3 whitespace-nowrap w-6"></th>
+                {renderSortTh('スタッフ', 'staffName', false, 'sticky left-0 z-30 bg-slate-100 border-r border-slate-200')}
+                {renderSortTh('対象月', 'targetMonth', false, '', false)}
+                {renderSortTh('出勤日数', 'workDays', true, '', false)}
+                {renderSortTh('有給日数', 'paidLeaveDays', true, '', false)}
+                {renderSortTh('労働時間(合計)', 'totalWorkHours', true, '', false)}
+                {renderSortTh('時間内時間', 'regularHours', true, '', false)}
+                {renderSortTh('基本給', 'regularAmount', true, '', false)}
+                {renderSortTh('時間外時間', 'overtimeHours', true, '', false)}
+                {renderSortTh('休出時間', 'holidayWorkHours', true, '', false)}
+                {renderSortTh('交通費', 'transportSummary', true, '', false)}
+                {renderSortTh('通信費・非課税他', 'otherNonTaxable', true, '', false)}
+                {renderSortTh('立替金', 'reimbursement', true, '', false)}
+                {renderSortTh('研修手当', 'trainingAllowance', true, '', false)}
+                {renderSortTh('総支給額', 'paymentAmount', true, '', false)}
+                {renderSortTh('社保合計額', 'socialInsurance', true, '', false)}
+                {renderSortTh('控除額計', 'totalDeduction', true, '', false)}
+                {renderSortTh('差引支給額', 'netPayment', true, 'bg-indigo-100/70', false)}
               </tr>
               {/* 合計行 (★2026-08-27追加・22-20/22-21章修正12): 表示中(フィルタ適用後)の
                   全スタッフ分について、右側の各列と同じ並びで列ごとの合計値を表示する。
                   ★派遣明細202410.xlsm(未払計上表シート)の合計行(9〜10行目)を踏襲。 */}
               <tr className="bg-indigo-50 text-indigo-900 font-extrabold border-b-2 border-indigo-200">
-                <td className="py-2.5 px-3"></td>
-                <td className="py-2.5 px-3 whitespace-nowrap">
+                <td className="py-1.5 px-3"></td>
+                <td className="py-1.5 px-3 whitespace-nowrap sticky left-0 z-30 bg-indigo-50 border-r border-indigo-200">
                   <div className="flex items-center space-x-1.5">
                     <Users className="w-3.5 h-3.5 text-indigo-600" />
                     <span>合計 ({totals.staffCount}名)</span>
                   </div>
                 </td>
-                <td className="py-2.5 px-3"></td>
-                <td className="py-2.5 px-3 text-right font-mono">{totals.workDays}日</td>
-                <td className="py-2.5 px-3 text-right font-mono">{totals.paidLeaveDays}日</td>
-                <td className="py-2.5 px-3 text-right font-mono">{hoursColon(totals.totalWorkHours)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{hoursColon(totals.regularHours)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.regularAmount)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{hoursColon(totals.overtimeHours)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{hoursColon(totals.holidayWorkHours)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.transportSummary)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.otherNonTaxable)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.reimbursement)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.trainingAllowance)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.paymentAmount)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.socialInsurance)}</td>
-                <td className="py-2.5 px-3 text-right font-mono">{yen(totals.totalDeduction)}</td>
-                <td className="py-2.5 px-3 text-right font-mono bg-indigo-100">{yen(totals.netPayment)}</td>
+                <td className="py-1.5 px-3"></td>
+                <td className="py-1.5 px-3 text-right font-mono">{totals.workDays}日</td>
+                <td className="py-1.5 px-3 text-right font-mono">{totals.paidLeaveDays}日</td>
+                <td className="py-1.5 px-3 text-right font-mono">{hoursColon(totals.totalWorkHours)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{hoursColon(totals.regularHours)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{yen(totals.regularAmount)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{hoursColon(totals.overtimeHours)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{hoursColon(totals.holidayWorkHours)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{yen(totals.transportSummary)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{yen(totals.otherNonTaxable)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{yen(totals.reimbursement)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{yen(totals.trainingAllowance)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{yen(totals.paymentAmount)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{yen(totals.socialInsurance)}</td>
+                <td className="py-1.5 px-3 text-right font-mono">{yen(totals.totalDeduction)}</td>
+                <td className="py-1.5 px-3 text-right font-mono bg-indigo-100">{yen(totals.netPayment)}</td>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 font-medium text-slate-800">
               {sortedRows.map(({ p, s, uiKey }) => {
                 const expanded = expandedIds.has(uiKey);
                 return (
-                    <tr key={uiKey} onClick={() => toggleExpand(uiKey)} className="hover:bg-slate-50 cursor-pointer transition-colors">
-                      <td className="py-2.5 px-3 text-slate-400">
+                    <tr key={uiKey} onClick={() => toggleExpand(uiKey)} className="group hover:bg-slate-50 cursor-pointer transition-colors">
+                      <td className="py-1.5 px-3 text-slate-400">
                         {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </td>
-                      <td className="py-2.5 px-3 whitespace-nowrap">
+                      <td className="py-1.5 px-3 whitespace-nowrap sticky left-0 z-10 bg-white group-hover:bg-slate-50 border-r border-slate-200">
                         <div className="flex items-center space-x-1.5">
                           <User className="w-3.5 h-3.5 text-slate-400" />
                           <div>
@@ -869,22 +883,22 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
                           </div>
                         </div>
                       </td>
-                      <td className="py-2.5 px-3 font-semibold text-slate-600 whitespace-nowrap">{p.targetMonth}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{s.workDays}日</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{s.paidLeaveDays}日</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{hoursColon(s.totalWorkHours)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.regularHours)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.regularAmount)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.overtimeHours)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.holidayWorkHours)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.transportSummary)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.otherNonTaxable)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.reimbursement)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-500">{yen(s.trainingAllowance)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.paymentAmount)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.socialInsurance)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono text-slate-700">{yen(s.totalDeduction)}</td>
-                      <td className="py-2.5 px-3 text-right font-mono font-extrabold text-slate-900 bg-indigo-50/30">
+                      <td className="py-1.5 px-3 font-semibold text-slate-600 whitespace-nowrap">{p.targetMonth}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-700">{s.workDays}日</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-700">{s.paidLeaveDays}日</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-700">{hoursColon(s.totalWorkHours)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.regularHours)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-700">{yen(s.regularAmount)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.overtimeHours)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-500">{hoursColon(s.holidayWorkHours)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-700">{yen(s.transportSummary)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-500">{yen(s.otherNonTaxable)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-500">{yen(s.reimbursement)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-500">{yen(s.trainingAllowance)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-700">{yen(s.paymentAmount)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-700">{yen(s.socialInsurance)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono text-slate-700">{yen(s.totalDeduction)}</td>
+                      <td className="py-1.5 px-3 text-right font-mono font-extrabold text-slate-900 bg-indigo-50/30">
                         {yen(s.netPayment)}
                       </td>
                     </tr>

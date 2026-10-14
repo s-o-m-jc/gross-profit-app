@@ -1394,12 +1394,6 @@ export function calculateFiscalYearSummary(
     mTrend.nominalGrossMarginRate = mTrend.billingUnitPriceSum > 0
       ? Number(((1 - mTrend.payUnitPriceSum / mTrend.billingUnitPriceSum) * 100).toFixed(2))
       : 0;
-    // 1人当たり有給日数(当月) = 有給日数 ÷ スタッフ人数 (★2026-09-16追加。
-    // FiscalYearSummary.avgPaidLeaveDaysPerStaffの月次分解。実質粗利率(=grossMarginRate、
-    // 上のクライアント集計と同じく既存フィールドをそのまま使う)・有給（日）(=paidLeaveDays)は
-    // 既存フィールドの表示追加のみのためここでの計算は不要)
-    mTrend.avgPaidLeaveDaysPerStaff =
-      mTrend.staffCount > 0 ? Number((mTrend.paidLeaveDays / mTrend.staffCount).toFixed(2)) : 0;
   });
 
   // クライアントごとの名目粗利率(全期間)・月次推移を確定する
@@ -1439,6 +1433,16 @@ export function calculateFiscalYearSummary(
       mTrend.paidLeaveAmount += paidLeaveAmount;
       mTrend.paidLeaveDays += p.paidLeaveDays || 0;
     }
+  });
+
+  // 1人当たり有給日数(当月) = 有給日数 ÷ スタッフ人数 (★2026-09-16追加。
+  // FiscalYearSummary.avgPaidLeaveDaysPerStaffの月次分解)。
+  // ★2026-10-14修正(はまさんの指摘): 以前は上のmonthlyMap.forEach(mTrend.paidLeaveDays
+  // 積み上げ前)の中で計算していたため、常に0になっていた(mTrend.paidLeaveDaysが
+  // このperiodPayrolls.forEachで積み上がるのはこの後のため)。paidLeaveDays確定後に計算する。
+  monthlyMap.forEach((mTrend) => {
+    mTrend.avgPaidLeaveDaysPerStaff =
+      mTrend.staffCount > 0 ? Number((mTrend.paidLeaveDays / mTrend.staffCount).toFixed(2)) : 0;
   });
 
   // ★2026-08-27追加(22章タスク2): 有給残日数アラート用。
