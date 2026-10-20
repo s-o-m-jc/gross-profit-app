@@ -974,6 +974,154 @@ const SHIKOKU_ATTENDANCE_REMARKS =
   '過去実績Excel(売上実績一覧表)取込み + 勤怠明細票(未払計上表)から出勤日数・時間・基本給を補完(金額・支払＠は売上実績一覧表の値)';
 
 // ---------------------------------------------------------------------------
+// 四国: 売上実績一覧表の売上と勤怠明細票「実績加工」シートの照合(★2026-10-20追加)
+// 実績加工は経理が内税交通費の税抜き・立替金の除外などを反映したスタッフ別の売上で、一覧表はこれを転記して作る。
+// 転記漏れ(例: 2026-05 電通プロモーション 萱野 僚子さんの内税1,120円)を見つけるため、取込み時に照らし合わせて
+// 差を警告する(金額は変えない)。
+// ---------------------------------------------------------------------------
+
+/** この金額(円)以上の差があれば警告する。はまさんの決定: ÷1.1の端数の1円も含めて全部出す */
+export const SHIKOKU_SALES_CHECK_THRESHOLD = 1;
+
+export interface ShikokuJissekiKakoRow {
+  /** 取引先番号(実績加工の「取引先番号-スタッフ番号」の前半) */
+  clientNo: string;
+  staffNo: string;
+  staffName: string;
+  /** 取引先名(古い書式の表にだけある。新しい書式では空) */
+  clientName: string;
+  amount: number;
+}
+
+export interface ShikokuSalesMismatch {
+  staffNo: string;
+  staffName: string;
+  clientName: string;
+  /** 売上実績一覧表(アプリに登録される値)の売上+紹介手数料。スタッフ×月の合計 */
+  summaryAmount: number;
+  /** 実績加工の請求額。スタッフ×月の合計 */
+  kakoAmount: number;
+  /** summaryAmount − kakoAmount */
+  diff: number;
+}
+
+export interface ShikokuSalesCheckResult {
+  /** 'no-sheet': 実績加工シート(またはその表)が見つからず照合しなかった */
+  status: 'checked' | 'no-sheet';
+  targetMonth: string;
+  comparedStaffCount: number;
+  mismatches: ShikokuSalesMismatch[];
+  /** 9月・10月は決算月の9/21〜9/30分の計上月のずれで、20日締めのスタッフに逆向きの同額の差が出る(誤りではない) */
+  isFiscalBoundaryMonth: boolean;
+}
+
+const SHIKOKU_KAKO_KEY = /^\d+-\d+$/;
+
+/**
+ * 勤怠明細票の「実績加工」シートから、一覧表へ転記するスタッフ別の売上を読む。表が見つからなければnull。
+ * 書式は2つ(どちらも「取引先番号-スタッフ番号」のキー列があり、その右の最初の「請求額」列が転記する売上):
+ * - 〜2025年: 右側の転記用の表「参照番号/取引先番号/取引先名/スタッフ番号/スタッフ氏名/請求額…」(左側A〜E列は
+ *   スタナビの実績CSVの値そのままで、立替金などの調整前なので使わない)
+ * - 2025年末〜: 「売上実績表へ貼り付ける」表「番号/氏名/請求額(右の額を戻した状態)…」(右側の立替金等一覧にも
+ *   「番号」列があるが、左の表の「番号」を先に見つけるのでそちらは読まない)
+ */
+export function extractShikokuJissekiKakoSales(wb: XLSX.WorkBook): ShikokuJissekiKakoRow[] | null {
+  const sheetName = wb.SheetNames.find((n) => n.normalize('NFKC').trim() === '実績加工');
+  if (!sheetName) return null;
+  const aoa: any[][] = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[sheetName], { header: 1, blankrows: true, defval: '', raw: true });
+  for (let i = 0; i < aoa.length; i++) {
+    const h = aoa[i].map((c) => normalizeShikokuHeader(c));
+    let keyCol = h.indexOf('参照番号');
+    if (keyCol === -1) {
+      const c = h.indexOf('番号');
+      if (c !== -1 && SHIKOKU_KAKO_KEY.test(normalizeShikokuHeader(aoa[i + 1]?.[c]))) keyCol = c;
+    }
+    if (keyCol === -1) continue;
+    const right = (pred: (s: string) => boolean) => h.findIndex((s, j) => j > keyCol && pred(s));
+    const amountCol = right((s) => s.startsWith('請求額'));
+    if (amountCol === -1) continue;
+    const nameCol = right((s) => s.includes('氏名'));
+    const clientNameCol = right((s) => s === '取引先名');
+    const rows: ShikokuJissekiKakoRow[] = [];
+    for (const r of aoa.slice(i + 1)) {
+      const key = normalizeShikokuHeader(r[keyCol]);
+      const amount = r[amountCol];
+      if (!SHIKOKU_KAKO_KEY.test(key) || key === '0-0' || typeof amount !== 'number') continue;
+      const [clientNo, staffNo] = key.split('-');
+      rows.push({
+        clientNo,
+        staffNo,
+        staffName: nameCol === -1 ? '' : parseShikokuStr(r[nameCol]),
+        clientName: clientNameCol === -1 ? '' : parseShikokuStr(r[clientNameCol]),
+        amount,
+      });
+    }
+    return rows;
+  }
+  return null;
+}
+
+/**
+ * 売上実績一覧表の売上(請求行の売上+紹介手数料)と実績加工の請求額を、スタッフ×月の合計で比べる。
+ * 一覧表は紹介手数料の行を請求行に入れない(紹介手数料として別に登録する)が、実績加工には請求額として入っているため、
+ * 紹介手数料も一覧表側に足して比べる。kakoRowsがnull(実績加工が無い)なら照合しない。
+ */
+export function checkShikokuSalesAgainstJissekiKako(
+  targetMonth: string,
+  billingRows: BillingRow[],
+  referralFees: { staffNo: string; amount: number }[],
+  kakoRows: ShikokuJissekiKakoRow[] | null
+): ShikokuSalesCheckResult {
+  const isFiscalBoundaryMonth = /-(09|10)$/.test(targetMonth);
+  if (!kakoRows) return { status: 'no-sheet', targetMonth, comparedStaffCount: 0, mismatches: [], isFiscalBoundaryMonth };
+
+  const summary = new Map<string, number>();
+  const names = new Map<string, string>();
+  const clients = new Map<string, Set<string>>();
+  const addClient = (staffNo: string, name: string) => {
+    if (!name) return;
+    if (!clients.has(staffNo)) clients.set(staffNo, new Set());
+    clients.get(staffNo)!.add(name);
+  };
+  billingRows
+    .filter((b) => b.targetMonth === targetMonth)
+    .forEach((b) => {
+      summary.set(b.staffNo, (summary.get(b.staffNo) || 0) + (b.billingAmountExTax || 0));
+      if (!names.has(b.staffNo) && b.staffName) names.set(b.staffNo, b.staffName);
+      addClient(b.staffNo, b.clientName);
+    });
+  referralFees.forEach((r) => summary.set(r.staffNo, (summary.get(r.staffNo) || 0) + r.amount));
+
+  const kako = new Map<string, number>();
+  const kakoClients = new Map<string, Set<string>>();
+  kakoRows.forEach((k) => {
+    kako.set(k.staffNo, (kako.get(k.staffNo) || 0) + k.amount);
+    if (!names.has(k.staffNo) && k.staffName) names.set(k.staffNo, k.staffName);
+    if (!kakoClients.has(k.staffNo)) kakoClients.set(k.staffNo, new Set());
+    kakoClients.get(k.staffNo)!.add(k.clientName || `取引先番号${k.clientNo}`);
+  });
+
+  const staffNos = new Set([...summary.keys(), ...kako.keys()]);
+  const mismatches: ShikokuSalesMismatch[] = [];
+  staffNos.forEach((staffNo) => {
+    const summaryAmount = Math.round(summary.get(staffNo) || 0);
+    const kakoAmount = Math.round(kako.get(staffNo) || 0);
+    const diff = summaryAmount - kakoAmount;
+    if (Math.abs(diff) < SHIKOKU_SALES_CHECK_THRESHOLD) return;
+    mismatches.push({
+      staffNo,
+      staffName: names.get(staffNo) || '',
+      clientName: [...(clients.get(staffNo) ?? kakoClients.get(staffNo) ?? [])].join('・'),
+      summaryAmount,
+      kakoAmount,
+      diff,
+    });
+  });
+  mismatches.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || a.staffNo.localeCompare(b.staffNo));
+  return { status: 'checked', targetMonth, comparedStaffCount: staffNos.size, mismatches, isFiscalBoundaryMonth };
+}
+
+// ---------------------------------------------------------------------------
 // 大阪人材
 // ---------------------------------------------------------------------------
 

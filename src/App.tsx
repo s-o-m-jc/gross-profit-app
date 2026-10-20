@@ -1129,6 +1129,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
                 onBillingLoaded={handleBillingLoaded}
                 onInvoiceLoaded={handleInvoiceLoaded}
                 getMonthPayrollRows={(month) => selectedCompanyMonths[month]?.payrollRows || []}
+                getMonthBillingRows={(month) => selectedCompanyMonths[month]?.billingRows || []}
+                getMonthReferralFeeRows={(month) => selectedCompanyMonths[month]?.referralFeeRows || []}
               />
             )}
 
