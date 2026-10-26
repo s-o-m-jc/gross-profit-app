@@ -38,8 +38,10 @@ function parseSafeString(val: any): string {
  * そのまま row[key] のように参照していたため、該当キーが''の場合に row[''] という
  * 「ヘッダーが空文字だった列」の値を誤って読んでしまっていた。
  * 実データ(★派遣明細202310.xlsm)で検証したところ、この未払計上表シートには「総支給額」列の
- * 直後にヘッダーが空文字の列が実在し(元Excel側の集計チェック用と見られる、総支給額と
- * 同一の値を持つ列)、findColumnKeyがマッチ先を見つけられなかった複数のフィールド
+ * 直後にヘッダーが空文字の列が実在し(★2026-10-23訂正: 総支給額の複製ではなく雇用保険対象額。
+ * 立替金など雇用保険の対象外の支給が無い人は総支給額と同じ値になるため複製に見えていた。
+ * 四国・松山の全員分で賃金台帳CSVの雇用保険対象額と一致。parsePayrollCsvで読む)、
+ * findColumnKeyがマッチ先を見つけられなかった複数のフィールド
  * (厚生年金基金・年調過不足額・仮払精算・差引支給額 等、実列名が候補名と食い違っていた
  * もの)が、揃ってこの「総支給額の複製列」の値を表示してしまう不具合として現れていた
  * (「複数の控除項目が同一の金額を示す」というバグ報告の直接の原因)。
@@ -209,6 +211,16 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
     header: true,
     skipEmptyLines: true,
   });
+
+  // 給与計算書印刷CSV(四国・松山の未払計上表)は、雇用保険対象額の見出しが空のまま総支給額のすぐ右にある
+  // (大阪の給与一覧（スタナビ）は同じ位置に「雇用保険対象額」の見出しがある)。見出しの名前で見つからないときはこの列を読む。
+  // 空の見出しはPapa Parseで''(2つ目以降は'_1'等)になるため、getNumの「列なし」(key==='')とは別に扱う。
+  const fields = parsed.meta.fields ?? [];
+  const totalPayIdx = fields.findIndex((f) => ['総支給額', '給与支給総額', '支給総額'].includes(normalizeHeader(f)));
+  const unnamedEiBaseField =
+    totalPayIdx >= 0 && totalPayIdx + 1 < fields.length && /^(_\d+)?$/.test(normalizeHeader(fields[totalPayIdx + 1]))
+      ? fields[totalPayIdx + 1]
+      : null;
 
   return parsed.data
     .map((row) => {
@@ -424,7 +436,11 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
         lateEarlyDeduction: getNum(row, lateEarlyDeductionKey),
         absenceDeduction: getNum(row, absenceDeductionKey),
         leaveDeduction: getNum(row, leaveDeductionKey),
-        employmentInsuranceBase: getNum(row, employmentInsuranceBaseKey),
+        employmentInsuranceBase: employmentInsuranceBaseKey
+          ? getNum(row, employmentInsuranceBaseKey)
+          : unnamedEiBaseField !== null
+          ? parseSafeNumber(row[unnamedEiBaseField])
+          : 0,
         healthInsurance: getNum(row, healthInsuranceKey),
         nursingInsurance: getNum(row, nursingInsuranceKey),
         pensionInsurance: getNum(row, pensionInsuranceKey),
@@ -459,18 +475,20 @@ export function parseBillingCsv(csvText: string, fileName?: string): BillingRow[
 
   return parsed.data
     .map((row) => {
+      // ★2026-10-23追加: 四国のスタナビの請求支払一覧は同じ出力機能で列も同じだが、一部の見出しが違う
+      // (ク番号/クライアント/ス番号/状況/有休/担当)。社保負担額・有休の中身も大阪・松山と同じ意味であることを実データで確認済み。
       const billingNoKey = findColumnKey(row, ['請求No', '請求番号']);
       const monthKey = findColumnKey(row, ['対象年月', '年月']);
-      const staffNoKey = findColumnKey(row, ['スタッフNo', 'スタッフ番号', '社員番号']);
+      const staffNoKey = findColumnKey(row, ['スタッフNo', 'スタッフ番号', '社員番号', 'ス番号']);
       const nameKey = findColumnKey(row, ['スタッフ氏名', 'スタッフ名', '氏名']);
-      const clientCodeKey = findColumnKey(row, ['クライアント番号', '派遣先コード', '得意先コード']);
-      const clientNameKey = findColumnKey(row, ['クライアント名称', '派遣先名', '得意先名', '企業名']);
+      const clientCodeKey = findColumnKey(row, ['クライアント番号', '派遣先コード', '得意先コード', 'ク番号']);
+      const clientNameKey = findColumnKey(row, ['クライアント名称', '派遣先名', '得意先名', '企業名', 'クライアント']);
       const orderNoKey = findColumnKey(row, ['受注番号']);
       const orderNameKey = findColumnKey(row, ['受注名称']);
       const billAmountKey = findColumnKey(row, ['請求額', '請求金額', '売上額']);
       const paymentAmountKey = findColumnKey(row, ['支払額']);
       const socialInsuranceKey = findColumnKey(row, ['社保負担額', '社保他']);
-      const paidLeaveDaysUsedKey = findColumnKey(row, ['有給使用日数', '有休日数', '有給日数']);
+      const paidLeaveDaysUsedKey = findColumnKey(row, ['有給使用日数', '有休日数', '有給日数', '有休']);
       const transportKey = findColumnKey(row, ['請求交通費', 'うち交通費請求', '交通費']);
       const referralKey = findColumnKey(row, ['紹介手数料', '紹介料']);
       const hoursKey = findColumnKey(row, ['稼働時間', '労働時間']);
@@ -479,7 +497,7 @@ export function parseBillingCsv(csvText: string, fileName?: string): BillingRow[
       // シート(excelImport.ts/extractMatsuyamaPastDataがこのparseBillingCsvを経由して読む)の
       // Q列に実在する。四国・大阪の取り込み元にはこの列が無く、該当列なしとして常にundefinedになる
       // (getStrが空文字を返し、下記で||undefinedにフォールバックする)。
-      const personInChargeKey = findColumnKey(row, ['担当者']);
+      const personInChargeKey = findColumnKey(row, ['担当者', '担当']);
 
       // 対象年月: (1)列があれば列 → (2)ファイル名 の優先順
       const targetMonth = monthKey ? normalizeMonth(row[monthKey]) : monthFromFileName;
