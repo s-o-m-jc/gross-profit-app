@@ -40,6 +40,8 @@ import {
   mergeShikokuAttendanceDetail,
   extractShikokuJissekiKakoSales,
   checkShikokuSalesAgainstJissekiKako,
+  readShikokuReferralInvoices,
+  splitShikokuReferralFees,
   PastImportCompany,
   PastImportResult,
   ShikokuSalesCheckResult,
@@ -59,6 +61,8 @@ interface PastExcelImportPanelProps {
   // ★2026-10-20追加: 四国の勤怠明細票の「実績加工」と照合する、その月の登録済み請求行・紹介手数料
   getMonthBillingRows: (month: string) => BillingRow[];
   getMonthReferralFeeRows: (month: string) => ReferralFeeRow[];
+  // ★2026-10-26追加: 四国の勤怠明細票で、派遣売上の請求行に入っていた紹介手数料を付け替えるときに登録する
+  onReferralFeeAdded: (row: ReferralFeeRow) => void;
 }
 
 function toPastImportCompany(id: CompanyId): PastImportCompany | null {
@@ -159,6 +163,7 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
   getMonthPayrollRows,
   getMonthBillingRows,
   getMonthReferralFeeRows,
+  onReferralFeeAdded,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -288,16 +293,30 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
             });
             continue;
           }
-          onPayrollLoaded(merged.payrollRows);
+          // ★2026-10-26追加: 実績CSVの紹介手数料の請求書が派遣売上の請求行に入っていれば、紹介手数料に付け替える
+          // (一覧表は同じ人の派遣分と合算するため。登録済みの紹介手数料と同じスタッフ・同じ額のものは付け替えない)
+          const monthBilling = batch?.billingRows ?? getMonthBillingRows(month);
+          const split = splitShikokuReferralFees(month, monthBilling, merged.payrollRows, readShikokuReferralInvoices(wb), referralFees);
+          onPayrollLoaded(split.payrollRows);
+          if (split.referralFeeRows.length > 0) {
+            onBillingLoaded(split.billingRows);
+            split.referralFeeRows.forEach(onReferralFeeAdded);
+          }
+          const referralNote =
+            split.referralFeeRows.length > 0
+              ? `、紹介手数料${split.referralFeeRows.length}件(計${split.referralFeeRows
+                  .reduce((t, r) => t + r.amount, 0)
+                  .toLocaleString()}円)を派遣売上の請求行から紹介手数料に付け替えました`
+              : '(金額は変更なし)';
           updateEntry(id, {
             status: 'success',
-            summary: `勤怠明細票: 給与${merged.mergedCount}件に出勤日数・時間・基本給を補いました(金額は変更なし)`,
+            summary: `勤怠明細票: 給与${merged.mergedCount}件に出勤日数・時間・基本給を補いました${referralNote}`,
             result: {
-              payrollRows: merged.payrollRows,
-              billingRows: [],
+              payrollRows: split.payrollRows,
+              billingRows: split.referralFeeRows.length > 0 ? split.billingRows : [],
               invoiceRows: [],
               targetMonth: month,
-              warnings: merged.warnings,
+              warnings: [...merged.warnings, ...split.warnings],
             },
             salesCheck,
             errorMessage: undefined,
