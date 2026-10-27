@@ -36,15 +36,12 @@ import {
   guessTargetMonthFromFileName,
   extractPastData,
   isShikokuAttendanceWorkbook,
-  extractShikokuAttendanceRows,
-  mergeShikokuAttendanceDetail,
-  extractShikokuJissekiKakoSales,
-  checkShikokuSalesAgainstJissekiKako,
-  readShikokuReferralInvoices,
-  splitShikokuReferralFees,
+  extractShikokuKintaiPastData,
+  alignShikokuClientNames,
+  diffShikokuMonthImport,
   PastImportCompany,
   PastImportResult,
-  ShikokuSalesCheckResult,
+  ShikokuImportDiff,
 } from '../utils/excelImport';
 
 interface PastExcelImportPanelProps {
@@ -81,7 +78,15 @@ function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-type FileStatus = 'pending' | 'processing' | 'success' | 'error';
+// 'confirm': 四国の勤怠明細票で、登録済みのデータとの差があり、取り込む前の確認待ち
+type FileStatus = 'pending' | 'processing' | 'confirm' | 'success' | 'error';
+
+/** 確認後に反映する内容(四国の勤怠明細票) */
+interface PendingShikokuImport {
+  billingRows: BillingRow[];
+  payrollRows: PayrollRow[];
+  newReferralFeeRows: ReferralFeeRow[];
+}
 
 interface PastImportFileEntry {
   id: string;
@@ -92,67 +97,85 @@ interface PastImportFileEntry {
   targetMonth: string;
   status: FileStatus;
   result?: PastImportResult;
-  /** 取込み結果の件数表示を置き換える説明(四国の勤怠明細票による補完時) */
+  /** 取込み結果の件数表示を置き換える説明(四国の勤怠明細票) */
   summary?: string;
   errorMessage?: string;
-  /** 四国の勤怠明細票: 売上実績一覧表の売上と「実績加工」の照合結果 */
-  salesCheck?: ShikokuSalesCheckResult;
+  /** 四国の勤怠明細票: 登録済みのデータとの差 */
+  diff?: ShikokuImportDiff;
+  /** 四国の勤怠明細票: 確認後に反映する内容(status==='confirm'の間だけ) */
+  pending?: PendingShikokuImport;
 }
 
 const yen = (n: number) => `${n.toLocaleString()}円`;
+const signedYen = (n: number) => `${n > 0 ? '+' : ''}${n.toLocaleString()}円`;
 
-function SalesCheckView({ check }: { check: ShikokuSalesCheckResult }) {
-  if (check.status === 'no-sheet') {
-    return <p className="text-slate-500 mt-1">「実績加工」シートの表が見つからないため、売上の照合は省略しました。</p>;
-  }
-  if (check.mismatches.length === 0) {
-    return <p className="text-emerald-700 mt-1">売上の照合: 実績加工と{check.comparedStaffCount}人すべて一致しました。</p>;
-  }
+/** 四国の勤怠明細票: 登録済みのデータとの差の一覧(★2026-10-27追加) */
+function ImportDiffView({ diff, month }: { diff: ShikokuImportDiff; month: string }) {
+  const changedTotals = diff.totals.filter((t) => t.before !== t.after);
   return (
     <div className="mt-1.5 border border-amber-300 bg-amber-50 rounded-lg p-2 text-amber-900">
       <p className="font-semibold flex items-start space-x-1">
         <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
         <span>
-          売上実績一覧表の売上が「実績加工」と違うスタッフが{check.mismatches.length}人います(金額は一覧表のまま取り込んでいます。
-          内税交通費の税抜き・立替金の除外などの転記漏れがないか確認してください)。
+          {month}に登録済みのデータと違うスタッフが{diff.rows.length}人います。勤怠明細票は版が複数あることがあり、ファイル名だけでは
+          新旧が分かりません。下の差を見て、この版で取り込んでよいか確認してください。
         </span>
       </p>
-      {check.isFiscalBoundaryMonth && (
+      {/-(09|10)$/.test(month) && (
         <p className="mt-1 text-amber-800">
-          ※9月・10月は、決算月の9/21〜9/30分の計上月の違いで、20日締めのスタッフに9月と10月で逆向きの同じ金額の差が出ます。これは誤りではありません。
+          ※9月・10月は、決算月の9/21〜9/30分の計上月の扱いで、20日締めのスタッフに差が出ることがあります。
         </p>
       )}
-      <div className="overflow-x-auto mt-1.5">
+      {changedTotals.length > 0 && (
+        <p className="mt-1">
+          月の合計:{' '}
+          {changedTotals.map((t) => `${t.label} ${yen(t.before)} → ${yen(t.after)}(${signedYen(t.after - t.before)})`).join('、')}
+        </p>
+      )}
+      <div className="overflow-auto mt-1.5 max-h-72">
         <table className="text-xs border-collapse">
           <thead>
             <tr className="text-amber-800 border-b border-amber-200">
-              <th className="text-left py-1 pr-3 font-semibold whitespace-nowrap">会社名</th>
               <th className="text-left py-1 pr-3 font-semibold whitespace-nowrap">スタッフ</th>
-              <th className="text-right py-1 pr-3 font-semibold whitespace-nowrap">一覧表の売上</th>
-              <th className="text-right py-1 pr-3 font-semibold whitespace-nowrap">実績加工</th>
-              <th className="text-right py-1 font-semibold whitespace-nowrap">差額</th>
+              <th className="text-left py-1 pr-3 font-semibold whitespace-nowrap">派遣先</th>
+              <th className="text-left py-1 pr-3 font-semibold whitespace-nowrap">項目</th>
+              <th className="text-right py-1 pr-3 font-semibold whitespace-nowrap">登録済み</th>
+              <th className="text-right py-1 pr-3 font-semibold whitespace-nowrap">取り込む値</th>
+              <th className="text-right py-1 font-semibold whitespace-nowrap">差</th>
             </tr>
           </thead>
           <tbody>
-            {check.mismatches.map((m) => (
-              <tr key={m.staffNo} className="border-b border-amber-100 last:border-0">
-                <td className="py-1 pr-3 whitespace-nowrap">{m.clientName}</td>
-                <td className="py-1 pr-3 whitespace-nowrap">
-                  {m.staffName}({m.staffNo})
-                </td>
-                <td className="py-1 pr-3 text-right font-mono">{yen(m.summaryAmount)}</td>
-                <td className="py-1 pr-3 text-right font-mono">{yen(m.kakoAmount)}</td>
-                <td className="py-1 text-right font-mono font-semibold">
-                  {m.diff > 0 ? '+' : ''}
-                  {yen(m.diff)}
-                </td>
-              </tr>
-            ))}
+            {diff.rows.flatMap((r) =>
+              r.fields.map((f, i) => (
+                <tr key={`${r.staffNo}_${f.label}`} className="border-b border-amber-100 last:border-0">
+                  <td className="py-1 pr-3 whitespace-nowrap">
+                    {i === 0 && (
+                      <>
+                        {r.staffName}({r.staffNo})
+                        {r.kind === 'added' && <span className="ml-1 text-emerald-700">新規</span>}
+                        {r.kind === 'removed' && <span className="ml-1 text-rose-600">取込み後は無し</span>}
+                      </>
+                    )}
+                  </td>
+                  <td className="py-1 pr-3 whitespace-nowrap">{i === 0 ? r.clientName : ''}</td>
+                  <td className="py-1 pr-3 whitespace-nowrap">{f.label}</td>
+                  <td className="py-1 pr-3 text-right font-mono">{yen(f.before)}</td>
+                  <td className="py-1 pr-3 text-right font-mono">{yen(f.after)}</td>
+                  <td className="py-1 text-right font-mono font-semibold">{signedYen(f.after - f.before)}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
     </div>
   );
+}
+
+/** 前の月("YYYY-MM") */
+function previousMonth(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
 }
 
 export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
@@ -207,6 +230,31 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
 
   const clearAll = () => setFiles([]);
 
+  // 四国の勤怠明細票: その月の請求・給与を置き換え、請求行から分けた紹介手数料を登録する
+  const applyShikokuKintaiImport = (id: string, pending: PendingShikokuImport, diff: ShikokuImportDiff) => {
+    onBillingLoaded(pending.billingRows);
+    onPayrollLoaded(pending.payrollRows);
+    pending.newReferralFeeRows.forEach(onReferralFeeAdded);
+    const referralNote =
+      pending.newReferralFeeRows.length > 0
+        ? `、紹介手数料${pending.newReferralFeeRows.length}件(計${pending.newReferralFeeRows
+            .reduce((t, r) => t + r.amount, 0)
+            .toLocaleString()}円)を派遣売上から分けて登録`
+        : '';
+    const diffNote = diff.existingEmpty ? '' : diff.rows.length > 0 ? `(登録済みと違ったスタッフ${diff.rows.length}人)` : '(登録済みと同じ)';
+    updateEntry(id, {
+      status: 'success',
+      summary: `勤怠明細票: 請求${pending.billingRows.length}件(実績加工)・給与${pending.payrollRows.length}件(未払計上表)を取り込みました${referralNote}${diffNote}`,
+      pending: undefined,
+      errorMessage: undefined,
+    });
+  };
+  const confirmEntry = (entry: PastImportFileEntry) => {
+    if (entry.pending && entry.diff) applyShikokuKintaiImport(entry.id, entry.pending, entry.diff);
+  };
+  const cancelEntry = (id: string) =>
+    updateEntry(id, { status: 'error', pending: undefined, errorMessage: '取り込みを取りやめました(登録済みのデータは変わっていません)。' });
+
   // 一括確定: 一覧の各ファイルについて、順番にreadWorkbookFile→extractPastDataを実行し、
   // 成功したものから順にonPayrollLoaded等で反映する。1ファイルの失敗(対象年月未入力・
   // 読み取りエラー・データ0件など)は、そのファイルをエラー表示にするだけで処理を止めず、
@@ -221,7 +269,7 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
     // 取込み結果は画面の状態にまだ反映されていない(getMonthPayrollRows等はボタンを押した時点の値を返す)ため、
     // importedInBatchで勤怠明細票の処理に引き継ぐ。
     const loaded: { entry: PastImportFileEntry; wb: XLSX.WorkBook; isAttendance: boolean }[] = [];
-    for (const entry of files.filter((e) => e.status !== 'success')) {
+    for (const entry of files.filter((e) => e.status !== 'success' && e.status !== 'confirm')) {
       if (!/^\d{4}-\d{2}$/.test(entry.targetMonth)) {
         updateEntry(entry.id, {
           status: 'error',
@@ -247,80 +295,48 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
       const id = entry.id;
       const month = entry.targetMonth;
       try {
-        // ★2026-10-01追加: 四国の勤怠明細票(未払計上表あり・売上実績一覧表の月シート無し)は、
-        // 金額は登録済みの売上実績一覧表の値のまま、勤怠(日数・時間)と基本給だけを補う
-        // (excelImport.ts mergeShikokuAttendanceDetail参照)。
+        // ★2026-10-27変更((A)案): 四国の勤怠明細票(未払計上表あり・売上実績一覧表の月シート無し)から、その月の請求・給与を
+        // 取り込む(請求=「実績加工」、給与=「未払計上表」。excelImport.ts extractShikokuKintaiPastData)。以前は売上実績一覧表で
+        // 取り込んだ月に勤怠だけを補っていた。勤怠明細票は版が複数あることがあるため、その月に登録済みのデータと差があれば、
+        // 一覧で見せて確認してから反映する(差が無い・その月が未登録なら、そのまま反映する)。
         if (isAttendance) {
           const batch = importedInBatch.get(month);
-          const existing = batch?.payrollRows ?? getMonthPayrollRows(month);
-          if (existing.length === 0) {
-            updateEntry(id, {
-              status: 'error',
-              errorMessage: `勤怠明細票は、登録済みの給与データに出勤日数・時間を補うためのファイルです。${month}は給与データが未登録のため、先に売上実績一覧表を取り込んでください。`,
-            });
-            continue;
-          }
-          // ★2026-10-20追加: 一覧表の売上を「実績加工」と照合する(金額は変えない)。紹介手数料は登録済みの値と、
-          // 同じ回の一覧表で見つかった候補(まだ登録していないもの)の両方を一覧表側に含める。
+          const existingBilling = batch?.billingRows ?? getMonthBillingRows(month);
+          const existingPayroll = batch?.payrollRows ?? getMonthPayrollRows(month);
           const registeredReferrals = getMonthReferralFeeRows(month);
-          const referralFees = [
-            ...registeredReferrals.map((r) => ({ staffNo: r.staffNo, amount: r.amount })),
-            ...(batch?.referralFeeRows ?? [])
-              .filter((c) => !registeredReferrals.some((r) => r.staffNo === c.staffNo))
-              .map((c) => ({ staffNo: c.staffNo, amount: c.amount })),
-          ];
-          const salesCheck = checkShikokuSalesAgainstJissekiKako(
+          const extracted = extractShikokuKintaiPastData(
+            wb,
             month,
-            batch?.billingRows ?? getMonthBillingRows(month),
-            referralFees,
-            extractShikokuJissekiKakoSales(wb)
+            entry.file.name,
+            registeredReferrals.map((r) => ({ staffNo: r.staffNo, amount: r.amount }))
           );
-          const attendance = extractShikokuAttendanceRows(wb, month, entry.file.name);
-          if (attendance.length === 0) {
+          if (extracted.billingRows.length === 0 && extracted.payrollRows.length === 0) {
             updateEntry(id, {
               status: 'error',
-              salesCheck,
-              errorMessage: '「未払計上表」シートから給与行を1件も読み取れませんでした(10行目がヘッダーの想定)。',
+              result: extracted,
+              errorMessage: `「実績加工」「未払計上表」シートからデータを読み取れませんでした。${extracted.warnings.join(' ')}`,
             });
             continue;
           }
-          const merged = mergeShikokuAttendanceDetail(existing, attendance, month);
-          if (merged.mergedCount === 0) {
-            updateEntry(id, {
-              status: 'error',
-              salesCheck,
-              errorMessage: `勤怠を補える行がありませんでした。${merged.warnings.join(' ')}`,
-            });
+          // 取引先名を登録済みのデータ(同じ月、無ければ3ヶ月前まで)に揃える
+          let reference = existingBilling;
+          for (let m = month, i = 0; reference.length === 0 && i < 3; i++) {
+            m = previousMonth(m);
+            reference = getMonthBillingRows(m);
+          }
+          const billingRows = alignShikokuClientNames(extracted.billingRows, reference);
+          const newReferralFeeRows = extracted.splitReferralFeeRows ?? [];
+          const pending: PendingShikokuImport = { billingRows, payrollRows: extracted.payrollRows, newReferralFeeRows };
+          const diff = diffShikokuMonthImport(
+            { billingRows: existingBilling, payrollRows: existingPayroll, referralFeeRows: registeredReferrals },
+            { billingRows, payrollRows: extracted.payrollRows, referralFeeRows: [...registeredReferrals, ...newReferralFeeRows] }
+          );
+          const result = { ...extracted, billingRows };
+          if (!diff.existingEmpty && diff.rows.length > 0) {
+            updateEntry(id, { status: 'confirm', result, diff, pending, errorMessage: undefined });
             continue;
           }
-          // ★2026-10-26追加: 実績CSVの紹介手数料の請求書が派遣売上の請求行に入っていれば、紹介手数料に付け替える
-          // (一覧表は同じ人の派遣分と合算するため。登録済みの紹介手数料と同じスタッフ・同じ額のものは付け替えない)
-          const monthBilling = batch?.billingRows ?? getMonthBillingRows(month);
-          const split = splitShikokuReferralFees(month, monthBilling, merged.payrollRows, readShikokuReferralInvoices(wb), referralFees);
-          onPayrollLoaded(split.payrollRows);
-          if (split.referralFeeRows.length > 0) {
-            onBillingLoaded(split.billingRows);
-            split.referralFeeRows.forEach(onReferralFeeAdded);
-          }
-          const referralNote =
-            split.referralFeeRows.length > 0
-              ? `、紹介手数料${split.referralFeeRows.length}件(計${split.referralFeeRows
-                  .reduce((t, r) => t + r.amount, 0)
-                  .toLocaleString()}円)を派遣売上の請求行から紹介手数料に付け替えました`
-              : '(金額は変更なし)';
-          updateEntry(id, {
-            status: 'success',
-            summary: `勤怠明細票: 給与${merged.mergedCount}件に出勤日数・時間・基本給を補いました${referralNote}`,
-            result: {
-              payrollRows: split.payrollRows,
-              billingRows: split.referralFeeRows.length > 0 ? split.billingRows : [],
-              invoiceRows: [],
-              targetMonth: month,
-              warnings: [...merged.warnings, ...split.warnings],
-            },
-            salesCheck,
-            errorMessage: undefined,
-          });
+          applyShikokuKintaiImport(id, pending, diff);
           continue;
         }
 
@@ -355,16 +371,16 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
       ? '「未払計上表」「請求支払一覧」シート'
       : company === 'osaka'
       ? '「給与一覧（スタナビ）」「請求支払（スタナビ）」シート'
-      : '「YYYY年M月」シート(売上実績一覧表)';
+      : '「実績加工」「未払計上表」シート';
   // ★2026-10-01修正: 四国は2026-09-29に売上実績一覧表形式へ切り替えたが、この案内が勤怠明細票のままだった
   const fileNameLabel =
     company === 'matsuyama'
       ? '★派遣明細YYYYMM.xlsm'
       : company === 'osaka'
       ? '契約別売上実績表（YYYY.M).xlsx'
-      : '売上実績一覧表';
+      : '★YYMM勤怠明細票 時間計算.xlsm(または売上実績一覧表)';
 
-  const pendingCount = files.filter((e) => e.status !== 'success').length;
+  const pendingCount = files.filter((e) => e.status !== 'success' && e.status !== 'confirm').length;
   const successCount = files.filter((e) => e.status === 'success').length;
   const errorCount = files.filter((e) => e.status === 'error').length;
 
@@ -398,10 +414,12 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
           </p>
           {company === 'shikoku' && (
             <p className="text-slate-600 leading-relaxed">
-              ★YYMM勤怠明細票 時間計算.xlsm を選ぶと、売上実績一覧表で取り込み済みの月の給与データに、「未払計上表」シートの
-              出勤日数・時間・基本給だけを補います(支払・社保他・交通費などの金額と支払＠は変わりません)。
-              あわせて、一覧表の売上を勤怠明細票の「実績加工」シート(経理が内税交通費などを直したスタッフ別の売上)と照らし合わせ、
-              1円でも違うスタッフがいれば一覧で表示します(金額は変えません)。一覧表と勤怠明細票は同じ回にまとめて選んでも構いません。
+              通常は ★YYMM勤怠明細票 時間計算.xlsm を選んでください。「実績加工」シート(経理が内税交通費・立替金・締め日などを
+              直した後のスタッフ別の請求・支給・社保負担額)を請求データ、「未払計上表」シートを給与データとして、その月の分を取り込みます。
+              紹介手数料の請求書(実績CSVの請求先部署名に「紹介」)は派遣売上から分けて紹介手数料に登録します。
+              その月に登録済みのデータと違うスタッフがいる場合は、取り込む前に差を一覧で表示するので、確認してから取り込んでください
+              (勤怠明細票は修正後の版が複数あることがあり、ファイル名だけでは新旧が分からないため)。
+              売上実績一覧表(「YYYY年M月」シート)も従来どおり取り込めます。
             </p>
           )}
 
@@ -460,7 +478,7 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
                             value={entry.targetMonth}
                             onChange={(e) => updateEntry(entry.id, { targetMonth: e.target.value })}
                             placeholder="2024-10"
-                            disabled={entry.status === 'processing' || entry.status === 'success'}
+                            disabled={entry.status === 'processing' || entry.status === 'success' || entry.status === 'confirm'}
                             className={`border rounded-lg px-2 py-1 text-xs w-28 font-mono disabled:bg-slate-100 disabled:text-slate-400 ${
                               entry.monthGuessed ? 'border-slate-300' : 'border-amber-400 bg-amber-50'
                             }`}
@@ -511,7 +529,40 @@ export const PastExcelImportPanel: React.FC<PastExcelImportPanelProps> = ({
                               <span>{entry.errorMessage}</span>
                             </div>
                           )}
-                          {entry.salesCheck && <SalesCheckView check={entry.salesCheck} />}
+                          {entry.status === 'confirm' && entry.diff && (
+                            <div>
+                              <span className="inline-flex items-center space-x-1 font-semibold text-amber-800">
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                                <span>確認待ち(まだ取り込んでいません)</span>
+                              </span>
+                              <ImportDiffView diff={entry.diff} month={entry.targetMonth} />
+                              {entry.result && entry.result.warnings.length > 0 && (
+                                <ul className="text-amber-700 mt-1 space-y-0.5">
+                                  {entry.result.warnings.map((w, i) => (
+                                    <li key={i} className="flex items-start space-x-1">
+                                      <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                      <span>{w}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                              <div className="flex items-center gap-2 mt-2">
+                                <button
+                                  onClick={() => confirmEntry(entry)}
+                                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold transition-colors"
+                                >
+                                  この版で取り込む(登録済みの{entry.targetMonth}の請求・給与を置き換え)
+                                </button>
+                                <button
+                                  onClick={() => cancelEntry(entry.id)}
+                                  className="px-3 py-1 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-lg font-medium transition-colors"
+                                >
+                                  取り込まない
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                         </td>
                         <td className="py-2">
                           {entry.status !== 'success' && (

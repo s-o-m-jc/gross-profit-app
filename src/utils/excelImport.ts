@@ -1018,6 +1018,8 @@ export interface ShikokuSalesCheckResult {
 }
 
 const SHIKOKU_KAKO_KEY = /^\d+-\d+$/;
+/** 引当(受注)の無いスタッフの手入力行の取引先名(売上実績一覧表と同じ) */
+const SHIKOKU_NO_ORDER_CLIENT = '引当なし';
 
 /**
  * 勤怠明細票の「実績加工」シートから、一覧表へ転記するスタッフ別の売上を読む。表が見つからなければnull。
@@ -1029,11 +1031,13 @@ const SHIKOKU_KAKO_KEY = /^\d+-\d+$/;
  */
 export function extractShikokuJissekiKakoSales(wb: XLSX.WorkBook): ShikokuJissekiKakoRow[] | null {
   const table = readShikokuJissekiKakoTable(wb);
-  return table && table.map(({ clientNo, staffNo, staffName, clientName, amount }) => ({ clientNo, staffNo, staffName, clientName, amount }));
+  return table && table.filter((r) => !r.keyless).map(({ clientNo, staffNo, staffName, clientName, amount }) => ({ clientNo, staffNo, staffName, clientName, amount }));
 }
 
 /** 実績加工の表の1行(経理が直した後の、取引先×スタッフの請求・支給) */
 export interface ShikokuJissekiKakoFullRow extends ShikokuJissekiKakoRow {
+  /** キーが「0-0」の手入力行(スタッフ番号・取引先番号が空)。★2026-10-27 */
+  keyless?: boolean;
   paymentAmount: number;
   socialInsurance: number;
   workDays: number;
@@ -1074,9 +1078,14 @@ export function readShikokuJissekiKakoTable(wb: XLSX.WorkBook): ShikokuJissekiKa
     for (const r of aoa.slice(i + 1)) {
       const key = normalizeShikokuHeader(r[keyCol]);
       const amount = r[amountCol];
-      if (!SHIKOKU_KAKO_KEY.test(key) || key === '0-0' || typeof amount !== 'number') continue;
-      const [clientNo, staffNo] = key.split('-');
+      if (!SHIKOKU_KAKO_KEY.test(key) || typeof amount !== 'number') continue;
+      // ★2026-10-27: キーが「0-0」の行は、引当(受注)の無いスタッフの社保料などを経理が手で足した行(実績CSVに氏名と金額だけを入力)。
+      // 金額が無い行(数式だけの予備行)は読まない。金額のある行は、スタッフ番号を空にして返す(keyless)。
+      const keyless = key === '0-0';
+      if (keyless && !amount && !num(r, paymentCol) && !num(r, socialCol)) continue;
+      const [clientNo, staffNo] = keyless ? ['', ''] : key.split('-');
       rows.push({
+        keyless,
         clientNo,
         staffNo,
         staffName: nameCol === -1 ? '' : parseShikokuStr(r[nameCol]),
@@ -1270,20 +1279,44 @@ const SHIKOKU_KAKO_PAYROLL_REMARKS ='過去実績Excel(勤怠明細票)取込み
  * - 給与: 「未払計上表」(給与計算書印刷CSVと同じもの)をそのまま。社保・雇用保険は本人負担(大阪・松山の給与データと同じ意味)。
  * 紹介手数料の区別はしない(実績加工では派遣分と同じ行の請求額に入っている。別の作業で扱う)。
  */
-export function extractShikokuKintaiPastData(wb: XLSX.WorkBook, targetMonth: string, fileName: string): PastImportResult {
+export function extractShikokuKintaiPastData(
+  wb: XLSX.WorkBook,
+  targetMonth: string,
+  fileName: string,
+  // ★2026-10-27追加: その月に登録済みの紹介手数料。実績加工の請求額には紹介手数料も同じスタッフの行に入っている
+  // (経理の手順「紹介手数料はスタッフにプラスする」)ので、登録済みの分は請求行から差し引く(差し引かないと二重になる)
+  registeredReferrals: { staffNo: string; amount: number }[] = []
+): PastImportResult {
   const warnings: string[] = [];
   const kako = readShikokuJissekiKakoTable(wb);
   if (!kako) warnings.push(`「実績加工」シートの表が見つかりませんでした(ファイル: ${fileName})。請求データは取り込まれません。`);
   const csvNames = readShikokuJissekiCsvClientNames(wb);
-  const billingRows: BillingRow[] = (kako ?? []).map((k, idx) => {
+  const allPayroll = extractShikokuAttendanceRows(wb, targetMonth, fileName);
+  // ★2026-10-27(案B): キーが「0-0」の手入力行(引当の無いスタッフの社保料など)は、氏名で未払計上表のスタッフ番号に結び付け、
+  // 取引先「引当なし」の請求行として取り込む(売上実績一覧表と同じ形)。氏名で1人に決まらなければ警告を出して読み飛ばす。
+  const nameKey = (v: string) => String(v ?? '').normalize('NFKC').replace(/\s/g, '');
+  const resolved = (kako ?? []).flatMap((k) => {
+    if (!k.keyless) return [k];
+    const hits = [...new Map(allPayroll.filter((p) => nameKey(p.staffName) === nameKey(k.staffName)).map((p) => [p.staffNo, p])).values()];
+    if (hits.length !== 1) {
+      warnings.push(
+        `実績加工のスタッフ番号の無い行(${k.staffName || '氏名なし'}、請求${k.amount.toLocaleString()}円・支給${k.paymentAmount.toLocaleString()}円・社保${k.socialInsurance.toLocaleString()}円)を、` +
+          (hits.length === 0 ? '未払計上表に同じ氏名のスタッフがいないため' : `未払計上表に同じ氏名のスタッフが${hits.length}人いるため`) +
+          '読み飛ばしました。'
+      );
+      return [];
+    }
+    return [{ ...k, staffNo: hits[0].staffNo, staffName: hits[0].staffName }];
+  });
+  let billingRows: BillingRow[] = resolved.map((k, idx) => {
     const id = `SHIKOKU_${targetMonth}_K${idx + 1}`;
-    const clientName = k.clientName || csvNames.get(k.clientNo) || `取引先番号${k.clientNo}`;
+    const clientName = k.keyless ? SHIKOKU_NO_ORDER_CLIENT : k.clientName || csvNames.get(k.clientNo) || `取引先番号${k.clientNo}`;
     return {
       billingNo: id,
       targetMonth,
       staffNo: k.staffNo,
       staffName: k.staffName,
-      clientCode: k.clientNo,
+      clientCode: k.keyless ? SHIKOKU_NO_ORDER_CLIENT : k.clientNo,
       clientName,
       orderNo: id,
       orderName: '',
@@ -1299,13 +1332,38 @@ export function extractShikokuKintaiPastData(wb: XLSX.WorkBook, targetMonth: str
       paidTransport: k.paidTransport,
     };
   });
-  const payrollRows = extractShikokuAttendanceRows(wb, targetMonth, fileName).map((p) => ({
-    ...p,
-    remarks: SHIKOKU_KAKO_PAYROLL_REMARKS,
-  }));
+  const staffWithBilling = new Set(billingRows.map((b) => b.staffNo));
+  // 未払計上表には過去に稼働したスタッフの金額0の行もある。請求の無い金額0の行は「給与のみ存在」の行になるだけなので除く
+  // (社保の返金だけの行など、金額のある行は残す。はまさんの決定 2026-10-26)
+  let payrollRows = allPayroll
+    .filter((p) => staffWithBilling.has(p.staffNo) || p.paymentAmount || p.socialInsurance)
+    .map((p) => ({ ...p, remarks: SHIKOKU_KAKO_PAYROLL_REMARKS }));
   if (payrollRows.length === 0) warnings.push(`「未払計上表」シートから給与データを読めませんでした(ファイル: ${fileName})。`);
-  // 実績加工の請求額には紹介手数料の請求書も同じスタッフの行に入っているので分ける
-  const split = splitShikokuReferralFees(targetMonth, billingRows, payrollRows, readShikokuReferralInvoices(wb), []);
+
+  // 登録済みの紹介手数料を請求行から差し引く。実績加工でスタッフ番号が「0」の紹介手数料(2023-11 笹岡さん)は、同じ額の番号なしの行から引く
+  const deducted: { staffNo: string; amount: number }[] = [];
+  for (const r of registeredReferrals) {
+    const byStaff = billingRows.filter((b) => b.staffNo === r.staffNo && b.billingAmountExTax >= r.amount);
+    const target =
+      byStaff.find((b) => b.billingAmountExTax === r.amount) ??
+      byStaff.sort((a, b) => b.billingAmountExTax - a.billingAmountExTax)[0] ??
+      billingRows.find((b) => (b.staffNo === '0' || b.staffNo === '') && b.billingAmountExTax === r.amount);
+    if (!target) {
+      warnings.push(
+        `登録済みの紹介手数料(スタッフ番号${r.staffNo}、${r.amount.toLocaleString()}円)が実績加工の請求額に見つかりませんでした(差し引いていません。二重になっていないか確認してください)。`
+      );
+      continue;
+    }
+    target.billingAmountExTax -= r.amount;
+    deducted.push(r);
+  }
+  billingRows = billingRows.filter((b) => b.billingAmountExTax !== 0 || b.paymentAmount || b.socialInsuranceBilling);
+  const remainingStaff = new Set(billingRows.map((b) => b.staffNo));
+  payrollRows = payrollRows.filter((p) => remainingStaff.has(p.staffNo) || p.paymentAmount || p.socialInsurance);
+
+  // 実績CSVの紹介手数料の請求書のうち、まだ登録されていないものを請求行から付け替える
+  const invoices = readShikokuReferralInvoices(wb).filter((inv) => !(!inv.staffNo && deducted.some((d) => d.amount === inv.amount)));
+  const split = splitShikokuReferralFees(targetMonth, billingRows, payrollRows, invoices, registeredReferrals);
   warnings.push(...split.warnings);
   return {
     payrollRows: split.payrollRows,
@@ -1315,6 +1373,115 @@ export function extractShikokuKintaiPastData(wb: XLSX.WorkBook, targetMonth: str
     warnings,
     referralFeeRows: [],
     splitReferralFeeRows: split.referralFeeRows,
+  };
+}
+
+/**
+ * ★2026-10-27追加: 勤怠明細票から取り込んだ請求行の取引先名を、登録済みのデータ(同じ月、無ければ前の月)と揃える。
+ * 実績加工・実績CSVの取引先名はスタナビの正式名称(例:「株式会社レクザム」)で、売上実績一覧表から取り込んだ月の名前
+ * (例:「レクザム」)と違うため、そのままでは取引先別の集計が月をまたいでつながらない。そのスタッフの行が新しい側で1行だけ、
+ * 登録済み側の取引先名も1つだけで、名前の先頭(「株式会社」等を除いた4文字)がどちらかに含まれる場合に限り、登録済みの
+ * 取引先名・取引先コードを使う(派遣先が変わった人・複数契約の人は変えない)。
+ */
+export function alignShikokuClientNames(billingRows: BillingRow[], referenceRows: BillingRow[]): BillingRow[] {
+  const refByStaff = new Map<string, BillingRow[]>();
+  referenceRows.forEach((b) => refByStaff.set(b.staffNo, [...(refByStaff.get(b.staffNo) ?? []), b]));
+  const count = new Map<string, number>();
+  billingRows.forEach((b) => count.set(b.staffNo, (count.get(b.staffNo) || 0) + 1));
+  const norm = (s: string) =>
+    s.normalize('NFKC').replace(/株式会社|有限会社|合同会社|公益社団法人|一般社団法人|公益財団法人|一般財団法人|\s/g, '');
+  return billingRows.map((b) => {
+    const refs = refByStaff.get(b.staffNo);
+    if (count.get(b.staffNo) !== 1 || !refs || new Set(refs.map((r) => r.clientName)).size !== 1) return b;
+    const ref = refs[0];
+    const a = norm(b.clientName);
+    const r = norm(ref.clientName);
+    const same = a.includes(r.slice(0, 4)) || r.includes(a.slice(0, 4));
+    return same ? { ...b, clientName: ref.clientName, clientCode: ref.clientCode } : b;
+  });
+}
+
+export interface ShikokuImportDiffField {
+  label: string;
+  before: number;
+  after: number;
+}
+
+export interface ShikokuImportDiffRow {
+  staffNo: string;
+  staffName: string;
+  clientName: string;
+  /** 'added': 取り込む側にだけある / 'removed': 登録済みにだけある */
+  kind: 'changed' | 'added' | 'removed';
+  /** 差のある項目だけ */
+  fields: ShikokuImportDiffField[];
+}
+
+export interface ShikokuImportDiff {
+  /** その月に登録済みのデータが無い(確認不要) */
+  existingEmpty: boolean;
+  rows: ShikokuImportDiffRow[];
+  totals: ShikokuImportDiffField[];
+}
+
+export interface ShikokuMonthSlice {
+  billingRows: BillingRow[];
+  payrollRows: PayrollRow[];
+  referralFeeRows: { staffNo: string; amount: number }[];
+}
+
+/**
+ * ★2026-10-27追加: 取り込む前に、その月に登録済みのデータとの差をスタッフ単位で出す。勤怠明細票にも版が複数あり、
+ * ファイル名だけでは新旧が分からない(2026-03は「田邉・正木追加」という名前の方が古い版だった)ため、差を見てから取り込めるようにする。
+ * 比べるのは派遣売上・紹介手数料・支払・社保負担額(請求行)と給与の総支給額。1円でも違えば差とする。
+ */
+export function diffShikokuMonthImport(existing: ShikokuMonthSlice, incoming: ShikokuMonthSlice): ShikokuImportDiff {
+  const labels = ['派遣売上', '紹介手数料', '支払', '社保負担額', '給与の総支給額'];
+  type Agg = { name: string; clients: Set<string>; v: number[] };
+  const aggregate = (m: ShikokuMonthSlice) => {
+    const map = new Map<string, Agg>();
+    const get = (staffNo: string, name = '') => {
+      let a = map.get(staffNo);
+      if (!a) map.set(staffNo, (a = { name, clients: new Set(), v: [0, 0, 0, 0, 0] }));
+      if (!a.name && name) a.name = name;
+      return a;
+    };
+    m.billingRows.forEach((b) => {
+      const a = get(b.staffNo, b.staffName);
+      a.clients.add(b.clientName);
+      a.v[0] += b.billingAmountExTax || 0;
+      a.v[2] += b.paymentAmount || 0;
+      a.v[3] += b.socialInsuranceBilling || 0;
+    });
+    m.referralFeeRows.forEach((r) => (get(r.staffNo).v[1] += r.amount || 0));
+    m.payrollRows.forEach((p) => (get(p.staffNo, p.staffName).v[4] += p.paymentAmount || 0));
+    return map;
+  };
+  const before = aggregate(existing);
+  const after = aggregate(incoming);
+  const rows: ShikokuImportDiffRow[] = [];
+  for (const staffNo of new Set([...before.keys(), ...after.keys()])) {
+    const b = before.get(staffNo);
+    const a = after.get(staffNo);
+    const fields = labels
+      .map((label, i) => ({ label, before: Math.round(b?.v[i] ?? 0), after: Math.round(a?.v[i] ?? 0) }))
+      .filter((f) => f.before !== f.after);
+    if (fields.length === 0) continue;
+    rows.push({
+      staffNo,
+      staffName: a?.name || b?.name || '',
+      clientName: [...(a?.clients.size ? a.clients : b?.clients ?? [])].join('・'),
+      kind: !b ? 'added' : !a ? 'removed' : 'changed',
+      fields,
+    });
+  }
+  const largest = (r: ShikokuImportDiffRow) => Math.max(...r.fields.map((f) => Math.abs(f.after - f.before)));
+  rows.sort((x, y) => largest(y) - largest(x) || x.staffNo.localeCompare(y.staffNo));
+  const total = (m: Map<string, Agg>, i: number) => Math.round([...m.values()].reduce((t, x) => t + x.v[i], 0));
+  return {
+    existingEmpty: existing.billingRows.length === 0 && existing.payrollRows.length === 0,
+    rows,
+    totals: labels.map((label, i) => ({ label, before: total(before, i), after: total(after, i) })),
   };
 }
 
