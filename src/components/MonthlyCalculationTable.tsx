@@ -30,6 +30,7 @@ import { computeTransportExTaxTotal, formatTransportExTaxTotal } from '../utils/
 import { CompanyId } from '../config/companies';
 import { TRANSPORT_EX_TAX_DEFINITIONS } from '../config/transportExTax';
 import { hasActionableAlerts, countActionableAlerts } from '../utils/calculator';
+import { compareStaffByReading } from '../utils/staffReading';
 
 /**
  * ★2026-09-18追加(はまさんのご要望「月次粗利明細一覧を月次サマリ表と同じ項目・グループ構成に
@@ -214,6 +215,15 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
     if (!sortColumn) return filtered;
     const sorted = [...filtered];
     sorted.sort((a, b) => {
+      // ★2026-10-28修正(はまさんの指摘): スタッフ名は漢字のままだと五十音順にならないため、給与データの読み(カナ)で比べる。
+      // 読みの無い人は末尾(staffReading.ts)。派遣先企業は読みのデータが無いため従来どおり。
+      if (sortColumn === 'staffName') {
+        return compareStaffByReading(
+          { staffName: a.staffName, staffNo: a.staffNo, reading: a.staffNameKana },
+          { staffName: b.staffName, staffNo: b.staffNo, reading: b.staffNameKana },
+          sortDir
+        );
+      }
       const cmp = a[sortColumn].localeCompare(b[sortColumn], 'ja');
       return sortDir === 'asc' ? cmp : -cmp;
     });

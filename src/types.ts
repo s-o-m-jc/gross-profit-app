@@ -297,6 +297,8 @@ export interface GrossProfitResult {
   billingNo: string;           // 請求No
   staffNo: string;             // スタッフNo
   staffName: string;           // スタッフ氏名
+  // ★2026-10-28追加: スタッフ氏名の読み(給与データのカナ。スタッフ番号ごとにどれかの月のもの。無ければ未設定)。五十音順の並べ替え用
+  staffNameKana?: string;
   clientCode: string;          // 派遣先コード
   clientName: string;          // 派遣先名
 

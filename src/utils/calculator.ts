@@ -10,6 +10,7 @@
  */
 
 import { employerEmploymentInsuranceRate } from '../config/employmentInsuranceRates';
+import { buildStaffReadingMap } from './staffReading';
 import { WorkersCompRate, workersCompRate } from '../config/socialInsuranceCheck';
 import {
   PayrollRow,
@@ -1090,6 +1091,13 @@ export function calculateGrossProfit(
     const total = p.paidTransport ?? p.salaryTransport ?? 0;
     const guides = rows.map((r) => Math.max(0, contractPaidTransport.get(r) || 0));
     allocateByGuide(total, guides).forEach((v, i) => (rows[i].transportExTax = v));
+  });
+
+  // ★2026-10-28追加: 五十音順の並べ替え用に、スタッフ氏名の読み(全月の給与データのカナ)を付ける
+  const readings = buildStaffReadingMap(payrolls);
+  results.forEach((r) => {
+    const reading = readings.get(r.staffNo);
+    if (reading) r.staffNameKana = reading;
   });
 
   return results.sort((a, b) => {

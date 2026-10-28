@@ -36,6 +36,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, User, Users, ChevronDown, ChevronUp, AlertTriangle, Plus, Trash2, PenLine, X } from 'lucide-react';
 import { PayrollRow, PaidLeaveOverrideRow } from '../types';
+import { buildStaffReadingMap, compareStaffByReading } from '../utils/staffReading';
 import { hasLegacyPayrollRows, isAttendanceMissingSummaryRow } from '../utils/monthlyData';
 
 interface StaffPayrollDetailProps {
@@ -643,14 +644,26 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
     });
   }, [filteredRows, overridesByKey]);
 
+  // ★2026-10-28追加(はまさんの指摘「名前で並べ替えると五十音順になっていない」): 氏名は読み(カナ)で比べる。
+  // その月の行にカナが無くても、他の月の同じスタッフのカナを使う(全月の給与行から作る)。
+  const staffReadings = useMemo(() => buildStaffReadingMap(payrollRows), [payrollRows]);
+
   const sortedRows = useMemo(() => {
     const withIndex = displayRows.map((row, idx) => ({ row, idx }));
     withIndex.sort((a, b) => {
       let cmp: number;
       switch (sortKey) {
-        case 'staffName':
-          cmp = a.row.p.staffName.localeCompare(b.row.p.staffName, 'ja');
+        case 'staffName': {
+          // 読みの無い人は降順でも末尾にするため、向きを含めて比べてそのまま返す
+          const byReading = compareStaffByReading(
+            { staffName: a.row.p.staffName, staffNo: a.row.p.staffNo, reading: staffReadings.get(a.row.p.staffNo) },
+            { staffName: b.row.p.staffName, staffNo: b.row.p.staffNo, reading: staffReadings.get(b.row.p.staffNo) },
+            sortDir
+          );
+          if (byReading !== 0) return byReading;
+          cmp = 0;
           break;
+        }
         case 'targetMonth':
           cmp = a.row.p.targetMonth.localeCompare(b.row.p.targetMonth);
           break;
@@ -668,7 +681,7 @@ export const StaffPayrollDetail: React.FC<StaffPayrollDetailProps> = ({
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return withIndex.map((w) => w.row);
-  }, [displayRows, sortKey, sortDir]);
+  }, [displayRows, sortKey, sortDir, staffReadings]);
 
   // ★2026-08-27追加(22-14章修正8)・拡充(22-20/22-21章修正12): 一覧テーブル上部の集計セクション。
   // 表示中(フィルタ適用後)の行を対象に、既存の値をそのまま合算するだけで新規の計算ロジックは追加しない。
