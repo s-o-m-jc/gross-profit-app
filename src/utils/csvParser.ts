@@ -226,7 +226,8 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
     .map((row) => {
       const staffNoKey = findColumnKey(row, ['スタッフ番号', 'スタッフNo', 'スタッフID', '社員番号']);
       const nameKey = findColumnKey(row, ['スタッフ氏名', '氏名', 'スタッフ名', '名前']);
-      const payDateKey = findColumnKey(row, ['支給日']);
+      // ★2026-11-05: 大阪の給与一覧（スタナビ）シートは同じ列の見出しが「支払日」(四国・松山の給与計算書印刷CSVは「支給日」)
+      const payDateKey = findColumnKey(row, ['支給日', '支払日']);
       const monthKey = findColumnKey(row, ['対象年月', '年月']);
       const payKey = findColumnKey(row, ['総支給額', '給与支給総額', '支給総額', '支給額']);
       // ★2026-08-27修正(22-14章調査1で発見): 実CSVの列名は「社保合計額」(2-1章の全76列

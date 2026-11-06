@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as XLSX from 'xlsx';
-import { extractShikokuKintaiPastData, alignShikokuClientNames, diffShikokuMonthImport } from './excelImport';
+import { extractShikokuKintaiPastData, alignShikokuClientNames, diffShikokuMonthImport, mergeShikokuAttendanceDetail } from './excelImport';
 import { BillingRow, PayrollRow } from '../types';
 
 /** 新しい書式の勤怠明細票(実績加工の「番号」の表・実績ＣＳＶ・未払計上表)を作る */
@@ -147,4 +147,21 @@ test('勤怠明細票: キーが「0-0」の手入力行は氏名でスタッフ
   assert.ok(r.payrollRows.some((p) => p.staffNo === '12709'));
   assert.equal(r.warnings.length, 1);
   assert.match(r.warnings[0], /不明 太郎.*同じ氏名のスタッフがいない/);
+});
+
+test('勤怠明細票の補完(売上実績一覧表の月): 差引支給額・雇用保険対象額も写し、雇用保険(会社負担の計算用)は0のまま', () => {
+  const existing = [
+    { targetMonth: '2026-06', staffNo: '1', staffName: 'A', paymentAmount: 200000, socialInsurance: 30000, employmentInsurance: 0, parkingFee: 0, salaryTransport: 0,
+      remarks: '過去実績Excel(売上実績一覧表)取込み: 給与の時間内訳データなし(支払＠を単価として直接反映)' } as PayrollRow,
+  ];
+  const attendance = [
+    { targetMonth: '2026-06', staffNo: '1', staffName: 'A', paymentAmount: 200000, socialInsurance: 28000, employmentInsurance: 1000, parkingFee: 0, salaryTransport: 0,
+      netPayment: 165000, employmentInsuranceBase: 195000, workDays: 20 } as PayrollRow,
+  ];
+  const [m] = mergeShikokuAttendanceDetail(existing, attendance, '2026-06').payrollRows;
+  assert.equal(m.netPayment, 165000);
+  assert.equal(m.employmentInsuranceBase, 195000);
+  assert.equal(m.employmentInsurance, 0);
+  assert.equal(m.personalEmploymentInsurance, 1000);
+  assert.equal(m.socialInsurance, 30000);
 });

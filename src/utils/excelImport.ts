@@ -873,6 +873,10 @@ const SHIKOKU_ATTENDANCE_FIELDS = [
   'cleaningFee',
   'advancePaymentSettlement',
   'totalDeduction',
+  // ★2026-11-05追加(はまさんの依頼「表示上空欄の項目を埋める」): 差引支給額と雇用保険対象額も写す。この給与行の雇用保険(employmentInsurance)は
+  // 0のままなので、雇用保険対象額を入れても会社負担の雇保の計算(calcEmployerEmploymentInsurance)には使われない(表示・データの記録用)。
+  'netPayment',
+  'employmentInsuranceBase',
 ] as const satisfies readonly (keyof PayrollRow)[];
 
 /** 勤怠明細票(未払計上表シートがあり、売上実績一覧表の月シートが無い)かどうか */

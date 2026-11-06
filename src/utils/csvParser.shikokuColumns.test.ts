@@ -54,3 +54,8 @@ test('給与計算書印刷: 総支給額の右に見出しのある別の列が
   const csv = ['スタッフ番号,スタッフ氏名,総支給額,健康保険,雇用保険', '1,A,200000,10000,1000'].join('\n');
   assert.equal(parsePayrollCsv(csv)[0].employmentInsuranceBase, 0);
 });
+
+test('給与計算書印刷: 大阪の見出し「支払日」も支給日として読む', () => {
+  const csv = ['スタッフ番号,スタッフ氏名,総支給額,雇用保険対象額,支払日,支払方法', '20001044,小倉 祥子,322314,322314,2026-08-15,振込'].join('\n');
+  assert.equal(parsePayrollCsv(csv)[0].payDate, '2026-08-15');
+});
