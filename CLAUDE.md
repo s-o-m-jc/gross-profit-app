@@ -27,10 +27,25 @@ Claude Code(ローカル・クラウド問わず)は、このファイルを毎�
    既存の自動保存effect(replaceCompanyMonthlyData、ローカルに存在しない月を削除する差分同期
    ロジック)が担う)。
 2. バックアップ・削除には、`.env.local`の`VITE_SUPABASE_ANON_KEY`(RLSに従う公開鍵)ではなく、
-   RLSを完全にバイパスする**service_roleキー**が必要(`SUPABASE_SERVICE_ROLE_KEY`という変数名で
-   `.env.local`に一時的に追加してもらう運用とした)。このキーは通常のアプリ実行(`npm run dev`等)や
+   RLSを完全にバイパスする**service_roleキー**が必要。このキーは通常のアプリ実行(`npm run dev`等)や
    Vercelの環境変数には**絶対に含めないこと**。作業完了後はSupabaseダッシュボードでローテーション
    (再発行)し、無効化すること(はまさんご自身の作業。ローカルのClaude Codeには管理APIアクセス手段が無い)。
+   **★2026-11-13変更: 鍵はファイルに保存しない**(下の「service_roleキーの渡し方」)。以前は`.env.local`に一時的に
+   追加する運用だったが、2026-09-30から2026-11-13まで残り続けていたため、この日に`.env.local`から削除した。
+
+   **service_roleキーの渡し方(2026-11-13〜)**:
+   - はまさんが、補正・バックアップの作業のときだけ、**Claude Codeを起動するPowerShellの画面で**環境変数として設定してから起動する。
+     入力が画面・履歴に残らないよう、次の1行で貼り付ける(打った命令は履歴に残るが、鍵の値は残らない):
+     `$env:SUPABASE_SERVICE_ROLE_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR((Read-Host -AsSecureString '鍵を貼り付け')))`
+     続けて同じ画面で `claude` を起動する(Claude Codeのコマンド実行はこの環境変数を引き継ぐ)。
+   - **鍵をチャットに貼らない・`!`コマンドで設定しない**(会話の記録 `~/.claude` に値が残る)。`.env.local`等のファイルにも書かない。
+   - Claude Codeは、作業の最初に「鍵が渡っているか」だけを値を出さずに確かめる(例: `[bool]$env:SUPABASE_SERVICE_ROLE_KEY`)。
+     スクリプトは`process.env.SUPABASE_SERVICE_ROLE_KEY`から読み、`.env.local`からは読まない。値を`console.log`・ファイル・コミットに出さない。
+     (`VITE_SUPABASE_URL`は今までどおり`.env.local`から読んでよい。)
+   - 作業が終わったら、その PowerShell の画面を閉じる(環境変数は消える)。はまさんがSupabaseで鍵を再発行する。
+   - 2026-11-13の確認(値は出さずに検索): 鍵の値があったのは`.env.local`の1行だけ。git履歴・PowerShellの履歴・`~/backups`・`~/.claude`・
+     一時フォルダ・OneDriveフォルダ・書類/デスクトップ/ダウンロード・上位フォルダのzip・`dist`には無し。書類フォルダはOneDriveの同期対象外
+     (実体は`C:\Users\ha-ma\Documents`)。以前の作業スクリプト(例: 一時フォルダの`snap.mjs`)は`.env.local`を直接読んでいた。
 3. 削除前に必ず全テーブル(`companies`/`profiles`/`monthly_data`、可能なら`monthly_data_history`)を
    タイムスタンプ付きディレクトリへJSONエクスポートし、サーバ側件数と一致することを確認する。
    バックアップ先はリポジトリ外(例: `~/backups/gross-profit-app/YYYYMMDD_HHMMSS/`)にすること。
