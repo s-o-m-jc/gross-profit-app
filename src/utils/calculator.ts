@@ -166,6 +166,15 @@ export function allocateByGuide(total: number, guides: number[]): number[] {
   return shares;
 }
 
+/**
+ * 請求額(税抜)の税込換算。★2026-11-12追加(はまさん確認の業務ルール): 立替金など非課税欄の請求は消費税を加算しない。
+ * 課税分(請求額 − 非課税分)にだけ税率を掛け、非課税分は同額のまま足す。請求する交通費は請求書の課税欄に
+ * 税抜(税込とみなして割り戻した額)で入っているので、他の課税分と同じく税が掛かる。自社負担の交通費は請求額に無い。
+ */
+export function toIncTax(exTax: number, nonTaxable: number, taxRate: number): number {
+  return Math.round((exTax - nonTaxable) * (1 + taxRate)) + nonTaxable;
+}
+
 function mergeDuplicateBillingRows(billings: BillingRow[]): MergedBillingRow[] {
   const groups = new Map<string, BillingRow[]>();
   billings.forEach((b) => {
@@ -204,6 +213,12 @@ function mergeDuplicateBillingRows(billings: BillingRow[]): MergedBillingRow[] {
       referralFee: rows.reduce((s, r) => s + r.referralFee, 0),
       workHours: rows.reduce((s, r) => s + r.workHours, 0),
       billingTransport,
+      nonTaxableAmount: rows.some((r) => r.nonTaxableAmount !== undefined)
+        ? rows.reduce((s, r) => s + (r.nonTaxableAmount || 0), 0)
+        : undefined,
+      reimbursementAmount: rows.some((r) => r.reimbursementAmount !== undefined)
+        ? rows.reduce((s, r) => s + (r.reimbursementAmount || 0), 0)
+        : undefined,
       paidTransport: rows.some((r) => r.paidTransport !== undefined)
         ? rows.reduce((s, r) => s + (r.paidTransport || 0), 0)
         : undefined,
@@ -360,8 +375,23 @@ export function calculateGrossProfit(
     const inv = invoiceByOrder(b);
     if (inv) invoicesUsedForTransport.add(inv);
   });
+  // ★2026-11-12追加: 非課税欄の額も、請求データ側に無ければ請求書行で補う。1つの請求書行の額は1回だけ使う(交通費と違い
+  // マイナス(相殺)もあるので重複行の最大値は使えない。統合時は合計する)。受注番号で直接紐づく行を優先する。
+  const invoicesUsedForNonTaxable = new Set<InvoicePrintRow>();
+  const nonTaxableFromInvoice = new Map<BillingRow, InvoicePrintRow>();
+  const claimNonTaxable = (b: BillingRow, inv: InvoicePrintRow | undefined) => {
+    if (!inv || inv.nonTaxableAmount === undefined || invoicesUsedForNonTaxable.has(inv)) return;
+    invoicesUsedForNonTaxable.add(inv);
+    nonTaxableFromInvoice.set(b, inv);
+  };
+  billings.forEach((b) => b.nonTaxableAmount === undefined && claimNonTaxable(b, invoiceByOrder(b)));
+  billings.forEach((b) => b.nonTaxableAmount === undefined && !invoiceByOrder(b) && claimNonTaxable(b, findInvoice(b)));
   const mergedBillings = mergeDuplicateBillingRows(
     billings.map((b) => {
+      const ntInv = nonTaxableFromInvoice.get(b);
+      if (ntInv) {
+        b = { ...b, nonTaxableAmount: ntInv.nonTaxableAmount, reimbursementAmount: b.reimbursementAmount ?? ntInv.reimbursementAmount };
+      }
       if (b.billingTransport) return b;
       let inv = invoiceByOrder(b);
       if (!inv) {
@@ -438,8 +468,19 @@ export function calculateGrossProfit(
     const k = `${b.targetMonth}_${b.staffNo}`;
     billingsByStaffMonth.set(k, [...(billingsByStaffMonth.get(k) || []), b]);
   });
+  // ★2026-11-13追加(はまさんの指摘): 請求した立替金・寸志を、給与の立替金の欄ではなく交通費の枠で支払っている場合
+  // (大阪の交通費2の枠。2025-10 土井 惠利奈さんの新幹線代29,374円、2024-08・2025-12の寸志50,000円)、その分は交通費ではない。
+  // 立替金(売上・支払の両方から除いた額)のうち給与の立替金の欄に無い分を、給与の交通費から除いて扱う(表示の内訳と交通費の突合用)。
+  // 以前は支払額から立替金を除いたのに交通費には残っていたため、給与総額(支払額−交通費)が少なく、社保他小計が多く見えた。
+  const transportPaidAsReimbursement = new Map<string, number>();
   billingsByStaffMonth.forEach((rows, k) => {
-    const total = payrollMap.get(k)?.salaryTransport || 0;
+    const payroll = payrollMap.get(k);
+    const reimbursed = rows.reduce((s, r) => s + (r.reimbursementAmount || 0), 0);
+    const shortfall = reimbursed - (payroll?.reimbursement || 0);
+    if (payroll && shortfall > 0) transportPaidAsReimbursement.set(k, Math.min(shortfall, Math.max(0, payroll.salaryTransport || 0)));
+  });
+  billingsByStaffMonth.forEach((rows, k) => {
+    const total = (payrollMap.get(k)?.salaryTransport || 0) - (transportPaidAsReimbursement.get(k) || 0);
     const byTransport = rows.map((r) => Math.max(0, r.billingTransport || 0));
     const guides = byTransport.some((v) => v > 0) ? byTransport : rows.map((r) => Math.max(0, r.paymentAmount || 0));
     allocateByGuide(total, guides).forEach((v, i) => salaryTransportShare.set(rows[i], v));
@@ -490,15 +531,20 @@ export function calculateGrossProfit(
     const personInCharge = personInChargeMap.get(`${billing.targetMonth}_${billing.clientCode}`) || billing.personInCharge;
 
     // 支払額・社保負担額は請求CSV由来の値をそのまま使う(11-1参照。給与CSVとの突合は不要)
-    const paymentAmount = billing.paymentAmount || 0;
+    // ★2026-11-12追加(はまさんの決定): 立替金は売上に含めない。派遣先に請求し(請求額に入る)、スタッフに支給した
+    // (支払額に入る)立替金を、売上・支払の両方から除く(粗利は変わらない)。支払額の不一致チェック・雇保の按分は
+    // 請求データの支払額そのまま(rawPayment)で行う。
+    const reimbursementAmount = billing.reimbursementAmount || 0;
+    const rawPayment = billing.paymentAmount || 0;
+    const paymentAmount = rawPayment - reimbursementAmount;
     const socialInsurance = billing.socialInsuranceBilling || 0;
     // 雇保(会社負担、表示用の計算値)。社保負担額に含まれているため粗利計算では控除しない(12章参照)。
     // ★2026-09-29修正(はまさんの指摘): 以前は給与データの雇用保険=本人負担(給与からの控除額)を表示していた。
     // 会社負担を「雇用保険対象額(給与データ。無ければ支払額) × 事業主の料率」で計算する
     // (calcEmployerEmploymentInsurance参照。元Excelの「支払額×料率」とは対象外の手当がある行で異なる)。
     const employmentInsurance = calcEmployerEmploymentInsurance(
-      paymentAmount,
-      staffMonthPaymentTotal.get(key) || paymentAmount,
+      rawPayment,
+      staffMonthPaymentTotal.get(key) || rawPayment,
       socialInsurance,
       payroll,
       billing.targetMonth
@@ -506,13 +552,16 @@ export function calculateGrossProfit(
     const parkingFee = parkingFeeShare.get(billing) ?? 0;
     // 給与の交通費: 行の表示用はこの契約の分(salaryTransportShare)、交通費の突合はスタッフ×月の合計(staffSalaryTransport)
     const salaryTransport = salaryTransportShare.get(billing) ?? 0;
-    const staffSalaryTransport = payroll?.salaryTransport || 0;
+    const staffSalaryTransport = (payroll?.salaryTransport || 0) - (transportPaidAsReimbursement.get(key) || 0);
     const paidLeaveAllowance = payroll?.paidLeaveAllowance || 0;
     const paidLeaveDays = payroll?.paidLeaveDays || 0;
 
     // 請求金額 (税抜)
-    const billingAmountExTax = billing.billingAmountExTax || 0;
-    const billingAmountIncTax = billing.billingAmountIncTax || Math.round(billingAmountExTax * (1 + taxRate));
+    // ★2026-11-12修正: 立替金を除いた額。残る非課税欄の額(相殺・休業手当など)には税を掛けない(toIncTax参照)
+    const billingAmountExTax = (billing.billingAmountExTax || 0) - reimbursementAmount;
+    const billingAmountIncTax =
+      billing.billingAmountIncTax ||
+      toIncTax(billingAmountExTax, (billing.nonTaxableAmount || 0) - reimbursementAmount, taxRate);
 
     // 粗利益（税抜）＝ 請求額 − 支払額(請求CSV由来) − 社保負担額(請求CSV由来) − 退職金
     // ★2026-10-05修正(はまさんの指摘、松山2025-01 松尾 夏葵さんの駐車場代の調査で判明): 駐車場代(給与の「駐車場手当」)は
@@ -696,6 +745,7 @@ export function calculateGrossProfit(
       billingAmountExTax,
       billingAmountIncTax,
       billingTransport: billing.billingTransport,
+      reimbursementAmount: reimbursementAmount || undefined,
       referralFee,
       paymentAmount,
       socialInsurance,
@@ -815,7 +865,9 @@ export function calculateGrossProfit(
       clientCode: lc.clientCode || 'MANUAL',
       clientName: lc.clientName || '（クライアント未設定）',
       billingAmountExTax: amount,
-      billingAmountIncTax: Math.round(amount * (1 + taxRate)),
+      // ★2026-11-12修正(はまさんの決定): 休業分補償は非課税(大阪の請求書の非課税欄・四国の経理の「(実績加工−休業手当)×1.1」と同じ)。
+      // 税を掛けない
+      billingAmountIncTax: amount,
       billingTransport: 0,
       referralFee: 0,
       paymentAmount: 0,
@@ -830,7 +882,7 @@ export function calculateGrossProfit(
       mergedRowCount: 0,
       mergedOrderNos: [],
       grossProfitExTax: amount,
-      grossProfitIncTax: Math.round(amount * (1 + taxRate)),
+      grossProfitIncTax: amount,
       grossProfitRate: 0,
       transportDiff: 0,
       transportStatus: 'MATCH',

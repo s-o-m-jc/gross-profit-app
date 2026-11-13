@@ -225,10 +225,118 @@ export function extractMatsuyamaPastData(
       .map((r) => ({ ...r, targetMonth }));
     billingRows = applyMatsuyamaBillingTransport(billingSheet, billingRows, warnings);
     billingRows = applyMatsuyamaUnitPrices(sheetToAoaFromRow(billingSheet, MATSUYAMA_BILLING_HEADER_ROW), billingRows, warnings);
+    const salesSheet = wb.Sheets[MATSUYAMA_SALES_CSV_SHEET];
+    if (salesSheet) {
+      const toAoa = (ws: XLSX.WorkSheet) => XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: '', raw: true });
+      const bookSheet = wb.Sheets[MATSUYAMA_SALES_BOOK_SHEET];
+      const amounts = readMatsuyamaNonTaxableSales(toAoa(salesSheet), bookSheet ? toAoa(bookSheet) : []);
+      billingRows = assignNonTaxableToBillingRows(
+        billingRows,
+        payrollRows,
+        amounts.map((a) => ({ ...a, match: (b: BillingRow) => String(b.clientCode).trim() === a.clientCode })),
+        warnings
+      );
+    }
   }
 
   // 請求書(invoiceRows)に当たるシートは無い。請求＠・支払＠は請求支払一覧の副表から(applyMatsuyamaUnitPrices)
   return { payrollRows, billingRows, invoiceRows: [], targetMonth, warnings };
+}
+
+const MATSUYAMA_SALES_CSV_SHEET = '売上ＣＳＶから';
+const MATSUYAMA_SALES_BOOK_SHEET = '売上計上表';
+
+/**
+ * ★2026-11-12追加(立替金に消費税を掛けない修正): 松山の「売上ＣＳＶから」シート(スタナビの請求一覧CSVを貼ったもの、
+ * 見出し「ｸﾗｲｱﾝﾄ番号 … 売上(課税) 売上(非課税) 消費税 請求合計額」)から、請求書ごとの非課税の売上をクライアント番号別に合計する。
+ * 非課税の売上は立替金の請求(STNet・大林組)と駐車料等の相殺(潮冷熱、マイナス)で、請求支払一覧の請求額に含まれている
+ * (全36ヶ月で、クライアント別の請求額の合計 = 課税 + 非課税を確認)。
+ * ★2026-11-12追加(はまさんの決定「立替金は売上に含めない」): そのうち立替金の請求は、経理の「売上計上表」(取引先名別、
+ * 「売上(非課税欄)」を「立替金・その他・通勤交通費・外税交通費・雑収入」に分けた表)の「立替金」列のプラスの額(reimbursement)。
+ * 「立替金」列のマイナス(潮冷熱などの駐車料等の相殺)はスタッフに支給したものではないので立替金として除かない。
+ * 2023-09・2023-10は交通費を非課税欄で請求しており「通勤交通費」列に入っている(立替金ではない)。
+ */
+export function readMatsuyamaNonTaxableSales(
+  aoa: any[][],
+  salesBookAoa: any[][] = []
+): { clientCode: string; amount: number; reimbursement?: number; label: string }[] {
+  const str = (v: any) => String(v ?? '').normalize('NFKC').trim();
+  const headerIdx = aoa.findIndex((row) => row.some((c) => str(c) === 'クライアント番号') && row.some((c) => str(c) === '売上(非課税)'));
+  if (headerIdx < 0) return [];
+  const header = aoa[headerIdx].map(str);
+  const clientCol = header.indexOf('クライアント番号');
+  const ntCol = header.indexOf('売上(非課税)');
+  const nameCol = header.findIndex((h) => h.startsWith('クライアント名'));
+  const totals = new Map<string, { amount: number; name: string }>();
+  aoa.slice(headerIdx + 1).forEach((row) => {
+    const client = str(row[clientCol]);
+    const nt = row[ntCol];
+    if (!/^\d+$/.test(client) || typeof nt !== 'number' || nt === 0) return;
+    const t = totals.get(client) ?? { amount: 0, name: nameCol >= 0 ? str(row[nameCol]) : '' };
+    t.amount += nt;
+    totals.set(client, t);
+  });
+  // 売上計上表の「立替金」列(プラスの額)を取引先名で引く
+  const reimbursementByName = new Map<string, number>();
+  const bookHeaderIdx = salesBookAoa.findIndex((row) => str(row[0]) === 'クライアント名' && row.some((c) => str(c) === '立替金'));
+  if (bookHeaderIdx >= 0) {
+    const col = salesBookAoa[bookHeaderIdx].findIndex((c) => str(c) === '立替金');
+    salesBookAoa.slice(bookHeaderIdx + 1).forEach((row) => {
+      const name = str(row[0]);
+      const v = row[col];
+      if (name && typeof v === 'number' && v > 0) reimbursementByName.set(name, (reimbursementByName.get(name) || 0) + v);
+    });
+  }
+  return [...totals.entries()].map(([clientCode, t]) => ({
+    clientCode,
+    amount: t.amount,
+    reimbursement: reimbursementByName.get(t.name),
+    label: `クライアント番号${clientCode}`,
+  }));
+}
+
+/**
+ * ★2026-11-12追加: 取引先単位の非課税の請求額を、その取引先の請求行(BillingRow.nonTaxableAmount)に付ける。
+ * 取引先単位の額しか無いので、どのスタッフの行に付けるかは次の順で決める(月・取引先の合計は行の選び方によらない):
+ * 給与の立替金が同額のスタッフ → 請求額が同額の行 → 請求額の最も大きい行。
+ * ★2026-11-12追加: 立替金の請求(reimbursement)は、給与の立替金が同額で、請求データの支払額(そのスタッフ×月の合計)が
+ * 給与の総支給額(立替金込み)と一致するスタッフの行に限り、BillingRow.reimbursementAmountとして付ける(売上・支払の両方から
+ * 除くため、支払額に入っていることを確かめる)。当たらなければ立替金として除かず、警告を出す(非課税の売上として残る)。
+ */
+export function assignNonTaxableToBillingRows(
+  billingRows: BillingRow[],
+  payrollRows: PayrollRow[],
+  amounts: { match: (b: BillingRow) => boolean; amount: number; reimbursement?: number; label: string }[],
+  warnings: string[]
+): BillingRow[] {
+  const rows = billingRows.map((b) => ({ ...b }));
+  const reimbursement = new Map(payrollRows.map((p) => [p.staffNo, p.reimbursement || 0]));
+  const grossPay = new Map(payrollRows.map((p) => [p.staffNo, p.paymentAmount || 0]));
+  const billedPay = new Map<string, number>();
+  rows.forEach((b) => billedPay.set(b.staffNo, (billedPay.get(b.staffNo) || 0) + (b.paymentAmount || 0)));
+  for (const a of amounts) {
+    const candidates = rows.filter(a.match);
+    if (candidates.length === 0) {
+      warnings.push(`非課税の請求(${a.label}、${a.amount.toLocaleString()}円)に当たる請求行が無いため、税込換算に反映していません。`);
+      continue;
+    }
+    const r = a.reimbursement && a.reimbursement > 0 ? a.reimbursement : 0;
+    const target =
+      candidates.find((b) => reimbursement.get(b.staffNo) === (r || a.amount)) ??
+      candidates.find((b) => b.billingAmountExTax === a.amount) ??
+      [...candidates].sort((x, y) => y.billingAmountExTax - x.billingAmountExTax)[0];
+    target.nonTaxableAmount = (target.nonTaxableAmount || 0) + a.amount;
+    if (r) {
+      if (reimbursement.get(target.staffNo) === r && billedPay.get(target.staffNo) === grossPay.get(target.staffNo)) {
+        target.reimbursementAmount = (target.reimbursementAmount || 0) + r;
+      } else {
+        warnings.push(
+          `立替金の請求(${a.label}、${r.toLocaleString()}円)に当たる給与の立替金(支払額に含まれるもの)が見つからないため、売上から除いていません(非課税の売上として残しています)。`
+        );
+      }
+    }
+  }
+  return rows;
 }
 
 /**
@@ -1369,15 +1477,50 @@ export function extractShikokuKintaiPastData(
   const invoices = readShikokuReferralInvoices(wb).filter((inv) => !(!inv.staffNo && deducted.some((d) => d.amount === inv.amount)));
   const split = splitShikokuReferralFees(targetMonth, billingRows, payrollRows, invoices, registeredReferrals);
   warnings.push(...split.warnings);
+  // ★2026-11-12追加: 実績加工の請求額に残る非課税の額(休業手当等の雑収入。立替金は除かれ、相殺は足し戻されている)を付ける
+  const sheetName = (s: string) => String(s ?? '').normalize('NFKC').replace(/\s/g, '');
+  const salesSheet = wb.Sheets['売上計上表'];
+  const nonTaxable = salesSheet
+    ? readShikokuMiscIncomeSales(XLSX.utils.sheet_to_json<any[]>(salesSheet, { header: 1, defval: '', raw: true }))
+    : [];
+  const splitBilling = assignNonTaxableToBillingRows(
+    split.billingRows,
+    split.payrollRows,
+    nonTaxable.map((a) => ({ ...a, match: (b: BillingRow) => sheetName(b.clientName) === sheetName(a.clientName) })),
+    warnings
+  );
   return {
     payrollRows: split.payrollRows,
-    billingRows: split.billingRows,
+    billingRows: splitBilling,
     invoiceRows: [],
     targetMonth,
     warnings,
     referralFeeRows: [],
     splitReferralFeeRows: split.referralFeeRows,
   };
+}
+
+/**
+ * ★2026-11-12追加(立替金等に消費税を掛けない修正): 勤怠明細票の「売上計上表」(取引先別、見出し「ｸﾗｲｱﾝﾄ名 非課税欄 請求合計額 …
+ * 立替金 地代家賃等相殺 雑収入（不課税）…」)から、「雑収入（不課税）」(2025年末〜は「休業手当等雑収入（不課税）」)の額を
+ * 取引先名別に合計する。実績加工の請求額は立替金を除き相殺を足し戻した後の額なので、非課税の額として残るのはこの雑収入
+ * (休業手当など)だけ(経理の売上計上表も「(実績加工−休業手当)×1.1」で消費税を計算している)。
+ */
+export function readShikokuMiscIncomeSales(aoa: any[][]): { clientName: string; amount: number; label: string }[] {
+  const str = (v: any) => String(v ?? '').normalize('NFKC').replace(/\s/g, '');
+  const headerIdx = aoa.findIndex((row) => str(row[0]) === 'クライアント名' && row.some((c) => str(c).includes('雑収入')));
+  if (headerIdx < 0) return [];
+  const col = aoa[headerIdx].findIndex((c) => str(c).includes('雑収入'));
+  const totals = new Map<string, { clientName: string; amount: number }>();
+  aoa.slice(headerIdx + 1).forEach((row) => {
+    const name = String(row[0] ?? '').trim();
+    const v = row[col];
+    if (!name || typeof v !== 'number' || v === 0) return;
+    const t = totals.get(str(name)) ?? { clientName: name, amount: 0 };
+    t.amount += v;
+    totals.set(str(name), t);
+  });
+  return [...totals.values()].map((t) => ({ ...t, label: t.clientName }));
 }
 
 /**
@@ -1669,9 +1812,27 @@ export function extractOsakaPastData(
     // parseInvoicePrintCsv側で既に「請求No・受注番号のどちらも無い行のみ除外」という
     // 緩和済みの判定を行っているため、ここでの重複filterは撤去した。
     invoiceRows = parseInvoicePrintCsv(csv, fileName).map((r) => ({ ...r, targetMonth }));
+    invoiceRows = markOsakaPassThroughReimbursements(invoiceRows, payrollRows);
   }
 
   return { payrollRows, billingRows, invoiceRows, targetMonth, warnings };
+}
+
+/**
+ * ★2026-11-13追加(はまさんの決定: 寸志・立替金は売上・支払の両方から除く): 大阪の請求書の非課税欄(プラスの額)のうち、
+ * 同じスタッフの給与の交通費2の枠(大阪は立替金・寸志などの受け渡しに使っている)か立替金の欄に同じ額があるものを、
+ * 派遣先に請求してスタッフに支払った立替金(InvoicePrintRow.reimbursementAmount)とする。
+ * 実データでは2024-08 宮﨑 華奈さん・福永 彩乃さんの寸志(備考に記載なし)、2025-10 土井 惠利奈さんの新幹線代、
+ * 2025-12 宮﨑さんの寸志の4件。休業手当(給与は休業手当の欄)・制服代の相殺(マイナス)は当たらない。
+ */
+export function markOsakaPassThroughReimbursements(invoiceRows: InvoicePrintRow[], payrollRows: PayrollRow[]): InvoicePrintRow[] {
+  const byStaff = new Map(payrollRows.map((p) => [String(p.staffNo).trim(), p]));
+  return invoiceRows.map((inv) => {
+    const nt = inv.nonTaxableAmount || 0;
+    if (inv.reimbursementAmount || nt <= 0 || !inv.staffNo) return inv;
+    const p = byStaff.get(String(inv.staffNo).trim());
+    return p && (p.transport2Amount === nt || p.reimbursement === nt) ? { ...inv, reimbursementAmount: nt } : inv;
+  });
 }
 
 export function extractPastData(

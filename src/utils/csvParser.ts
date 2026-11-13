@@ -376,6 +376,8 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
           ? getNum(row, transportFallbackKey) + getNum(row, transportDupKey)
           : getNum(row, transportFallbackKey);
 
+      const transport2Amount = transport1Key || transport2Key ? getNum(row, transport2Key) : getNum(row, transportDupKey);
+
       return {
         targetMonth,
         staffNo: getStr(row, staffNoKey),
@@ -385,6 +387,7 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
         employmentInsurance: getNum(row, empInsKey),
         parkingFee: getNum(row, parkingKey),
         salaryTransport,
+        transport2Amount,
         // ★2026-09-29追加: 支給交通費(types.ts PayrollRow.paidTransport参照)。給与CSVではsalaryTransportと同じ値。
         paidTransport: salaryTransport,
         paidLeaveAllowance: getNum(row, paidLeaveAllowanceKey),
@@ -568,6 +571,16 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
       // 「交通費－金額」の全角ハイフンはNFKC正規化で半角"-"になる(時間内－単価と同じ)。
       const staffNoKey = findColumnKey(row, ['スタッフ番号', 'スタッフNo']);
       const transportKey = findColumnKey(row, ['交通費-金額', '交通費−金額']);
+      // ★2026-11-12追加: 非課税欄(「非課税１－金額」〜「非課税５－金額」。NFKC正規化で「非課税1-金額」等になる)の合計
+      const nonTaxableKeys = Object.keys(row).filter((k) => /^非課税[1-5][-−]金額$/.test(normalizeHeader(k)));
+      // 備考(「備考１」「備考2」「備考３」)に「立替」「寸志」とある請求書行の非課税欄は、派遣先に請求してスタッフに渡すもの
+      // (大阪2025-10 土井 惠利奈さん「10/30 新幹線代立替分」、2025-12 宮﨑 華奈さん「宮﨑スタッフへの寸志支給」)。
+      // ★2026-11-13 はまさんの決定: 寸志も立替金と同じく売上・支払の両方から除く。休業手当・制服代の相殺などは売上に残す(税だけ掛けない)。
+      // 備考に書かれていない場合(2024-08の寸志)は、大阪の取込みで給与の交通費2の枠と照らし合わせる(excelImport.ts)
+      const remarks = Object.keys(row)
+        .filter((k) => /^備考[1-3]?$/.test(normalizeHeader(k)))
+        .map((k) => getStr(row, k))
+        .join(' ');
 
       const printVal = getStr(row, printKey);
       let printStatus: InvoicePrintRow['printStatus'] = '印刷済';
@@ -578,6 +591,7 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
 
       // 対象年月: (1)列があれば列 → (2)ファイル名 の優先順(請求支払一覧CSVと同じ優先順位)
       const targetMonth = monthKey ? normalizeMonth(row[monthKey]) : monthFromFileName;
+      const nonTaxableAmount = nonTaxableKeys.length > 0 ? nonTaxableKeys.reduce((s, k) => s + getNum(row, k), 0) : undefined;
 
       return {
         billingNo: getStr(row, billingNoKey),
@@ -590,6 +604,8 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
         orderNo: getStr(row, orderNoKey) || undefined,
         staffNo: getStr(row, staffNoKey) || undefined,
         transportAmount: transportKey ? getNum(row, transportKey) : undefined,
+        nonTaxableAmount,
+        reimbursementAmount: nonTaxableAmount && nonTaxableAmount > 0 && /立替|寸志/.test(remarks) ? nonTaxableAmount : undefined,
       };
     })
     // ★2026-09-29修正(はまさんの指摘): 以前は請求No(billingNo)が無い行を丸ごと除外していたが、

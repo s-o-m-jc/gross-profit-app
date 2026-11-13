@@ -14,6 +14,10 @@ export interface PayrollRow {
                                // 会社負担の雇保はGrossProfitResult.employmentInsurance(計算値)を参照
   parkingFee: number;          // 駐車場代 (自社負担分)
   salaryTransport: number;     // 給与側交通費支給額 (交通費1+交通費2の暫定合算・要最終確認)
+  // ★2026-11-13追加: 交通費2の枠(給与計算書印刷CSVの45列目。2つ目の「交通費」列)の額。salaryTransportの内数。
+  // 大阪はこの枠を立替金・寸志・健診代・制服代の相殺などの受け渡しに使っている(見出しは2023-10だけ「健診立替金」)。
+  // 請求書の非課税欄と同額なら、派遣先に請求してスタッフに支払った立替金(excelImport.ts markOsakaPassThroughReimbursements)
+  transport2Amount?: number;
   // ★2026-09-29追加: スタッフに支給した交通費(給与CSVの交通費1+交通費2)。salaryTransportと同じ値だが、
   // salaryTransportは表示用の分解(給与総額=支払−交通費、社保他小計=社保他+交通費)にも使われるため、
   // その分解を適用しない取込み元(四国の売上実績一覧表)でも支給交通費を保持できるよう別項目にしている。
@@ -128,6 +132,12 @@ export interface BillingRow {
   paidLeaveDaysUsed: number;   // 有給使用日数 (契約単位)
   billingTransport: number;    // 請求側交通費 (請求書印刷CSV等の別ソースでのみ入る想定。0のことが多い)
   referralFee: number;         // 紹介手数料 (粗利非算入・売上算入)
+  // ★2026-11-12追加: 請求額(billingAmountExTax)のうち消費税の掛からない額(請求書の非課税欄。立替金の請求、駐車料・制服代などの
+  // 相殺(マイナス)、休業手当など)。税込換算ではこの分に税を掛けない(calculator.tsのtoIncTax)。未設定なら請求書行(InvoicePrintRow)の値を使う
+  nonTaxableAmount?: number;
+  // ★2026-11-12追加(はまさんの決定「立替金は売上に含めない」): 請求額・支払額の両方に含まれている立替金(派遣先に請求し、
+  // スタッフに支給したもの。nonTaxableAmountの内数)。calculator.tsで売上・支払の両方から除く(粗利は変わらない)。
+  reimbursementAmount?: number;
   workHours: number;           // 請求稼働時間 (このCSVには存在しないことが多く0になりうる)
   unitPrice: number;           // 契約時間単価 (同上、0になりうる)
   // ★2026-10-06: 松山も請求支払一覧の副表の「支給単価」をpayUnitPriceに持つ(excelImport.ts applyMatsuyamaUnitPrices)。
@@ -177,6 +187,11 @@ export interface InvoicePrintRow {
   // 交通費列が無くBillingRow.billingTransportが常に0になるため、この値で補う(calculator.ts参照)。
   // 実データ確認済み: 契約別売上実績表シートの「交通費（税抜）」と一致し、請求額に含まれている。
   transportAmount?: number;
+  // ★2026-11-12追加: 非課税欄の合計(「非課税１－金額」〜「非課税５－金額」)。立替金の請求・制服代の相殺・休業手当など、
+  // 消費税の掛からない請求。請求支払一覧の請求額に含まれている(大阪の全件で請求書の小計=請求額を確認)。
+  nonTaxableAmount?: number;
+  // ★2026-11-12追加: 非課税欄のうち立替金の請求(備考に「立替」とあるもの)。BillingRow.reimbursementAmount参照
+  reimbursementAmount?: number;
 }
 
 // 退職金データレコード (★2026-08-26: CSV取込から手入力フォームに変更。休業分補償等と同じく
@@ -306,6 +321,8 @@ export interface GrossProfitResult {
   billingAmountExTax: number;  // 請求金額(税抜)
   billingAmountIncTax: number; // 請求金額(税込)
   billingTransport: number;    // 請求交通費
+  // ★2026-11-12追加: 請求額・支払額から除いた立替金(billingAmountExTax・paymentAmountは除いた後の額)
+  reimbursementAmount?: number;
   referralFee: number;         // 紹介手数料 (粗利非算入だが総売上に算入)
 
   // 原価項目
