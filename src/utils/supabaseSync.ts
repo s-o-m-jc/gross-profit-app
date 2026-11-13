@@ -2,122 +2,15 @@
  * 派遣事業 粗利・経理管理システム
  * Supabase (monthly_dataテーブル) との読み込み/書き込み
  *
- * データはSupabaseをメインの保存先とする。会社×対象月ごとに1行(state列にJSONBで
- * MonthlyDataState全体を保持)というテーブル設計(supabase/migrations参照)に合わせて、
- * 会社単位で「今のmonthlyData[companyId]の内容に一致するようテーブル側を置き換える」
- * (差分のupsert + 不要になった月の削除)方式で同期する。
- *
- * RLSにより、viewerロールでの書き込み系呼び出し(upsert/delete)はDB側で拒否される
- * (UI側でも編集系操作自体を非表示/無効化しているため、通常は呼び出されない想定)。
+ * ★2026-11-13: monthly_dataの読み込み・保存は src/utils/saveSync.ts に移した(変わった月だけを、読み込んだときの
+ * updated_at と同じときだけ書く方式)。以前ここにあった replaceCompanyMonthlyData(変更のあった会社の全月を上書きし、
+ * 画面に無い月を削除する)は、古いタブの保存でDB補正が巻き戻る・増えた月が消える原因だったため削除した。
+ * このファイルには変更履歴(monthly_data_history)の参照だけが残っている。
  */
 
 import { supabase } from '../lib/supabaseClient';
 import { CompanyId } from '../config/companies';
-import { CompanyMonthlyData, MonthlyDataState, emptyMonthlyDataState } from './monthlyData';
-
-interface MonthlyDataRow {
-  target_month: string;
-  state: Partial<MonthlyDataState> | null;
-}
-
-/** DBから取得したstate(JSONB)を、欠けているカテゴリ配列を空配列で補いながら正規化する */
-function normalizeState(state: Partial<MonthlyDataState> | null | undefined): MonthlyDataState {
-  const base = emptyMonthlyDataState();
-  if (!state) return base;
-  return {
-    payrollRows: state.payrollRows || [],
-    billingRows: state.billingRows || [],
-    invoiceRows: state.invoiceRows || [],
-    retirementRows: state.retirementRows || [],
-    leaveCompensationRows: state.leaveCompensationRows || [],
-    leaveAllowanceRows: state.leaveAllowanceRows || [],
-    nextMonthAdjustmentRows: state.nextMonthAdjustmentRows || [],
-    paidLeaveOverrideRows: state.paidLeaveOverrideRows || [],
-    personInChargeRows: state.personInChargeRows || [],
-    referralFeeRows: state.referralFeeRows || [],
-    transportExTaxOverrideRows: state.transportExTaxOverrideRows || [],
-  };
-}
-
-/**
- * 1社分のmonthly_dataを全件取得し、CompanyMonthlyData形式(対象月→MonthlyDataState)に
- * 組み立てる。
- *
- * ★2026-09-30変更(本番障害対応): 以前は複数社をまとめて`company_id in (...)`で1クエリで
- * 取得していたが、四国人材の過去実績データ(33ヶ月分・12,000件超)を取り込んだ結果、
- * 3社分のJSONBを一括取得するクエリがSupabase側のstatement timeoutに達し、全社まとめて
- * 読込失敗(画面が真っ白)になる障害が発生した。会社ごとに独立したクエリに分割することで、
- * 1社分のデータ量が大きくても他社の表示に影響しない(その社だけローカルキャッシュに
- * フォールグレードする)ようにした。呼び出し側(App.tsx)でPromise.allSettledを使い、
- * 会社ごとに成功/失敗を判定する。
- */
-export async function fetchMonthlyDataForCompany(companyId: CompanyId): Promise<CompanyMonthlyData> {
-  const { data, error } = await supabase
-    .from('monthly_data')
-    .select('target_month, state')
-    .eq('company_id', companyId);
-
-  if (error) {
-    throw new Error(`Supabaseからのデータ読込に失敗しました(${companyId}): ${error.message}`);
-  }
-
-  const result: CompanyMonthlyData = {};
-  (data as MonthlyDataRow[] | null)?.forEach((row) => {
-    result[row.target_month] = normalizeState(row.state);
-  });
-  return result;
-}
-
-/**
- * 1社分の月別データ(companyMonths)を、Supabase側の内容と一致するように同期する。
- * - companyMonthsに存在する月: upsert(内容を置き換え)
- * - Supabase側にのみ存在する月(companyMonthsから削除された月): delete
- * 「データをクリア」やファイルからの読込(全社上書き)でも、この関数1つで整合が取れる。
- */
-export async function replaceCompanyMonthlyData(
-  companyId: CompanyId,
-  companyMonths: CompanyMonthlyData
-): Promise<void> {
-  const months = Object.keys(companyMonths);
-
-  if (months.length > 0) {
-    const rows = months.map((month) => ({
-      company_id: companyId,
-      target_month: month,
-      state: companyMonths[month],
-    }));
-    const { error } = await supabase
-      .from('monthly_data')
-      .upsert(rows, { onConflict: 'company_id,target_month' });
-    if (error) {
-      throw new Error(`Supabaseへの保存に失敗しました(${companyId}): ${error.message}`);
-    }
-  }
-
-  const { data: existing, error: selectError } = await supabase
-    .from('monthly_data')
-    .select('target_month')
-    .eq('company_id', companyId);
-  if (selectError) {
-    throw new Error(`Supabaseの既存データ確認に失敗しました(${companyId}): ${selectError.message}`);
-  }
-
-  const monthSet = new Set(months);
-  const toDelete = (existing || [])
-    .map((r) => r.target_month as string)
-    .filter((m) => !monthSet.has(m));
-
-  if (toDelete.length > 0) {
-    const { error: deleteError } = await supabase
-      .from('monthly_data')
-      .delete()
-      .eq('company_id', companyId)
-      .in('target_month', toDelete);
-    if (deleteError) {
-      throw new Error(`Supabase上の不要データ削除に失敗しました(${companyId}): ${deleteError.message}`);
-    }
-  }
-}
+import { MonthlyDataState } from './monthlyData';
 
 export interface ChangeHistoryEntry {
   id: string;

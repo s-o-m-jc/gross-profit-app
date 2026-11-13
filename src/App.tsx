@@ -71,7 +71,7 @@ import { loadAppState, saveAppState } from './utils/persistence';
 import { buildEffectiveTransportExTaxRows } from './utils/transportExTaxDisplay';
 import { TRANSPORT_EX_TAX_DEFINITIONS } from './config/transportExTax';
 import { WORKERS_COMP_RATES_IN_SOCIAL_INSURANCE } from './config/socialInsuranceCheck';
-import { fetchMonthlyDataForCompany, replaceCompanyMonthlyData } from './utils/supabaseSync';
+import { SaveManager, fetchCompanyMonths } from './utils/saveSync';
 import { downloadBackupFile, parseBackupFile } from './utils/backupFile';
 import { useAuth, Profile } from './lib/AuthContext';
 import { APP_COMMIT, formatAppVersion } from './version';
@@ -359,25 +359,66 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fiscalYearOptions]);
 
-  // 直前に読み込み/保存したmonthlyDataを保持し、Supabaseへの差分保存(会社単位)や
-  // 二重保存の抑止に使う(参照が変わった会社だけを保存対象にする)。
-  const prevMonthlyDataRef = useRef<AppMonthlyData>(monthlyData);
+  // ★2026-11-13 全面的に作り直し(保存まわりの問題 H1・H2): 保存は src/utils/saveSync.ts の SaveManager に任せる。
+  // - 変わった月だけを、読み込んだときの updated_at と同じときだけ書く(他で更新されていたら衝突として止める)。
+  // - 自動保存では削除しない。削除は、削除ボタン・ファイル読込・取り消しの操作で消した月(markDeleted)だけ。
+  // - 保存は会社ごとに1つずつ順番に。失敗したら未保存のまま5秒・30秒・2分と間隔を延ばして再試行する。
+  // 以前は replaceCompanyMonthlyData が変更のあった会社の全月を上書きし、画面に無い月を削除していた
+  // (古いタブの保存でDB補正が巻き戻る・増えた月が消える)。保存に失敗しても「保存済み」扱いで再試行されなかった。
+  const [, setSaveStateVersion] = useState(0);
+  const latestFiscalRef = useRef({ fiscalYear, taxRate });
+  latestFiscalRef.current = { fiscalYear, taxRate };
+  const saveManagerRef = useRef<SaveManager | null>(null);
+  if (!saveManagerRef.current) {
+    saveManagerRef.current = new SaveManager({
+      client: supabase,
+      onChange: () => setSaveStateVersion((v) => v + 1),
+      // ★2026-10-09(はまさんの指摘「決算期集計キャッシュは保存操作と同じタイミングで同期的に更新する」):
+      // 保存が成功した直後に、保存した内容そのものから計算してキャッシュに書く(保存が失敗・衝突したときは書かない)。
+      onSaved: async (companyId, companyMonths) => {
+        const { fiscalYear: fy, taxRate: rate } = latestFiscalRef.current;
+        const { summary: companyFiscalSummary } = buildFiscalSummaryForCompany(companyId, companyMonths, fy, rate);
+        const fiscalYearInt = parseInt(fy.split('-')[0], 10);
+        if (!Number.isFinite(fiscalYearInt)) return;
+        // ★2026-10-09(個人情報の越境への対応): 他拠点に出る可能性のあるstaffPaidLeaveBalances(スタッフ氏名入り)は除く
+        const { staffPaidLeaveBalances: _omit, ...cacheSafeSummary } = companyFiscalSummary;
+        const { error: cacheError } = await supabase
+          .from('fiscal_year_summary_cache')
+          .upsert({ company_id: companyId, fiscal_year: fiscalYearInt, summary: cacheSafeSummary as unknown as object });
+        if (cacheError) console.warn('決算期集計キャッシュの更新に失敗しました:', cacheError.message);
+      },
+    });
+  }
+  const saveManager = saveManagerRef.current;
+  // 画面に出す保存の状態(衝突している会社・保存に失敗して未保存の会社)
+  const saveConflicts = COMPANIES.flatMap((company) => {
+    const state = saveManager.getState(company.id);
+    return state?.status === 'conflict' ? [{ company, state }] : [];
+  });
+  const unsavedCompanies = COMPANIES.flatMap((company) => {
+    const state = saveManager.getState(company.id);
+    return state?.status === 'error' ? [{ company, state }] : [];
+  });
+  // データを編集できるか: 権限があり、読込に失敗しておらず(オフラインでない)、選択中の会社が衝突していないとき。
+  // ★2026-11-13: 以前は読込に失敗しても紹介手数料などの入力欄・月の削除が使え、その内容は保存されずに次の読込で消えていた
+  const canEditData =
+    canEditCurrentCompany && !isOffline && saveManager.getState(selectedCompanyId)?.status !== 'conflict';
+  // 最後に保存を頼んだときの会社ごとの内容(変わった会社だけ頼むため)
+  const lastRequestedRef = useRef<AppMonthlyData>(monthlyData);
+  // 会社ごとの編集可否(super_adminは全社、accountingは自社のみ)。保存もこの会社だけ行う
+  const canEditCompany = (id: CompanyId) =>
+    profile.role === 'super_admin' || (profile.role === 'accounting' && id === profile.companyId);
 
   // 起動時: Supabaseから自分が閲覧可能な会社(adminは全社/viewerは自社)のデータを読み込む。
-  // 失敗時(オフライン等)はIndexedDBキャッシュにフォールバックする。
+  // 失敗時(オフライン等)はIndexedDBキャッシュにフォールバックする(その会社は保存の対象にしない)。
   useEffect(() => {
     let cancelled = false;
     const allowedCompanyIds = visibleCompanies.map((c) => c.id);
 
     (async () => {
-      // ★2026-09-30変更(本番障害対応): 以前は3社まとめて1クエリで取得しており、四国人材の
-      // データ量増加でそのクエリがSupabase側のstatement timeoutに達すると、全社まとめて
-      // 読込失敗(画面が真っ白)になっていた。会社ごとに独立したクエリにし、失敗した会社
-      // だけをローカルキャッシュにフォールバックすることで、1社の不調が他社の表示を
-      // 巻き込まないようにする(supabaseSync.ts参照)。
-      const settled = await Promise.allSettled(
-        allowedCompanyIds.map((id) => fetchMonthlyDataForCompany(id))
-      );
+      // ★2026-09-30変更(本番障害対応): 会社ごとに独立したクエリにし、失敗した会社だけをローカルキャッシュに
+      // フォールバックする(1社の不調が他社の表示を巻き込まないように)。
+      const settled = await Promise.allSettled(allowedCompanyIds.map((id) => fetchCompanyMonths(supabase, id)));
       if (cancelled) return;
 
       const remote = initialAppMonthlyData();
@@ -386,7 +427,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       settled.forEach((result, i) => {
         const id = allowedCompanyIds[i];
         if (result.status === 'fulfilled') {
-          remote[id] = result.value;
+          remote[id] = result.value.months;
+          saveManager.reset(id, result.value.months, result.value.versions);
         } else {
           failedCompanyIds.push(id);
           firstError = firstError ?? result.reason;
@@ -412,12 +454,8 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       }
 
       setMonthlyData(remote);
-      prevMonthlyDataRef.current = remote;
-      // ★2026-09-19削除(はまさんの指摘「サンプルデータを読み込む運用は今後一切行わない」):
-      // 以前はここで、管理者かつ本当にデータが1件も無い(初回利用)場合のみ四国人材へ
-      // サンプルデータを自動投入していた(従来のIndexedDB単体運用時の挙動を踏襲した初回
-      // オンボーディング用)。この方針転換に伴い撤去。データベースが空の状態でアプリを
-      // 開いた場合は、単純にデータ無しの空の画面になる。
+      lastRequestedRef.current = remote;
+      // ★2026-09-19削除: 以前はデータが1件も無い場合に四国人材へサンプルデータを自動投入していた(撤去済み)。
       // ローカルキャッシュも最新化しておく(次回オフライン時のフォールバック用。失敗した会社は
       // 直前のキャッシュ内容のまま=悪化させない)
       await saveAppState({ monthlyData: remote, selectedCompanyId });
@@ -431,59 +469,59 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 自動保存: monthlyDataが変わるたび、変化があった会社だけをSupabaseへ反映する(adminのみ。
-  // viewerは編集操作自体がUI上できず、RLSでも書き込みが拒否されるため実行しない)。
+  // 自動保存: monthlyDataが変わるたび、変わった会社(編集できる会社だけ)の保存をSaveManagerに頼む。
+  // 読込に失敗した会社がある間(isOffline)は保存しない(編集もできないようにしている)。
   // 併せてIndexedDBキャッシュ(オフライン閲覧用)も常に最新化する。
   useEffect(() => {
     if (!isDataLoaded) return;
-    const timer = setTimeout(async () => {
-      if (canEditCurrentCompany && !isOffline) {
-        const prev = prevMonthlyDataRef.current;
-        const changedCompanies = COMPANIES.filter((c) => monthlyData[c.id] !== prev[c.id]);
-        for (const company of changedCompanies) {
-          try {
-            await replaceCompanyMonthlyData(company.id, monthlyData[company.id]);
-            setSyncError(null);
-            // ★2026-10-09追加(はまさんの指摘「決算期集計キャッシュは保存操作と同じタイミングで
-            // 同期的に更新する必要がある」への対応): バッチ/スケジュールではなく、Supabaseへの
-            // 保存(replaceCompanyMonthlyData)が確定した直後に、保存した会社自身の決算期集計を
-            // 「今まさに保存した内容(monthlyData[company.id])」から直接再計算してキャッシュに
-            // 書き込む(selectedCompanyId用のuseMemoの値を待たない。複数社が同時に変化した
-            // 場合でも、変化した各社それぞれについて行う)。これにより、保存に成功した内容と
-            // キャッシュの内容が常に一致する(保存が失敗した場合はこのブロックに到達せず、
-            // キャッシュも更新されない)。会社ごとの書き込み権限はRLS側(company_id=自社のみ、
-            // またはsuper_admin/branch_adminは全社)でも強制している。
-            const { summary: companyFiscalSummary } = buildFiscalSummaryForCompany(
-              company.id,
-              monthlyData[company.id],
-              fiscalYear,
-              taxRate
-            );
-            const fiscalYearInt = parseInt(fiscalYear.split('-')[0], 10);
-            if (Number.isFinite(fiscalYearInt)) {
-              // ★2026-10-09追加(はまさんの指摘「個人情報の越境」への対応): キャッシュに保存する
-              // 内容自体からも、他拠点に出る可能性のあるstaffPaidLeaveBalances(スタッフ氏名入り)を
-              // 除いておく(読み取り側のget_fiscal_year_summary()でも除いているが、保存側でも
-              // 二重に防御する。自社分の直接SELECT(fiscal_year_summary_cache_select)では
-              // 必要ないため、画面側のstaffPaidLeaveBalancesはこのキャッシュ経由ではなく
-              // 既存のローカル計算(fiscalSummary)からそのまま使う)。
-              const { staffPaidLeaveBalances: _omit, ...cacheSafeSummary } = companyFiscalSummary;
-              const { error: cacheError } = await supabase
-                .from('fiscal_year_summary_cache')
-                .upsert({ company_id: company.id, fiscal_year: fiscalYearInt, summary: cacheSafeSummary as unknown as object });
-              if (cacheError) console.warn('決算期集計キャッシュの更新に失敗しました:', cacheError.message);
-            }
-          } catch (e) {
-            console.error('Supabaseへの保存に失敗しました:', e);
-            setSyncError(e instanceof Error ? e.message : String(e));
-          }
+    if (!isOffline) {
+      const prev = lastRequestedRef.current;
+      COMPANIES.forEach((c) => {
+        if (monthlyData[c.id] !== prev[c.id] && canEditCompany(c.id)) {
+          saveManager.requestSave(c.id, monthlyData[c.id]);
         }
-        prevMonthlyDataRef.current = monthlyData;
-      }
-      saveAppState({ monthlyData, selectedCompanyId });
-    }, 500);
+      });
+      lastRequestedRef.current = monthlyData;
+    }
+    const timer = setTimeout(() => saveAppState({ monthlyData, selectedCompanyId }), 500);
     return () => clearTimeout(timer);
-  }, [monthlyData, selectedCompanyId, isDataLoaded, canEditCurrentCompany, isOffline, fiscalYear, taxRate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthlyData, selectedCompanyId, isDataLoaded, isOffline]);
+
+  // 未保存の変更があるまま、タブを閉じる・再読み込みしようとしたら警告する
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!saveManager.hasUnsaved()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    // ネットにつながったら、失敗していた保存をすぐに再試行する
+    const onOnline = () => saveManager.retryNow();
+    window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [saveManager]);
+
+  // 衝突したとき: その会社だけ、DBの最新の内容を読み込み直す(画面のその会社の変更は捨てる)
+  const reloadCompanyFromServer = async (companyId: CompanyId) => {
+    try {
+      const { months, versions } = await fetchCompanyMonths(supabase, companyId);
+      saveManager.reset(companyId, months, versions);
+      lastRequestedRef.current = { ...lastRequestedRef.current, [companyId]: months };
+      setMonthlyData((prev) => ({ ...prev, [companyId]: months }));
+      setUndoSnapshot((snap) => (snap && snap.companyId === companyId ? null : snap));
+    } catch (e) {
+      window.alert(`最新の内容の読み込みに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  // 衝突したとき: 画面の内容(全社・全月)をファイルに保存してから、その会社を読み込み直す
+  const saveToFileThenReload = async (companyId: CompanyId) => {
+    downloadBackupFile(monthlyData);
+    await reloadCompanyFromServer(companyId);
+  };
 
   // ★2026-10-09追加(はまさんの依頼): CSV/Excel取込みの履歴(誰が・いつ・どの拠点・どの期間・
   // 何件)をcsv_operation_logへ記録する。handlePayrollLoaded/handleBillingLoaded/
@@ -552,7 +590,13 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   };
   const handleUndoLastCsvUpload = () => {
     if (!undoSnapshot || undoSnapshot.companyId !== selectedCompanyId) return;
-    setMonthlyData((prev) => ({ ...prev, [undoSnapshot.companyId]: undoSnapshot.companyMonths }));
+    const { companyId, companyMonths } = undoSnapshot;
+    // ★2026-11-13: 取込みで増えた月は、取り消しの操作として削除する(自動保存では削除しないため、ここで記録する)
+    saveManager.markDeleted(
+      companyId,
+      Object.keys(monthlyData[companyId] || {}).filter((m) => !(m in companyMonths))
+    );
+    setMonthlyData((prev) => ({ ...prev, [companyId]: companyMonths }));
     setUndoSnapshot(null);
   };
 
@@ -633,9 +677,11 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // 機能を追加した。上記の「データをクリア」(全月一括)とは異なり、こちらはUIからの削除を
   // 前提とした機能のため、型-to-confirm・自動バックアップ等の安全策をDeleteMonthModal側に
   // 実装した上で復活させている(方針の後退ではなく、安全策付きの限定的な復活)。
-  // 削除自体はローカルのmonthlyData状態から該当月のキーを取り除くだけで、実際のSupabase上の
-  // 削除は下の自動保存effect(replaceCompanyMonthlyData、既存の差分同期ロジック)が担う。
+  // 削除自体はローカルのmonthlyData状態から該当月のキーを取り除き、削除の操作としてSaveManagerに記録する。
+  // 実際のSupabase上の削除は、SaveManager(saveSync.ts)が保存のときに行う。
   const handleDeleteMonth = (month: string) => {
+    // ★2026-11-13: 自動保存では削除しないため、削除の操作として記録する(他で更新されていたら削除せず衝突として知らせる)
+    saveManager.markDeleted(selectedCompanyId, [month]);
     setMonthlyData((prev) => ({
       ...prev,
       [selectedCompanyId]: deleteCompanyMonth(prev[selectedCompanyId], month),
@@ -661,6 +707,15 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         ) {
           return;
         }
+        // ★2026-11-13: ファイルに無い月は、ファイル読込(全部上書き)の操作として削除する(自動保存では削除しないため)。
+        // 読み込んだ後に他で更新された月があれば、上書き・削除せずに衝突として知らせる
+        visibleCompanies.forEach((c) => {
+          const fileMonths = restored[c.id] || {};
+          saveManager.markDeleted(
+            c.id,
+            Object.keys(monthlyData[c.id] || {}).filter((m) => !(m in fileMonths))
+          );
+        });
         setMonthlyData((prev) => {
           const merged = { ...prev };
           visibleCompanies.forEach((c) => {
@@ -723,7 +778,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // 他拠点の生データにアクセスできないロール(general/accounting)でも、
   // get_fiscal_year_summary()経由でこの値を読める。
   // ★2026-10-09追記(はまさんの指摘「更新タイミングは保存操作と同じタイミングで同期的に」への対応):
-  // 編集(保存)が起きた場合の確実な更新は、上の自動保存effect内で「Supabaseへの保存が確定した
+  // 編集(保存)が起きた場合の確実な更新は、SaveManagerのonSaved(上)で「Supabaseへの保存が確定した
   // 直後に、保存した内容そのものから計算して」行っている(保存が失敗した場合はキャッシュも
   // 更新されない、より厳密な経路)。このeffectはそれとは別に、書き込み権限が無く保存effectを
   // 一度も通らないロール(branch_admin等の閲覧専用ユーザー)が単に閲覧しただけでもキャッシュを
@@ -731,6 +786,9 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
   // 両方が同じ値を書くだけなので重複しても実害はない。
   useEffect(() => {
     if (!isDataLoaded || calculatedResults.length === 0) return;
+    // ★2026-11-13: 画面の内容がまだ保存されていない(保存中・失敗・衝突)ときは書かない。キャッシュはDBに保存された内容だけから作る
+    const saveState = saveManager.getState(selectedCompanyId);
+    if (isOffline || (saveState && (saveState.status !== 'saved' || saveState.unsavedMonths > 0))) return;
     const fiscalYearInt = parseInt(fiscalYear.split('-')[0], 10);
     if (!Number.isFinite(fiscalYearInt)) return;
     const { staffPaidLeaveBalances: _omit, ...cacheSafeSummary } = fiscalSummary;
@@ -740,7 +798,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       .then(({ error }) => {
         if (error) console.warn('決算期集計キャッシュの更新に失敗しました:', error.message);
       });
-  }, [isDataLoaded, selectedCompanyId, fiscalYear, fiscalSummary, calculatedResults.length]);
+  }, [isDataLoaded, isOffline, selectedCompanyId, fiscalYear, fiscalSummary, calculatedResults.length]);
 
   // ★2026-09-20追加(はまさんのご要望「決算期グラフに前年対比を追加」): 選択中の決算期の
   // 1年前(開始年月の年だけ-1した決算期)のサマリーを、前年対比グラフ用に同じ関数
@@ -910,15 +968,71 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
         onOpenApprovalInbox={canApproveRegistrations ? () => setIsApprovalInboxOpen(true) : undefined}
       />
 
-      {/* オフライン/同期エラーの通知バナー */}
-      {(isOffline || syncError) && (
+      {/* ★2026-11-13: 保存の衝突・未保存の通知(閉じられない。解決するまで画面上部に出し続ける。ヘッダーの下に固定) */}
+      {(saveConflicts.length > 0 || unsavedCompanies.length > 0) && (
+        <div className="sticky top-16 z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 space-y-2">
+          {saveConflicts.map(({ company, state }) => (
+            <div
+              key={`conflict-${company.id}`}
+              role="alert"
+              className="px-3 py-2 bg-red-600 border border-red-700 rounded-lg text-xs text-white shadow-md"
+            >
+              <div className="flex items-start space-x-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  <strong>{company.name}</strong>
+                  {state.conflictMonth ? ` ${state.conflictMonth}` : ''}は、{state.conflictReason ?? 'あなたが画面を開いた後に、他で更新されました'}
+                  (他の人・別のタブ・データの補正)。あなたの変更は、まだ保存されていません。この会社の自動保存は止めています。
+                  {state.unsavedMonths > 0 ? `(未保存: ${state.unsavedMonths}ヶ月分)` : ''}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-2 pl-6">
+                <button
+                  onClick={() => void reloadCompanyFromServer(company.id)}
+                  className="px-3 py-1 bg-white text-red-700 font-bold rounded border border-red-200 hover:bg-red-50"
+                >
+                  最新の内容を読み込む(自分の変更は捨てる)
+                </button>
+                <button
+                  onClick={() => void saveToFileThenReload(company.id)}
+                  className="px-3 py-1 bg-red-800 text-white font-bold rounded border border-red-900 hover:bg-red-900"
+                >
+                  自分の変更をファイルに保存してから読み込む
+                </button>
+              </div>
+            </div>
+          ))}
+          {unsavedCompanies.map(({ company, state }) => (
+            <div
+              key={`unsaved-${company.id}`}
+              role="alert"
+              className="flex flex-wrap items-start gap-2 px-3 py-2 bg-amber-100 border border-amber-400 rounded-lg text-xs text-amber-900 shadow-md"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="flex-1 min-w-[16rem]">
+                <strong>未保存の変更があります({company.name} {state.unsavedMonths}ヶ月分)</strong>。
+                保存に失敗したため、自動で再試行しています
+                {state.nextRetryMs ? `(${Math.round(state.nextRetryMs / 1000)}秒ごと)` : ''}。このままタブを閉じると、変更が失われます。
+                {state.errorMessage ? <span className="block text-[11px] text-amber-800 mt-0.5">{state.errorMessage}</span> : null}
+              </span>
+              <button
+                onClick={() => saveManager.retryNow(company.id)}
+                className="px-3 py-1 bg-amber-600 text-white font-bold rounded hover:bg-amber-700 shrink-0"
+              >
+                今すぐ再試行
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* オフライン(読込失敗)の通知バナー */}
+      {isOffline && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
           <div className="flex items-start space-x-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
-              {isOffline
-                ? `Supabaseからのデータ読込に失敗した会社があるため、該当会社のみローカルキャッシュを表示しています(閲覧のみ・最新の変更が反映されていない可能性があります)。${syncError ? ` [${syncError}]` : ''}`
-                : `Supabaseへの保存でエラーが発生しました: ${syncError}`}
+              {`Supabaseからのデータ読込に失敗した会社があるため、該当会社のみローカルキャッシュを表示しています(閲覧のみ・最新の変更が反映されていない可能性があります)。この間は、取込み・手入力・月の削除・ファイルからの読込はできません。画面を再読み込みしてください。${syncError ? ` [${syncError}]` : ''}`}
             </span>
           </div>
         </div>
@@ -1048,7 +1162,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               companyMonths={selectedCompanyMonths}
               onUpsert={handleUpsertPersonInCharge}
               onRemove={handleRemovePersonInCharge}
-              canEdit={canEditCurrentCompany}
+              canEdit={canEditData}
             />
             <MonthlyCalculationTable
               results={calculatedResults}
@@ -1076,7 +1190,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             paidLeaveOverrideRows={paidLeaveOverrideRows}
             onAddPaidLeaveOverride={handleAddPaidLeaveOverride}
             onRemovePaidLeaveOverride={handleRemovePaidLeaveOverride}
-            canEdit={canEditCurrentCompany}
+            canEdit={canEditData}
           />
         )}
 
@@ -1087,7 +1201,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             companyMonths={selectedCompanyMonths}
             onAdd={handleAddRetirement}
             onRemove={handleRemoveRetirement}
-            canEdit={canEditCurrentCompany}
+            canEdit={canEditData}
           />
         )}
 
@@ -1112,7 +1226,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
             companyId={selectedCompanyId}
             onUpsertTransportExTaxOverride={handleUpsertTransportExTaxOverride}
             onRemoveTransportExTaxOverride={handleRemoveTransportExTaxOverride}
-            canEdit={canEditCurrentCompany}
+            canEdit={canEditData}
           />
         )}
 
@@ -1122,7 +1236,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
           <>
             {/* 過去実績Excel取り込み(フェーズ2、四国・松山のみ対象。閲覧専用ユーザーには表示しない)
                 ★2026-09-02: 全タブ共通エリアから、このデータ管理タブへ移動(理由は上記コメント参照) */}
-            {canEditCurrentCompany && (
+            {canEditData && (
               <PastExcelImportPanel
                 selectedCompanyId={selectedCompanyId}
                 onPayrollLoaded={handlePayrollLoaded}
@@ -1137,7 +1251,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
 
             {/* CSVアップローダー (閲覧専用ユーザーには表示しない)
                 ★2026-09-02: 全タブ共通エリアから、このデータ管理タブへ移動(理由は上記コメント参照) */}
-            {canEditCurrentCompany && (
+            {canEditData && (
               <CsvUploader
                 payrollRows={payrollRows}
                 billingRows={billingRows}
@@ -1157,7 +1271,7 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
               companyMonths={selectedCompanyMonths}
               onSaveToFile={handleSaveToFile}
               onLoadFromFile={handleLoadFromFile}
-              canEdit={canEditCurrentCompany}
+              canEdit={canEditData}
               fiscalYearMonths={fiscalYearMonths}
               fiscalYearLabel={fiscalYearLabel}
               onDeleteMonth={handleDeleteMonth}
