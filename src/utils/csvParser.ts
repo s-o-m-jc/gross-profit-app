@@ -497,10 +497,13 @@ export function parseBillingCsv(csvText: string, fileName?: string): BillingRow[
       const referralKey = findColumnKey(row, ['紹介手数料', '紹介料']);
       const hoursKey = findColumnKey(row, ['稼働時間', '労働時間']);
       const priceKey = findColumnKey(row, ['請求単価', '契約単価', '単価']);
-      // ★2026-09-11追加(23章タスクB「担当者」列復活): 実データ確認済み、松山の「請求支払一覧」
-      // シート(excelImport.ts/extractMatsuyamaPastDataがこのparseBillingCsvを経由して読む)の
-      // Q列に実在する。四国・大阪の取り込み元にはこの列が無く、該当列なしとして常にundefinedになる
-      // (getStrが空文字を返し、下記で||undefinedにフォールバックする)。
+      // ★2026-09-11追加(23章タスクB「担当者」列復活)。★2026-11-13訂正: 松山の「請求支払一覧」
+      // シート(Q列)だけでなく、大阪の「請求支払（スタナビ）」シートにも同じ列(「担当者」)が
+      // 実在し、ここで正しく読めている(types.ts BillingRow.personInChargeのコメント参照)。
+      // 四国は、過去データの取込み元「売上実績一覧表」にはこの列が無いため、ここを通っても
+      // 常にundefinedになる(getStrが空文字を返し、下記で||undefinedにフォールバックする)。
+      // ただし②請求支払一覧表印刷CSVを直接取り込む場合は、四国も見出しが「担当者」または
+      // 「担当」のため、ここで正しく読める(3拠点とも確認済み)。
       const personInChargeKey = findColumnKey(row, ['担当者', '担当']);
 
       // 対象年月: (1)列があれば列 → (2)ファイル名 の優先順
