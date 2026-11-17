@@ -46,6 +46,15 @@ Claude Code(ローカル・クラウド問わず)は、このファイルを毎�
    - 2026-11-13の確認(値は出さずに検索): 鍵の値があったのは`.env.local`の1行だけ。git履歴・PowerShellの履歴・`~/backups`・`~/.claude`・
      一時フォルダ・OneDriveフォルダ・書類/デスクトップ/ダウンロード・上位フォルダのzip・`dist`には無し。書類フォルダはOneDriveの同期対象外
      (実体は`C:\Users\ha-ma\Documents`)。以前の作業スクリプト(例: 一時フォルダの`snap.mjs`)は`.env.local`を直接読んでいた。
+   - **2026-11-13、同日に再確認(より広く、鍵の値の形式`sb_secret_`も含めて検索)**: `.env.local`削除後の状態で、プロジェクト・上位フォルダの
+     `.env*`に鍵の行は無し(0件)。Claude Code自身のローカル記録(`~/.claude/file-history`・`history.jsonl`・`paste-cache`・会話記録jsonl)には
+     「SUPABASE_SERVICE_ROLE_KEY」という**名前**は複数箇所に出るが(CLAUDE.md・docs/HANDOFF.mdの説明文や、このセッションの検索コマンド自体に
+     由来。無害)、値の形式`sb_secret_`は1件も見つからなかった。gitは`git log --all -S`で名前・値形式とも検索し、値の形式は全履歴で0件
+     (名前は`CLAUDE.md`等の説明文のコミットのみ)。ローカルにのみ`refs/agents/<session>/checkpoints/turn/0`という、クラウド版のAgent実行で
+     作られたチェックポイント用のgit参照が1つ見つかったが、originには存在せず(push済みではない)、内容は`.env.example`のみで`.env.local`は
+     含まれていない。OneDriveは接続されているがプロジェクトは対象外(同期フォルダのUserFolder設定が空)。Windowsのファイル履歴
+     (レジストリキー`FileHistory`)は未設定。ボリュームシャドウコピー・復元ポイントは管理者権限が無く確認できなかった(「以前のバージョン」
+     機能経由で残っていないかは未確認のまま。可能性は低いが完全には排除できない)。
 3. 削除前に必ず全テーブル(`companies`/`profiles`/`monthly_data`、可能なら`monthly_data_history`)を
    タイムスタンプ付きディレクトリへJSONエクスポートし、サーバ側件数と一致することを確認する。
    バックアップ先はリポジトリ外(例: `~/backups/gross-profit-app/YYYYMMDD_HHMMSS/`)にすること。
