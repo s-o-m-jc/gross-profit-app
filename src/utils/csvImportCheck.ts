@@ -13,7 +13,11 @@
  *   松山は8桁で3から始まる(3000…)、四国はスタッフ番号が6桁以下(請求Noは8桁で1から始まる、例: 10031190)。
  */
 import Papa from 'papaparse';
-import { PayrollRow, BillingRow, InvoicePrintRow } from '../types';
+import { PayrollRow, BillingRow, InvoicePrintRow, InvoiceListRow } from '../types';
+import { PAYROLL_TRANSPORT_COLUMNS } from '../config/payrollColumns';
+import { employerEmploymentInsuranceRate } from '../config/employmentInsuranceRates';
+import { WORKERS_COMP_RATES_IN_SOCIAL_INSURANCE, workersCompRate } from '../config/socialInsuranceCheck';
+import { parseInvoiceListCsv, applyMatsuyamaCsvRules } from './matsuyamaCsvImport';
 import { CompanyId, COMPANIES } from '../config/companies';
 import { MonthlyDataState, MonthlyCategory } from './monthlyData';
 import {
@@ -24,16 +28,16 @@ import {
   extractMonthFromFileName,
 } from './csvParser';
 
-/** カードの種類。④(請求一覧CSV)は段階2で追加する */
-export type CsvCardKind = 'payroll' | 'billing' | 'invoice';
+/** カードの種類。④請求一覧CSVは2026-11-26追加(松山だけ必須。請求書ごとの消費税に使い、データとしては保存しない) */
+export type CsvCardKind = 'payroll' | 'billing' | 'invoice' | 'invoiceList';
 /** 中身から判定したファイルの種類 */
-export type DetectedCsvKind = CsvCardKind | 'invoiceList' | 'unknown';
+export type DetectedCsvKind = CsvCardKind | 'unknown';
 
 export const CSV_KIND_LABEL: Record<DetectedCsvKind, string> = {
   payroll: '①給与計算書印刷CSV',
   billing: '②請求支払一覧表印刷CSV',
   invoice: '③請求書印刷CSV',
-  invoiceList: '請求一覧CSV',
+  invoiceList: '④請求一覧CSV',
   unknown: '判定できない形式',
 };
 
@@ -42,16 +46,17 @@ export const CSV_CARD_FULL_LABEL: Record<CsvCardKind, string> = {
   payroll: '①給与計算書印刷CSV',
   billing: '②請求支払一覧表印刷CSV',
   invoice: '③請求書印刷CSV(15日締・20日締・末締)',
+  invoiceList: '④請求一覧CSV',
 };
 
 /**
- * 拠点ごとに、1回の取込みでそろっていなければならないカード(★2026-11-26 はまさんの判断)。今は3拠点とも①②③。
- * 段階2で④請求一覧CSVを足すときは、松山だけ④を加える。
+ * 拠点ごとに、1回の取込みでそろっていなければならないカード(★2026-11-26 はまさんの判断)。
+ * 松山は①②③④(④で請求書ごとの消費税を使う。matsuyamaCsvImport.ts)、四国・大阪は①②③。
  */
 export const REQUIRED_CSV_CARDS: Record<CompanyId, CsvCardKind[]> = {
   shikoku: ['payroll', 'billing', 'invoice'],
   osaka: ['payroll', 'billing', 'invoice'],
-  matsuyama: ['payroll', 'billing', 'invoice'],
+  matsuyama: ['payroll', 'billing', 'invoice', 'invoiceList'],
 };
 
 export interface PendingCsvFile {
@@ -127,7 +132,8 @@ export function formatMonthJa(month: string): string {
   return m ? `${m[1]}年${parseInt(m[2], 10)}月` : month;
 }
 
-const CARD_CATEGORY: Record<CsvCardKind, MonthlyCategory> = {
+// ④は保存しない(取込み時に請求行の税込額へ反映するだけ)ので、置き換わるカテゴリは無い
+const CARD_CATEGORY: Partial<Record<CsvCardKind, MonthlyCategory>> = {
   payroll: 'payrollRows',
   billing: 'billingRows',
   invoice: 'invoiceRows',
@@ -169,6 +175,10 @@ export interface CsvImportPreview {
   billingLinkedToInvoice?: { linked: number; total: number };
   existing: { payroll: number; billing: number; invoice: number; manual: { label: string; count: number }[] };
   replacesCategories: CsvCardKind[];
+  /** 検算の結果(合わなければ警告にも出す。取込みは止めない)。okがnullは「確かめられない」 */
+  checks: { label: string; ok: boolean | null; detail: string }[];
+  /** 拠点ごとの取込みの規則で行ったこと(松山の2行のまとめなど) */
+  notes: string[];
   blockers: string[];
   warnings: string[];
   confirmations: { id: string; label: string }[];
@@ -201,6 +211,9 @@ export function buildCsvImportPreview(
   const payrollFile = files.find((f) => f.card === 'payroll');
   const billingFile = files.find((f) => f.card === 'billing');
   const invoiceFiles = files.filter((f) => f.card === 'invoice');
+  const invoiceListFile = files.find((f) => f.card === 'invoiceList');
+  const checks: CsvImportPreview['checks'] = [];
+  const notes: string[] = [];
 
   // ファイルごとの種類・拠点
   const summaries: CsvFileSummary[] = files.map((f) => {
@@ -250,9 +263,13 @@ export function buildCsvImportPreview(
   }
 
   // 解析
-  const payrollRows = payrollFile ? parsePayrollCsv(payrollFile.text, payrollFile.fileName) : undefined;
+  // ①の交通費の列は拠点ごと(config/payrollColumns.ts。松山は「交通費」+「非課税他１」)
+  const payrollRows = payrollFile
+    ? parsePayrollCsv(payrollFile.text, payrollFile.fileName, { transportColumns: PAYROLL_TRANSPORT_COLUMNS[selectedCompanyId] })
+    : undefined;
   const billingRows = billingFile ? parseBillingCsv(billingFile.text, billingFile.fileName) : undefined;
   const invoiceRows = invoiceFiles.length > 0 ? invoiceFiles.flatMap((f) => parseInvoicePrintCsv(f.text, f.fileName)) : undefined;
+  const invoiceListRows: InvoiceListRow[] | undefined = invoiceListFile ? parseInvoiceListCsv(invoiceListFile.text) : undefined;
 
   // 対象年月
   const monthBasis: string[] = [];
@@ -342,6 +359,137 @@ export function buildCsvImportPreview(
     }
   }
 
+  // ④の請求日の月(①から決めた対象年月と違えば止める)
+  if (invoiceListFile && invoiceListRows && targetMonth) {
+    const months = unique(invoiceListRows.map((r) => r.invoiceDate.slice(0, 7)).filter(Boolean));
+    if (invoiceListRows.length === 0) {
+      blockers.push(`④「${invoiceListFile.fileName}」から請求書を読めませんでした(請求No・請求日・消費税・請求合計額の列を確かめてください)。`);
+    } else if (months.length !== 1 || months[0] !== targetMonth) {
+      blockers.push(
+        `④の請求日の月(${months.map(formatMonthJa).join('・') || '読めない'})が、①から決めた対象年月(${formatMonthJa(targetMonth)})と違います。同じ月のファイルを選んでください。`
+      );
+    } else {
+      monthBasis.push(`④の請求日がすべて${formatMonthJa(targetMonth)}`);
+    }
+  }
+
+  // 検算1: ①の非課税の支給(総支給額 − 社保合計額 − 課税対象額)と、読めた交通費+立替金など(1円でも違えば警告)
+  if (payrollFile && payrollRows) {
+    const { headers } = parseRaw(payrollFile.text);
+    const label = '①の非課税の支給と、読めた交通費・立替金など';
+    if (headers.includes('課税対象額') && (headers.includes('社保合計額') || headers.includes('社保合計'))) {
+      let expected = 0;
+      let read = 0;
+      let off = 0;
+      payrollRows.forEach((p) => {
+        const e = (p.paymentAmount || 0) - (p.socialInsurance || 0) - (p.taxableIncomeBase || 0);
+        const r = (p.salaryTransport || 0) + (p.reimbursement || 0) + (p.commsAllowance || 0) + (p.nonTaxableOtherAllowances || 0);
+        expected += e;
+        read += r;
+        if (e !== r) off++;
+      });
+      const ok = off === 0;
+      checks.push({
+        label,
+        ok,
+        detail: `非課税の支給(総支給額−社保合計額−課税対象額)の合計 ¥${expected.toLocaleString()} / 読めた交通費・立替金などの合計 ¥${read.toLocaleString()}${ok ? '' : `(合わない人 ${off}人)`}`,
+      });
+      if (!ok) {
+        warnings.push(
+          `給与データの交通費などが読めていない可能性があります(${off}人)。非課税の支給額(総支給額−社保合計額−課税対象額)は合計¥${expected.toLocaleString()}ですが、取り込めた交通費・立替金などの合計は¥${read.toLocaleString()}です。①の交通費の列の見出しを確かめてください。`
+        );
+      }
+    } else {
+      checks.push({ label, ok: null, detail: '①に課税対象額・社保合計額の列が無いため、確かめられません。' });
+    }
+  }
+
+  // 検算2: ②の社保負担額と、①から見込んだ額(本人の健保・介護・年金 + 会社の雇用保険 + 労災)。1人±2円を超えれば警告。
+  // 四国は労災等の率が近似(0.2%)で1円単位では合わないため、確かめない(config/socialInsuranceCheck.ts)。
+  if (billingRows && payrollRows && targetMonth && billingFile && billingHasSocialInsuranceColumn(billingFile.text)) {
+    const label = '②の社保負担額と、①から見込んだ額(1人±2円)';
+    if (selectedCompanyId === 'shikoku') {
+      checks.push({ label, ok: null, detail: '四国は労災等の率が近似値のため、確かめません。' });
+    } else {
+      const eiRate = employerEmploymentInsuranceRate(targetMonth);
+      const wcRate = workersCompRate(WORKERS_COMP_RATES_IN_SOCIAL_INSURANCE[selectedCompanyId], targetMonth);
+      const billed = new Map<string, number>();
+      billingRows.forEach((b) => billed.set(norm(b.staffNo), (billed.get(norm(b.staffNo)) || 0) + (b.socialInsuranceBilling || 0)));
+      let off = 0;
+      let billedTotal = 0;
+      let expectedTotal = 0;
+      billed.forEach((v, staff) => {
+        const p = grossByStaff.get(staff);
+        if (!p) return;
+        const gross = p.paymentAmount || 0;
+        const eiBase = p.employmentInsuranceBase && p.employmentInsuranceBase > 0 ? p.employmentInsuranceBase : gross;
+        const expected =
+          (p.healthInsurance || 0) +
+          (p.nursingInsurance || 0) +
+          (p.pensionInsurance || 0) +
+          ((p.employmentInsurance || 0) > 0 ? Math.round(eiBase * eiRate) : 0) +
+          Math.round(gross * wcRate);
+        billedTotal += v;
+        expectedTotal += expected;
+        if (Math.abs(v - expected) > 2) off++;
+      });
+      const ok = off === 0;
+      const rates = `雇用保険(会社) ${(eiRate * 100).toFixed(2)}%${wcRate ? `・労災 ${(wcRate * 100).toFixed(2)}%` : ''}`;
+      checks.push({
+        label,
+        ok,
+        detail: `②の社保負担額の合計 ¥${billedTotal.toLocaleString()} / ①から見込んだ額の合計 ¥${expectedTotal.toLocaleString()}(${rates})${ok ? '' : `。±2円を超える人 ${off}人`}`,
+      });
+      if (!ok) warnings.push(`②の社保負担額が、①から見込んだ額と±2円を超えて違うスタッフが${off}人います(${rates}で計算)。`);
+    }
+  }
+
+  // 検算3: ④の請求書(売上(課税)+売上(非課税))と、②の請求額・③の小計(請求Noごと)
+  if (invoiceListRows && billingRows) {
+    const billByNo = new Map<string, number>();
+    billingRows.forEach((b) => billByNo.set(norm(b.billingNo), (billByNo.get(norm(b.billingNo)) || 0) + (b.billingAmountExTax || 0)));
+    const subByNo = new Map<string, number>();
+    (invoiceRows ?? []).forEach((i) => subByNo.set(norm(i.billingNo), (subByNo.get(norm(i.billingNo)) || 0) + (i.subtotal || 0)));
+    const listNos = new Set(invoiceListRows.map((r) => r.billingNo));
+    const notInList = [...billByNo.keys()].filter((k) => k && !listNos.has(k)).length;
+    const notInBilling = invoiceListRows.filter((r) => !billByNo.has(r.billingNo)).length;
+    const amountOff = invoiceListRows.filter((r) => {
+      const sales = r.taxableAmount + r.nonTaxableAmount;
+      return billByNo.has(r.billingNo) && (billByNo.get(r.billingNo) !== sales || (!!invoiceRows && subByNo.get(r.billingNo) !== sales));
+    }).length;
+    const totalOff = invoiceListRows.filter((r) => r.taxableAmount + r.nonTaxableAmount + r.consumptionTax !== r.totalAmount).length;
+    const ok = notInList + notInBilling + amountOff + totalOff === 0;
+    const total = invoiceListRows.reduce((s, r) => s + r.totalAmount, 0);
+    const tax = invoiceListRows.reduce((s, r) => s + r.consumptionTax, 0);
+    checks.push({
+      label: '④の請求合計額と、②③の合計(請求Noごと)',
+      ok,
+      detail:
+        `④ ${invoiceListRows.length}枚・請求合計額 ¥${total.toLocaleString()}(うち消費税 ¥${tax.toLocaleString()})` +
+        (ok
+          ? '。②の請求額・③の小計と、すべての請求書で一致'
+          : `。②③と合わない請求書 ${amountOff}枚・②に無い請求書 ${notInBilling}枚・④に無い②の請求No ${notInList}件・請求合計額が課税+非課税+消費税と合わない請求書 ${totalOff}枚`),
+    });
+    if (!ok) warnings.push('④の請求書が②③と合いません(「検算」を見てください)。④に無い請求書の行は、税込額を今までの計算で出します。');
+  }
+
+  // 松山の規則(交通費・2行のまとめ・立替金・④の消費税。utils/matsuyamaCsvImport.ts)
+  let outBillingRows = billingRows;
+  let outInvoiceRows = invoiceRows;
+  if (selectedCompanyId === 'matsuyama' && billingRows && invoiceRows) {
+    const r = applyMatsuyamaCsvRules(payrollRows ?? [], billingRows, invoiceRows, invoiceListRows ?? []);
+    outBillingRows = r.billingRows;
+    outInvoiceRows = r.invoiceRows;
+    if (r.mergedGroups.length > 0) {
+      notes.push(
+        `受注番号が分かれた同じ契約(同じ請求No・スタッフ・クライアントで、支払額のある行が1つ)を1行にまとめます: ${r.mergedGroups.length}件(②の${billingRows.length}行→${r.billingRows.length}行)`
+      );
+    }
+    notes.push('請求交通費は③の「交通費－金額」+「課税１－金額」です。');
+    if (invoiceListRows?.length) notes.push('税込額は、④の請求書ごとの消費税を、その請求書の行に課税額の比で分けて出します。');
+    warnings.push(...r.warnings);
+  }
+
   // ファイル名の年月は確かめにだけ使う
   if (targetMonth) {
     summaries
@@ -364,7 +512,10 @@ export function buildCsvImportPreview(
     invoice: existingState?.invoiceRows?.length ?? 0,
     manual: MANUAL_CATEGORY_LABEL.map(([k, label]) => ({ label, count: (existingState?.[k] as unknown[] | undefined)?.length ?? 0 })).filter((m) => m.count > 0),
   };
-  const replacesCategories = unique(files.map((f) => f.card)).filter((c) => (existingState?.[CARD_CATEGORY[c]] as unknown[] | undefined)?.length);
+  const replacesCategories = unique(files.map((f) => f.card)).filter((c) => {
+    const cat = CARD_CATEGORY[c];
+    return !!cat && !!(existingState?.[cat] as unknown[] | undefined)?.length;
+  });
   if (replacesCategories.length > 0) {
     warnings.push(
       `${formatMonthJa(targetMonth)}には登録済みのデータがあります。取り込むと、この月の${replacesCategories.map((c) => CSV_KIND_LABEL[c].slice(0, 1)).join('')}が置き換わります。`
@@ -392,6 +543,8 @@ export function buildCsvImportPreview(
     blockers,
     warnings,
     confirmations,
-    rows: { payrollRows: withMonth(payrollRows), billingRows: withMonth(billingRows), invoiceRows: withMonth(invoiceRows) },
+    checks,
+    notes,
+    rows: { payrollRows: withMonth(payrollRows), billingRows: withMonth(outBillingRows), invoiceRows: withMonth(outInvoiceRows) },
   };
 }

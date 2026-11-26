@@ -207,6 +207,10 @@ function mergeDuplicateBillingRows(billings: BillingRow[]): MergedBillingRow[] {
     merged.push({
       ...base,
       billingAmountExTax: rows.reduce((s, r) => s + r.billingAmountExTax, 0),
+      // ★2026-11-26追加: 税込額を持つ行(松山のCSV取込みで④の消費税を付けた行)は税込額も合計する(持たない行は今までどおり計算)
+      billingAmountIncTax: rows.some((r) => r.billingAmountIncTax)
+        ? rows.reduce((s, r) => s + (r.billingAmountIncTax || 0), 0)
+        : undefined,
       paymentAmount: rows.reduce((s, r) => s + r.paymentAmount, 0),
       socialInsuranceBilling: rows.reduce((s, r) => s + r.socialInsuranceBilling, 0),
       paidLeaveDaysUsed: rows.reduce((s, r) => s + r.paidLeaveDaysUsed, 0),

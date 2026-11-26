@@ -73,9 +73,10 @@ test('雇保は社保負担額を超えない(雇用保険のみ加入で社保�
 test('給与のみ存在の行(請求データ無し)の社保は会社負担の計算値(本人の健保介護年金+会社の雇保)を原価にする', () => {
   // 実データ例: 大阪2026-04 堂道 詞子さん(派遣終了後の有給消化。支払208,740円、給与データの社保合計29,704円、本人の雇保1,044円)
   const [r] = calculateGrossProfit([payroll('2026-04', 'S1', { paymentAmount: 208740, socialInsurance: 29704, employmentInsurance: 1044 })], []);
-  assert.equal(r.employmentInsurance, 1879); // 208,740 × 0.9%
-  assert.equal(r.socialInsurance, 29704 - 1044 + 1879); // 30,539
-  assert.equal(r.grossProfitExTax, -(208740 + 30539));
+  // ★2026-11-26: 2026-04から事業主の雇用保険料率は0.85%(令和8年度。本人の雇保1,044円=0.5%も令和8年度の本人負担率と合う)
+  assert.equal(r.employmentInsurance, 1774); // 208,740 × 0.85%
+  assert.equal(r.socialInsurance, 29704 - 1044 + 1774); // 30,434
+  assert.equal(r.grossProfitExTax, -(208740 + 30434));
 });
 
 test('給与のみ存在の行でも本人の雇用保険が0円(四国の売上実績一覧表由来等)なら社保は給与データの値のまま', () => {

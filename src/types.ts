@@ -201,6 +201,22 @@ export interface InvoicePrintRow {
   nonTaxableAmount?: number;
   // ★2026-11-12追加: 非課税欄のうち立替金の請求(備考に「立替」とあるもの)。BillingRow.reimbursementAmount参照
   reimbursementAmount?: number;
+  // ★2026-11-26追加: 「課税１－金額」(松山は定額交通費の日割りをここで請求している。matsuyamaCsvImport.ts)と「小計」
+  taxable1Amount?: number;
+  subtotal?: number;
+}
+
+/**
+ * ④請求一覧CSV(スタナビ「請求管理」→「請求一覧印刷」。松山のExcelの「売上ＣＳＶから」に貼っているもの)の1行=請求書1枚。
+ * ★2026-11-26追加: 請求書ごとの消費税をそのまま使うため(matsuyamaCsvImport.ts)。保存はせず、取込み時に請求行の税込額へ反映する。
+ */
+export interface InvoiceListRow {
+  billingNo: string;
+  invoiceDate: string;      // 請求日(YYYY-MM-DD)
+  taxableAmount: number;    // 売上(課税)
+  nonTaxableAmount: number; // 売上(非課税)
+  consumptionTax: number;   // 消費税
+  totalAmount: number;      // 請求合計額
 }
 
 // 退職金データレコード (★2026-08-26: CSV取込から手入力フォームに変更。休業分補償等と同じく

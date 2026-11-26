@@ -301,7 +301,9 @@ export const MonthlyCalculationTable: React.FC<MonthlyCalculationTableProps> = (
       acc.leaveAllowanceAmount += b.leaveAllowanceAmount;
       acc.retirementAmount += row.retirementAmount;
       acc.billingUnitPrice += row.billingUnitPrice;
-      acc.payUnitPrice += row.payUnitPrice;
+      // ★2026-11-26修正: 年度集計(calculator.tsのtotalPayUnitPrice)と同じく、請求＠が0円の行の支払＠は合計に含めない
+      // (分子・分母を同じ行の集合にする。以前は支払＠だけ足され、名目粗利率が低く出ていた)
+      if (row.billingUnitPrice > 0) acc.payUnitPrice += row.payUnitPrice;
       acc.employmentInsurance += row.employmentInsurance;
       acc.socialInsurance += row.socialInsurance;
       acc.salaryTransport += row.salaryTransport;

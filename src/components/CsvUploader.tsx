@@ -14,7 +14,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { UploadCloud, FilePlus, Download, CheckCircle, AlertTriangle, XCircle, Undo2, X, ClipboardCheck } from 'lucide-react';
-import { SAMPLE_PAYROLL_CSV, SAMPLE_BILLING_CSV, SAMPLE_INVOICE_PRINT_CSV } from '../utils/sampleData';
+import { SAMPLE_PAYROLL_CSV, SAMPLE_BILLING_CSV, SAMPLE_INVOICE_PRINT_CSV, SAMPLE_INVOICE_LIST_CSV } from '../utils/sampleData';
 import { PayrollRow, BillingRow, InvoicePrintRow } from '../types';
 import { CompanyId, COMPANIES } from '../config/companies';
 import { MonthlyDataState } from '../utils/monthlyData';
@@ -23,6 +23,7 @@ import {
   CsvImportPreview,
   PendingCsvFile,
   CSV_KIND_LABEL,
+  REQUIRED_CSV_CARDS,
   buildCsvImportPreview,
   formatMonthJa,
 } from '../utils/csvImportCheck';
@@ -82,6 +83,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
   const payrollInputRef = useRef<HTMLInputElement>(null);
   const billingInputRef = useRef<HTMLInputElement>(null);
   const invoiceInputRef = useRef<HTMLInputElement>(null);
+  const invoiceListInputRef = useRef<HTMLInputElement>(null);
 
   // ドラッグ&ドロップ中、どのカードの上にファイルがドラッグされているかのハイライト表示用
   const [dragOverId, setDragOverId] = useState<CsvCardKind | null>(null);
@@ -196,6 +198,20 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
       iconColor: 'text-purple-600',
       guide: '③請求書印刷CSV を、ここに入れてね。15日締・20日締・末締の3つを、まとめて選んでください。',
     },
+    // ★2026-11-26追加: ④請求一覧CSV(松山だけ必須。請求書ごとの消費税に使う。データとしては保存しない)
+    {
+      id: 'invoiceList',
+      title: '④ 請求一覧 CSV',
+      required: REQUIRED_CSV_CARDS[selectedCompanyId].includes('invoiceList'),
+      multiple: false,
+      count: 0,
+      ref: invoiceListInputRef,
+      sampleContent: SAMPLE_INVOICE_LIST_CSV,
+      sampleName: '請求一覧_サンプル_202604.csv',
+      color: 'border-amber-200 bg-amber-50/50 hover:bg-amber-50',
+      iconColor: 'text-amber-600',
+      guide: '④請求一覧CSV を、ここに入れてね。Excelの『売上ＣＳＶから』に貼っているものです。',
+    },
   ];
 
   const gridCols = items.length >= 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3';
@@ -251,7 +267,9 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                   </span>
 
                   {/* ★2026-09-02: 総件数の表示は不要との判断で削除。読み込み済みかどうかのチェックマークのみ残す。 */}
-                  {item.count > 0 ? (
+                  {item.id === 'invoiceList' ? (
+                    <span className="text-[10px] text-slate-400 font-medium">{item.required ? '松山は必須' : '使わない拠点'}</span>
+                  ) : item.count > 0 ? (
                     <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
                       <CheckCircle className="w-3 h-3" />
                       <span>読み込み済み</span>
@@ -422,6 +440,29 @@ const CsvImportConfirmation: React.FC<{
               ? `手入力の項目(${existing.manual.map((m) => `${m.label} ${m.count}件`).join('、')})は、そのまま残ります(置き換わりません)。`
               : '手入力の項目(交通費(税抜)の月次上書きなど)は、この月にはありません。手入力の項目は、取り込んでも置き換わりません。'}
           </p>
+        </div>
+      )}
+
+      {(preview.checks.length > 0 || preview.notes.length > 0) && (
+        <div className="bg-white rounded-lg border border-slate-200 p-3 space-y-1.5">
+          <p className="font-bold text-slate-600">検算</p>
+          {preview.checks.map((c, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              {c.ok === true ? (
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+              ) : c.ok === false ? (
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+              ) : (
+                <span className="w-4 shrink-0 text-center text-slate-400">－</span>
+              )}
+              <p className="min-w-0 break-words">
+                <span className="font-bold">{c.label}</span>: {c.detail}
+              </p>
+            </div>
+          ))}
+          {preview.notes.map((n, i) => (
+            <p key={`n${i}`} className="text-slate-600 break-words">・{n}</p>
+          ))}
         </div>
       )}
 

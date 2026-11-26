@@ -206,7 +206,20 @@ function getHours(row: Record<string, any>, key: string): number {
  * 給与CSVのパース (未払計上表 / 給与計算書印刷CSV)
  * @param fileName 対象年月がCSV内から取得できない場合のフォールバック用
  */
-export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[] {
+/**
+ * 給与CSVの交通費の列(1つ目の枠・2つ目の枠)の見出しの候補。拠点ごとの設定はconfig/payrollColumns.ts。
+ * 指定しなければ今までの読み方(交通費1/交通費2、無ければ「交通費」2つ、それも無ければ「交通費」1つ)。
+ */
+export interface PayrollTransportColumns {
+  first: string[];
+  second: string[];
+}
+
+export function parsePayrollCsv(
+  csvText: string,
+  fileName?: string,
+  options: { transportColumns?: PayrollTransportColumns } = {}
+): PayrollRow[] {
   const parsed = Papa.parse<Record<string, string>>(csvText, {
     header: true,
     skipEmptyLines: true,
@@ -249,7 +262,8 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       const parkingKey = findColumnKey(row, ['駐車場手当', '駐車場代', '駐車場']);
       const transport1Key = findColumnKey(row, ['交通費1']);
       const transport2Key = findColumnKey(row, ['交通費2']);
-      const transportFallbackKey = findColumnKey(row, ['交通費', '通勤手当']);
+      // ★2026-11-26: 交通費の列が見つからないときに、部分一致で「交通費課税」(課税の交通費)を交通費として読まないよう除く
+      const transportFallbackKey = findColumnKey(row, ['交通費', '通勤手当'], ['交通費課税']);
       // ★2026-08-21確定: 本物のスタッフナビCSV(未払計上表_202410.csv)では、交通費列が
       // 「交通費1」「交通費2」ではなく、同名の「交通費」列が2つ存在する形で出力される。
       // CSVパーサー(papaparse)は同名ヘッダーを自動検出し、2列目以降を「交通費_1」のように
@@ -369,14 +383,25 @@ export function parsePayrollCsv(csvText: string, fileName?: string): PayrollRow[
       // ★2026-08-21追記: 本物のスタッフナビCSV(253行)では「交通費1/交通費2」ではなく、
       // 同名「交通費」列が2つ(papaparseリネーム後は「交通費」「交通費_1」)出力される
       // 別パターンも確認。この場合も同じ「2列を合算」ルールを適用する。
-      const salaryTransport =
-        transport1Key || transport2Key
+      // ★2026-11-26追加: 拠点ごとに交通費の列を決めている場合(松山の給与計算書印刷CSVは31列目「交通費」と46列目「非課税他１」)は、
+      // その2つの枠を読む(見出しは完全一致だけ。見つからない枠は0)。
+      const tc = options.transportColumns;
+      const exactKey = (names: string[]) => Object.keys(row).find((k) => names.includes(normalizeHeader(k))) ?? '';
+      const configuredFirstKey = tc ? exactKey(tc.first) : '';
+      const configuredSecondKey = tc ? exactKey(tc.second) : '';
+      const salaryTransport = tc
+        ? getNum(row, configuredFirstKey) + getNum(row, configuredSecondKey)
+        : transport1Key || transport2Key
           ? getNum(row, transport1Key) + getNum(row, transport2Key)
           : transportDupKey
           ? getNum(row, transportFallbackKey) + getNum(row, transportDupKey)
           : getNum(row, transportFallbackKey);
 
-      const transport2Amount = transport1Key || transport2Key ? getNum(row, transport2Key) : getNum(row, transportDupKey);
+      const transport2Amount = tc
+        ? getNum(row, configuredSecondKey)
+        : transport1Key || transport2Key
+        ? getNum(row, transport2Key)
+        : getNum(row, transportDupKey);
 
       return {
         targetMonth,
@@ -574,6 +599,9 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
       // 「交通費－金額」の全角ハイフンはNFKC正規化で半角"-"になる(時間内－単価と同じ)。
       const staffNoKey = findColumnKey(row, ['スタッフ番号', 'スタッフNo']);
       const transportKey = findColumnKey(row, ['交通費-金額', '交通費−金額']);
+      // ★2026-11-26追加: 課税１の枠(松山は定額交通費の日割りをここで請求している)と小計
+      const taxable1Key = Object.keys(row).find((k) => /^課税1[-−]金額$/.test(normalizeHeader(k))) ?? '';
+      const subtotalKey = Object.keys(row).find((k) => normalizeHeader(k) === '小計') ?? '';
       // ★2026-11-12追加: 非課税欄(「非課税１－金額」〜「非課税５－金額」。NFKC正規化で「非課税1-金額」等になる)の合計
       const nonTaxableKeys = Object.keys(row).filter((k) => /^非課税[1-5][-−]金額$/.test(normalizeHeader(k)));
       // 備考(「備考１」「備考2」「備考３」)に「立替」「寸志」とある請求書行の非課税欄は、派遣先に請求してスタッフに渡すもの
@@ -607,6 +635,8 @@ export function parseInvoicePrintCsv(csvText: string, fileName?: string): Invoic
         orderNo: getStr(row, orderNoKey) || undefined,
         staffNo: getStr(row, staffNoKey) || undefined,
         transportAmount: transportKey ? getNum(row, transportKey) : undefined,
+        taxable1Amount: taxable1Key ? getNum(row, taxable1Key) : undefined,
+        subtotal: subtotalKey ? getNum(row, subtotalKey) : undefined,
         nonTaxableAmount,
         reimbursementAmount: nonTaxableAmount && nonTaxableAmount > 0 && /立替|寸志/.test(remarks) ? nonTaxableAmount : undefined,
       };

@@ -34,7 +34,12 @@ const invoice = (rows: [string, string, string, number][]) =>
     .concat(rows.map(([billNo, order, staff, sub]) => `30000010,${order},${staff},1900,0,${sub},${billNo}`))
     .join('\n');
 
+const invoiceList = (date = '2026/07/31') =>
+  ['ｸﾗｲｱﾝﾄ番号,請求先部署番号,クライアント名,請求先部署名,請求日,請求No,売上(課税),売上(非課税),消費税,請求合計額',
+    `30000010,1,テスト社,総務,${date},30007001,280000,0,28000,308000`,
+    `30000011,1,テスト社2,総務,${date},30007002,210000,0,21000,231000`].join('\n');
 const f = (card: PendingCsvFile['card'], fileName: string, text: string): PendingCsvFile => ({ card, fileName, text });
+const list4 = () => f('invoiceList', '請求一覧.csv', invoiceList());
 const noData = () => undefined;
 
 test('見出しからファイルの種類を判定する', () => {
@@ -64,6 +69,7 @@ test('①②③がそろい、すべて合えば止めない。対象年月は�
       f('billing', '請求支払一覧.csv', billing()),
       f('invoice', '請求_15日締.csv', invoice([['30007001', '31000001', '30000001', 280000]])),
       f('invoice', '請求_末締.csv', invoice([['30007002', '31000002', '30000002', 210000]])),
+      list4(),
     ],
     'matsuyama',
     noData
@@ -81,6 +87,7 @@ test('①②③がそろい、すべて合えば止めない。対象年月は�
     [['15日締', 280000], ['末締', 210000]]
   );
   assert.deepEqual(p.confirmations.map((c) => c.id), ['company', 'month', 'closings']);
+  assert.ok(p.monthBasis.some((b) => b.includes('④の請求日')));
   assert.ok(p.confirmations[0].label.includes('松山人材'));
   assert.ok(p.confirmations[1].label.includes('2026年7月'));
 });
@@ -121,7 +128,7 @@ test('③が②と合わなければ止め、②の請求Noが③に無ければ
   );
   assert.ok(wrong.blockers.some((b) => b.includes('③を②に結び付けられません')));
   const short = buildCsvImportPreview(
-    [f('payroll', 'a.csv', payroll()), f('billing', 'b.csv', billing()), f('invoice', 'c_末締.csv', invoice([['30007002', '31000002', '30000002', 210000]]))],
+    [f('payroll', 'a.csv', payroll()), f('billing', 'b.csv', billing()), f('invoice', 'c_末締.csv', invoice([['30007002', '31000002', '30000002', 210000]])), list4()],
     'matsuyama',
     noData
   );
@@ -133,15 +140,18 @@ const fullSet = () => [
   f('payroll', '給与計算.csv', payroll()),
   f('billing', '請求支払一覧.csv', billing()),
   f('invoice', '請求_末締.csv', invoice([['30007001', '31000001', '30000001', 280000], ['30007002', '31000002', '30000002', 210000]])),
+  list4(),
 ];
-const MISSING_MSG = '①給与計算書印刷CSV・②請求支払一覧表印刷CSV・③請求書印刷CSV(15日締・20日締・末締)を、すべて一緒に選んでください。足りないもの: ';
+const MISSING_MSG =
+  '①給与計算書印刷CSV・②請求支払一覧表印刷CSV・③請求書印刷CSV(15日締・20日締・末締)・④請求一覧CSVを、すべて一緒に選んでください。足りないもの: ';
 
 test('①②③がそろっていなければ止める(①だけ・①と③だけ・②と③だけ)', () => {
-  const [p1, p2, p3] = fullSet();
+  const [p1, p2, p3, p4] = fullSet();
   const cases: [PendingCsvFile[], string][] = [
-    [[p1], '②請求支払一覧表印刷CSV・③請求書印刷CSV'],
-    [[p1, p3], '②請求支払一覧表印刷CSV'],
-    [[p2, p3], '①給与計算書印刷CSV'],
+    [[p1], '②請求支払一覧表印刷CSV・③請求書印刷CSV・④請求一覧CSV'],
+    [[p1, p3, p4], '②請求支払一覧表印刷CSV'],
+    [[p2, p3, p4], '①給与計算書印刷CSV'],
+    [[p1, p2, p3], '④請求一覧CSV'],
   ];
   for (const [files, missing] of cases) {
     const p = buildCsvImportPreview(files, 'matsuyama', noData);
@@ -153,7 +163,7 @@ test('①②③がそろっていなければ止める(①だけ・①と③だ�
     { targetMonth: '2026-07', staffNo: '30000001', paymentAmount: 200000 },
     { targetMonth: '2026-07', staffNo: '30000002', paymentAmount: 150000 },
   ] as MonthlyDataState['payrollRows'];
-  const noPayroll = buildCsvImportPreview([f('billing', '請求支払一覧202607.csv', billing()), p3], 'matsuyama', () => registered);
+  const noPayroll = buildCsvImportPreview([f('billing', '請求支払一覧202607.csv', billing()), p3, p4], 'matsuyama', () => registered);
   assert.ok(noPayroll.blockers.includes(MISSING_MSG + '①給与計算書印刷CSV'));
   assert.equal(noPayroll.targetMonth, '');
   // ①②③がそろえば今までどおり止めない
@@ -194,4 +204,36 @@ test('中身から拠点を判定できなければ止める', () => {
     p.blockers.includes('CSVの中身(スタッフ番号・クライアント番号・請求Noの形)から拠点を判定できませんでした。取り込まずに、はまさんに連絡してください。')
   );
   assert.ok(!p.warnings.some((w) => w.includes('拠点を判定できませんでした')));
+});
+
+// 大阪の形(8桁・2始まり)のダミーで、四国・大阪は①②③だけでよいこと(④は松山だけ必須)
+test('大阪・四国は①②③で足り、④は要らない', () => {
+  const staff = ['20000001', '20000002'];
+  const osakaBilling = billing().replace(/3000(7|0)/g, '2000$1').replace(/3100/g, '2100');
+  const osakaInvoice = invoice([['20007001', '21000001', '20000001', 280000], ['20007002', '21000002', '20000002', 210000]]).replace(/30000010/g, '20000010');
+  const p = buildCsvImportPreview(
+    [f('payroll', 'a.csv', payroll('2026/08/14', staff)), f('billing', 'b.csv', osakaBilling), f('invoice', 'c_末締.csv', osakaInvoice)],
+    'osaka',
+    noData
+  );
+  assert.equal(p.detectedCompany, 'osaka');
+  assert.deepEqual(p.blockers, []);
+  // 大阪には松山の規則(2行のまとめ・③の交通費)を当てない
+  assert.equal(p.notes.length, 0);
+});
+
+test('④の請求日の月が①と違えば止める', () => {
+  const files = fullSet().map((x) => (x.card === 'invoiceList' ? f('invoiceList', '請求一覧.csv', invoiceList('2026/06/30')) : x));
+  const p = buildCsvImportPreview(files, 'matsuyama', noData);
+  assert.ok(p.blockers.some((b) => b.includes('④の請求日の月(2026年6月)') && b.includes('2026年7月')));
+});
+
+test('検算: ①の非課税の支給・④と②③の合計を確かめる', () => {
+  const p = buildCsvImportPreview(fullSet(), 'matsuyama', noData);
+  const byLabel = (s: string) => p.checks.find((c) => c.label.startsWith(s));
+  // ダミーの①は 総支給額−社保合計額−課税対象額 が 10,000円/−40,000円 で、交通費などは読めない → 警告
+  assert.equal(byLabel('①の非課税の支給')?.ok, false);
+  assert.ok(p.warnings.some((w) => w.includes('給与データの交通費などが読めていない可能性があります(2人)')));
+  assert.equal(byLabel('④の請求合計額')?.ok, true);
+  assert.ok(byLabel('②の社保負担額'));
 });
