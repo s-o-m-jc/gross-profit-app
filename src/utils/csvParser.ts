@@ -149,7 +149,7 @@ function normalizeMonth(val: string): string {
  * ファイル名から対象年月を抽出する (例: "請求支払一覧_202410.csv" -> "2026-10"改め"2024-10")
  * 請求支払一覧CSVには対象年月を表す列が存在しないため、運用者確認によりファイル名を正とする。
  */
-function extractMonthFromFileName(fileName?: string): string {
+export function extractMonthFromFileName(fileName?: string): string {
   if (!fileName) return '';
   const m = fileName.match(/(\d{4})[-_]?(\d{2})(?!\d)/);
   if (!m) return '';
@@ -164,7 +164,7 @@ function extractMonthFromFileName(fileName?: string): string {
  * 運用者確認: 給与は末締め・翌月15日払いのため、対象月 = 支給日の前月。
  * (例: 支給日 2024-11-15 -> 対象年月 2024-10)
  */
-function deriveTargetMonthFromPayDate(payDateStr: string): string {
+export function deriveTargetMonthFromPayDate(payDateStr: string): string {
   const datePart = parseSafeString(payDateStr).split(/[ T]/)[0];
   const m = datePart.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   if (!m) return '';

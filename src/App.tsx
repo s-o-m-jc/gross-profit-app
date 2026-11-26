@@ -18,7 +18,7 @@ import {
   Database,
 } from 'lucide-react';
 import { Header } from './components/Header';
-import { CsvUploader } from './components/CsvUploader';
+import { CsvUploader, CsvBatchImport } from './components/CsvUploader';
 import { PastExcelImportPanel } from './components/PastExcelImportPanel';
 import { MonthlyDataPanel } from './components/MonthlyDataPanel';
 import { ChangeHistoryPanel } from './components/ChangeHistoryPanel';
@@ -588,6 +588,25 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
       ),
     }));
   };
+  // ★2026-11-26追加(取込み前の確認画面): CsvUploaderの確認画面で「取り込む」を押したときに、①②③をまとめて反映する。
+  // 取り消しは1回分(①②③まとめて)。PastExcelImportPanelは今までどおり上の3つのハンドラを使う。
+  const handleCsvBatchImport = (rows: CsvBatchImport, label: string) => {
+    if (rows.payrollRows) logCsvImport('給与データ', rows.payrollRows);
+    if (rows.billingRows) logCsvImport('請求データ', rows.billingRows);
+    if (rows.invoiceRows) logCsvImport('請求書印刷データ', rows.invoiceRows);
+    setUndoSnapshot({ companyId: selectedCompanyId, companyMonths: selectedCompanyMonths, label });
+    setMonthlyData((prev) => {
+      let months = prev[selectedCompanyId];
+      if (rows.payrollRows) months = mergeGroupedRowsIntoCompanyMonths(months, 'payrollRows', groupByTargetMonth(rows.payrollRows));
+      if (rows.billingRows) months = mergeGroupedRowsIntoCompanyMonths(months, 'billingRows', groupByTargetMonth(rows.billingRows));
+      if (rows.invoiceRows) months = mergeGroupedRowsIntoCompanyMonths(months, 'invoiceRows', groupByTargetMonth(rows.invoiceRows));
+      return { ...prev, [selectedCompanyId]: months };
+    });
+  };
+  const getSelectedCompanyMonthState = useCallback(
+    (month: string) => selectedCompanyMonths[month],
+    [selectedCompanyMonths]
+  );
   const handleUndoLastCsvUpload = () => {
     if (!undoSnapshot || undoSnapshot.companyId !== selectedCompanyId) return;
     const { companyId, companyMonths } = undoSnapshot;
@@ -1253,12 +1272,12 @@ function AppShell({ profile, onSignOut }: AppShellProps) {
                 ★2026-09-02: 全タブ共通エリアから、このデータ管理タブへ移動(理由は上記コメント参照) */}
             {canEditData && (
               <CsvUploader
+                selectedCompanyId={selectedCompanyId}
                 payrollRows={payrollRows}
                 billingRows={billingRows}
                 invoiceRows={invoiceRows}
-                onPayrollLoaded={handlePayrollLoaded}
-                onBillingLoaded={handleBillingLoaded}
-                onInvoiceLoaded={handleInvoiceLoaded}
+                getMonthState={getSelectedCompanyMonthState}
+                onImport={handleCsvBatchImport}
                 canUndo={!!undoSnapshot && undoSnapshot.companyId === selectedCompanyId}
                 undoLabel={undoSnapshot?.label}
                 onUndo={handleUndoLastCsvUpload}
