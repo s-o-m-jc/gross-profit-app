@@ -129,18 +129,35 @@ test('③が②と合わなければ止め、②の請求Noが③に無ければ
   assert.ok(short.warnings.some((w) => w.includes('締め日のファイルが足りない可能性') && w.includes('1件')));
 });
 
-test('①が無いときは、登録済みの①と突き合わせて月を確かめ、それも無ければ止める', () => {
-  const none = buildCsvImportPreview([f('billing', '請求支払一覧202607.csv', billing())], 'matsuyama', noData);
-  assert.ok(none.blockers.some((b) => b.includes('①給与計算書印刷CSVも一緒に選んでください')));
+const fullSet = () => [
+  f('payroll', '給与計算.csv', payroll()),
+  f('billing', '請求支払一覧.csv', billing()),
+  f('invoice', '請求_末締.csv', invoice([['30007001', '31000001', '30000001', 280000], ['30007002', '31000002', '30000002', 210000]])),
+];
+const MISSING_MSG = '①給与計算書印刷CSV・②請求支払一覧表印刷CSV・③請求書印刷CSV(15日締・20日締・末締)を、すべて一緒に選んでください。足りないもの: ';
 
+test('①②③がそろっていなければ止める(①だけ・①と③だけ・②と③だけ)', () => {
+  const [p1, p2, p3] = fullSet();
+  const cases: [PendingCsvFile[], string][] = [
+    [[p1], '②請求支払一覧表印刷CSV・③請求書印刷CSV'],
+    [[p1, p3], '②請求支払一覧表印刷CSV'],
+    [[p2, p3], '①給与計算書印刷CSV'],
+  ];
+  for (const [files, missing] of cases) {
+    const p = buildCsvImportPreview(files, 'matsuyama', noData);
+    assert.ok(p.blockers.includes(MISSING_MSG + missing), JSON.stringify(p.blockers));
+  }
+  // ①なしで②③だけのときは、登録済みの①があっても取り込めない(2026-11-26 例外を取りやめ)
   const registered: MonthlyDataState = { ...emptyMonthlyDataState() };
   registered.payrollRows = [
     { targetMonth: '2026-07', staffNo: '30000001', paymentAmount: 200000 },
     { targetMonth: '2026-07', staffNo: '30000002', paymentAmount: 150000 },
   ] as MonthlyDataState['payrollRows'];
-  const ok = buildCsvImportPreview([f('billing', '請求支払一覧202607.csv', billing())], 'matsuyama', (m) => (m === '2026-07' ? registered : undefined));
-  assert.deepEqual(ok.blockers, []);
-  assert.equal(ok.targetMonth, '2026-07');
+  const noPayroll = buildCsvImportPreview([f('billing', '請求支払一覧202607.csv', billing()), p3], 'matsuyama', () => registered);
+  assert.ok(noPayroll.blockers.includes(MISSING_MSG + '①給与計算書印刷CSV'));
+  assert.equal(noPayroll.targetMonth, '');
+  // ①②③がそろえば今までどおり止めない
+  assert.deepEqual(buildCsvImportPreview(fullSet(), 'matsuyama', noData).blockers, []);
 });
 
 test('登録済みの月は置き換えの警告と確認のチェックを出し、手入力の項目は残ると示す', () => {
@@ -162,7 +179,7 @@ test('③のファイル名から締め日を読む', () => {
 
 test('登録済みの月が手入力の項目だけ(給与・請求のキーが無い)でも落ちない', () => {
   const onlyManual = { transportExTaxOverrideRows: [{ targetMonth: '2026-07', amount: 1 }] } as unknown as MonthlyDataState;
-  const p = buildCsvImportPreview([f('payroll', 'a.csv', payroll())], 'matsuyama', () => onlyManual);
+  const p = buildCsvImportPreview(fullSet(), 'matsuyama', () => onlyManual);
   assert.deepEqual(p.blockers, []);
   assert.deepEqual([p.existing.payroll, p.existing.billing, p.existing.invoice], [0, 0, 0]);
   assert.deepEqual(p.replacesCategories, []);

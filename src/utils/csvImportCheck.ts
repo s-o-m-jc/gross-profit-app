@@ -6,7 +6,7 @@
  * CSVを選んでもすぐには取り込まず、この判定の結果(拠点・対象年月・ファイルの種類・③の紐付け・登録済みのデータ)を
  * 確認画面に出し、止める条件(blockers)が無く、確認のチェックがすべて付いたときだけ取り込む。
  * - 対象年月はファイル名に頼らず中身で決める。①は支払日の前月(csvParser.tsのderiveTargetMonthFromPayDate)。
- *   ②③は日付の列が無いので、①(同じ回に選んだもの、無ければ登録済みのもの)との突き合わせで①の月に結び付ける。
+ *   ②③は日付の列が無いので、同じ回に選んだ①との突き合わせで①の月に結び付ける。①②③(拠点ごとのREQUIRED_CSV_CARDS)がそろわなければ止める。
  *   ファイル名の年月は確かめにだけ使い、中身と違えば止める。
  * - 拠点は、スタッフ番号・クライアント番号・請求Noの形で判定する(2024年以降の登録済みデータで確認):
  *   大阪は8桁で2から始まる(スタッフ2000/2001…、クライアント22/24/25/26/29…、請求No 2000…)、
@@ -35,6 +35,23 @@ export const CSV_KIND_LABEL: Record<DetectedCsvKind, string> = {
   invoice: '③請求書印刷CSV',
   invoiceList: '請求一覧CSV',
   unknown: '判定できない形式',
+};
+
+/** 確認画面の「すべて一緒に選んでください」の文言で使う名前 */
+export const CSV_CARD_FULL_LABEL: Record<CsvCardKind, string> = {
+  payroll: '①給与計算書印刷CSV',
+  billing: '②請求支払一覧表印刷CSV',
+  invoice: '③請求書印刷CSV(15日締・20日締・末締)',
+};
+
+/**
+ * 拠点ごとに、1回の取込みでそろっていなければならないカード(★2026-11-26 はまさんの判断)。今は3拠点とも①②③。
+ * 段階2で④請求一覧CSVを足すときは、松山だけ④を加える。
+ */
+export const REQUIRED_CSV_CARDS: Record<CompanyId, CsvCardKind[]> = {
+  shikoku: ['payroll', 'billing', 'invoice'],
+  osaka: ['payroll', 'billing', 'invoice'],
+  matsuyama: ['payroll', 'billing', 'invoice'],
 };
 
 export interface PendingCsvFile {
@@ -172,6 +189,15 @@ export function buildCsvImportPreview(
 ): CsvImportPreview {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  // 必要なカードがそろっていなければ止める(★2026-11-26 はまさんの判断: ①だけ・①③だけ等で取り込むと、Excelで取り込み済みの月の
+  // 給与だけが置き換わり請求と食い違うため。①なしで②③だけを登録済みの①と突き合わせて取り込む例外も取りやめた)
+  const required = REQUIRED_CSV_CARDS[selectedCompanyId];
+  const missing = required.filter((c) => !files.some((f) => f.card === c));
+  if (files.length > 0 && missing.length > 0) {
+    blockers.push(
+      `${required.map((c) => CSV_CARD_FULL_LABEL[c]).join('・')}を、すべて一緒に選んでください。足りないもの: ${missing.map((c) => CSV_KIND_LABEL[c]).join('・')}`
+    );
+  }
   const payrollFile = files.find((f) => f.card === 'payroll');
   const billingFile = files.find((f) => f.card === 'billing');
   const invoiceFiles = files.filter((f) => f.card === 'invoice');
@@ -242,21 +268,10 @@ export function buildCsvImportPreview(
     } else {
       blockers.push(`①の支払日が複数の月にまたがっています(${payDates.join('・')})。1か月分ずつ取り込んでください。`);
     }
-  } else {
-    // ①が無いときは、②③のファイル名の年月を候補にし、登録済みの①との突き合わせで確かめる
-    const nameMonths = unique(
-      [billingFile, ...invoiceFiles].filter((f): f is PendingCsvFile => !!f).map((f) => extractMonthFromFileName(f.fileName)).filter(Boolean)
-    );
-    if (nameMonths.length === 1 && (getMonthState(nameMonths[0])?.payrollRows?.length ?? 0) > 0) {
-      targetMonth = nameMonths[0];
-      monthBasis.push(`ファイル名の年月(${formatMonthJa(targetMonth)})を、登録済みの①との突き合わせで確かめた`);
-    } else if (files.length > 0) {
-      blockers.push('①が無く、登録済みの①とも結び付けられないため、対象年月を決められません。①給与計算書印刷CSVも一緒に選んでください。');
-    }
   }
 
-  // ①の行(同じ回に選んだもの。無ければ登録済みのもの)
-  const basePayroll = payrollRows ?? (targetMonth ? getMonthState(targetMonth)?.payrollRows ?? [] : []);
+  // ①の行(同じ回に選んだもの)
+  const basePayroll = payrollRows ?? [];
   const grossByStaff = new Map(basePayroll.map((p) => [norm(p.staffNo), p]));
 
   // ②と①の突き合わせ(スタッフごとの支払額と総支給額。立替金を除いて一致しても可)
